@@ -1,0 +1,37 @@
+name: aiab-local-demo
+
+services:
+  inference:
+    extends:
+      file: docker-compose.local.yml
+      service: inference
+
+  aiab:
+    extends:
+      file: docker-compose.local.yml
+      service: aiab
+    environment:
+      AIAB_ID: aiab-local-demo
+      ENFORCEMENT_MODE: block
+      BLOCK_THRESHOLD: "0.8"
+      CORS_ALLOW_ORIGIN: http://localhost:8081
+      REPORT_PERIOD_SECONDS: "10"
+      # Empty values select MockClassifier in local mode; a key opts into the
+      # verified Tinfoil classifier, with no fallback if verification fails.
+      TINFOIL_API_KEY: ${TINFOIL_API_KEY:-}
+      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-}
+
+  webchat:
+    image: aiab-webchat:local
+    build:
+      context: ../webchat
+      dockerfile: Dockerfile
+    environment:
+      AIAB_URL: ${AIAB_URL:-https://localhost:8443}
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      aiab:
+        condition: service_healthy
+    logging:
+      driver: none

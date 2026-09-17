@@ -1,13 +1,13 @@
 # AIAB inference introspection demo
 
 AIAB ("AI in a box") measures policy-relevant inference received by one proxy. The
-planned appliance samples request/response pairs in monitor mode or classifies every
+appliance samples request/response pairs in monitor mode or classifies every
 request before forwarding in block mode, then emits signed aggregate reports for an
 auditor. The web demo illustrates endpoint enforcement with synthetic prompts.
 
-This repository is under construction. The local runtime, Tinfoil SDK classifier,
-synthetic traffic generator, direct classifier evaluation, and signature-checking
-local auditor are implemented. Tinfoil integration is covered by offline SDK tests;
+The local runtime, Tinfoil SDK classifier,
+synthetic traffic generator, direct classifier evaluation, and auditor with local
+and attested transports are implemented. Tinfoil integration is covered by offline SDK tests;
 live keyed classification and attested deployment have not been run. See
 [the implementation plan](aiab-plan.md).
 
@@ -34,7 +34,10 @@ Use Python 3.12 and `uv`. Dependency versions are resolved in `uv.lock`.
 verification, and pytest. Package commands are `aiab` and `auditor`.
 
 Local workflows: `make local-up`, `make traffic`, `make eval`, and `make image`.
-Stop the local containers with `make local-down`. `make demo-up` remains planned.
+Stop the local containers with `make local-down`. `make demo-up` starts the
+implemented block-mode web chat stack; open `http://localhost:8081` and follow the
+[demo sequence](demo/README.md) for certificate setup, benign and blocked prompts,
+and a finalized rollup. Stop that stack with `make demo-down`.
 `make eval` calls the classifier directly and reports development and held-out
 metrics, classification errors, synthetic request/response pairs, the policy digest,
 and requested model. With `TINFOIL_API_KEY` set, the classifier uses the Tinfoil SDK
@@ -106,32 +109,77 @@ unlocked source-build tools. The image includes the core source and bundled
 classifier definitions; build tools, tests, auditor, traffic tools, secrets, and
 weights are excluded from the application payload. The build-context allowlist
 also prevents local secret files and model weights from reaching the builder.
+Final exclusions keep application `__pycache__` directories and Python bytecode out
+even after runtime source directories are re-included.
 
 Pinned inputs alone do not guarantee byte-identical image digests from ordinary
 `docker build`: platform selection, file and image timestamps, builder versions,
-compression, and provenance attestations can change the output. For a reproducibility
-check, use the same reviewed source, target platform, Buildx/BuildKit versions, and
-export settings for two clean builds. Select a `docker-container` Buildx builder
-(the default `docker` driver cannot export OCI archives) and a BuildKit version
-supporting timestamp rewriting, then run:
+compression, and provenance attestations can change the output. With Docker,
+Buildx, Bash and `jq` available, run the controlled comparison:
 
 ```sh
-docker buildx build --no-cache --platform linux/amd64 --provenance=false --sbom=false \
-  --build-arg SOURCE_DATE_EPOCH=0 -f deploy/Dockerfile \
-  --output type=oci,dest=/tmp/aiab-build-1.tar,rewrite-timestamp=true \
-  --metadata-file /tmp/aiab-build-1.json .
-docker buildx build --no-cache --platform linux/amd64 --provenance=false --sbom=false \
-  --build-arg SOURCE_DATE_EPOCH=0 -f deploy/Dockerfile \
-  --output type=oci,dest=/tmp/aiab-build-2.tar,rewrite-timestamp=true \
-  --metadata-file /tmp/aiab-build-2.json .
-jq -r '."containerimage.digest"' /tmp/aiab-build-1.json /tmp/aiab-build-2.json
+make image-reproducible
+# Or use a checksum-verified Buildx executable kept outside your Docker setup:
+AIAB_BUILDX_BIN=/absolute/path/to/docker-buildx make image-reproducible
 ```
 
-Compare the exported image digests, not just a cache hit or archive file timestamps.
-See Docker's [reproducible-build controls](https://docs.docker.com/build/ci/github-actions/reproducible-builds/)
-and [OCI exporter timestamp option](https://docs.docker.com/build/exporters/oci-docker/).
-This repository does not yet publish an independently verified reproducible or
-attested deployment measurement.
+The target requires Python 3 for inspecting OCI layers and uses a temporary isolated
+Docker config and pinned BuildKit container,
+performs two `--no-cache` builds for `linux/amd64` with timestamp rewriting and fixed
+compression, and compares OCI manifest digests covering the config and layers.
+It rejects Python bytecode and application cache directories in every exported
+layer, retains evidence in a unique temporary directory, and removes its own builder.
+On 2026-09-17 both clean builds matched at
+`sha256:ca38ef042321b8507c790fc2d4002e594afa6fb4fd1e058dca4e7577985e1039`.
+See the [method and validation record](docs/REPRODUCIBILITY.md) for tool checksums,
+export settings and limits. This is local build evidence; no image has been published
+and no Tinfoil deployment measurement is approved.
+
+## Attested deployment and auditor (M3)
+
+[deploy/tinfoil/](deploy/tinfoil/README.md) contains a template and complete release,
+secret, network and verification instructions. Copy its template to root
+`tinfoil-config.yml` only after filling the release-specific values. Tinfoil mode
+serves plain HTTP on internal port 8080 behind the enclave shim and requires the
+verified SDK classifier; the template uses non-root execution, a read-only root and
+tmpfs caches. Its explicit open-public egress policy is a documented limitation
+while the SDK's dynamic router/verification destination allowlist remains unresolved.
+
+Outside `--insecure-local`, all three auditor commands require `--repo`, an
+independently approved Tinfoil release digest and an independently approved policy
+digest. The auditor invokes the current CLI and fetches identity, manifest and
+reports using the SDK's verified TLS transport. `--expected-digest` means the
+Tinfoil release's **`tinfoil.hash`/Sigstore subject digest**, not the Docker registry
+image digest or a raw enclave register. The release config pins the application
+image separately. See the deployment procedure for generating the manifest offline
+with `python -m auditor.policy` and approving all three distinct values.
+
+```sh
+uv run --locked auditor verify --host HOSTNAME --repo OWNER/REPO \
+  --expected-digest APPROVED_TINFOIL_RELEASE_DIGEST \
+  --expected-policy-digest APPROVED_POLICY_DIGEST
+```
+
+There is no approved image/release/policy digest or public AIAB hostname to publish
+yet. Live classification, deployment and attestation
+acceptance remain outstanding.
+
+## Adversarial demonstration (M4)
+
+Run `bash demo/adversarial.sh` for a safe dry-run of all six scenarios: classifier
+tampering, debug enclave rejection, unsupported classifier endpoint override,
+direct inference bypass, changed threshold with the same image, and restart
+continuity. It needs no deployment, credentials, or model. Run
+`bash demo/adversarial.sh --execute --stage override` to exercise the actual local
+startup configuration guard without contacting a classifier.
+
+Other `--execute` stages require an already provisioned, independently approved
+Tinfoil deployment, explicit public target/digest arguments, and interactive pauses
+for manual changes and restoration. See [the driver guide](demo/ADVERSARIAL.md).
+The driver runs real probes and checks expected outcomes; it does not build,
+publish, or invent missing release inputs. Live adversarial deployment results
+remain unperformed. Coverage gaps and lost history remain visible limitations,
+and a generic verifier failure does not establish debug-policy causality.
 
 ## Configuration
 
@@ -147,7 +195,7 @@ No real deployment measurements are approved or published yet.
 | `ENFORCEMENT_MODE` | `monitor` or `block` | `monitor` |
 | `BLOCK_THRESHOLD` | Minimum flagged confidence to block | `0.8` |
 | `INFERENCE_URL` | Fixed governed inference server origin | `http://inference:8080` |
-| `LISTEN_PORT` | Listener port | `8443` locally; deployment port pending documentation |
+| `LISTEN_PORT` | Listener port | `8443` local TLS; `8080` Tinfoil shim HTTP |
 | `CORS_ALLOW_ORIGIN` | One allowed browser origin | Unset; no CORS |
 | `SAMPLE_RATE` | Monitor sampling probability | `0.05` |
 | `REPORT_PERIOD_SECONDS` | Non-overlapping report window | `600` |
@@ -157,7 +205,7 @@ No real deployment measurements are approved or published yet.
 | `CLASSIFIER_DEFINITION` | Definition bundled into image | `classifiers/ai_capabilities.md` |
 | `LOG_LEVEL` | Allowlisted operational log verbosity | `INFO` |
 | `AIAB_URL` | Webchat's proxy base URL | `https://localhost:8443` |
-| `EXPECTED_AIAB_DIGEST` | Auditor's independently approved image measurement | Required outside insecure local mode |
+| `EXPECTED_AIAB_DIGEST` | Auditor's approved Tinfoil release digest (`tinfoil.hash`), distinct from OCI image digest | Required outside insecure local mode |
 | `EXPECTED_POLICY_DIGEST` | Auditor's independently approved policy manifest digest | Required outside insecure local mode |
 
 `CLASSIFIER_ENDPOINT_OVERRIDE` is deliberately unsupported and must fail startup if

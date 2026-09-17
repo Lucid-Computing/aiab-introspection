@@ -3,9 +3,16 @@
 !pyproject.toml
 !uv.lock
 !aiab/
+aiab/**
 !aiab/*.py
 !classifiers/
+classifiers/**
 !classifiers/*.md
 !deploy/
+deploy/**
 !deploy/Dockerfile
 !.dockerignore
+# Keep these exclusions last: reincluding a directory also includes descendants.
+**/__pycache__
+**/*.pyc
+**/*.pyo

@@ -18,11 +18,13 @@ FROM docker.io/library/python:3.12.13-slim-trixie@sha256:229a2c5bfa27522db7815ea
 ARG SOURCE_DATE_EPOCH=0
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    XDG_CACHE_HOME=/tmp/aiab-cache \
+    XDG_DATA_HOME=/tmp/aiab-data
 WORKDIR /app
 COPY --from=dependencies /app/.venv /app/.venv
 COPY aiab/ /app/aiab/
 COPY classifiers/ /app/classifiers/
 USER 65532:65532
-EXPOSE 8443
+EXPOSE 8443 8080
 CMD ["python", "-m", "aiab.main"]

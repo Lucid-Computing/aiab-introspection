@@ -19,8 +19,10 @@ and its public key. Signatures alone do not establish the application's identity
 All commands check the public identity against the canonical manifest digest.
 Passing `--expected-policy-digest` (or `EXPECTED_POLICY_DIGEST`) also compares the
 policy to a separately approved digest. `verify` prints the policy digest and says
-the image is unverified. Attested mode currently fails explicitly without making
-a request; Tinfoil verification is a later implementation stage. An expected image
+the image is unverified. Outside local mode, the auditor requires approved Tinfoil
+release and policy digests, invokes the Tinfoil CLI and fetches artifacts through
+the SDK's verified TLS transport. See the
+[attested deployment procedure](../deploy/tinfoil/README.md). An expected release
 digest cannot be verified in local mode.
 
 `report` and `rollup` validate signatures, exact report fields, finalized counters,

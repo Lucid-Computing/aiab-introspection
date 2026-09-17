@@ -135,6 +135,8 @@ class Runtime:
                         await result
             except Exception:
                 event("startup_failed")
+                if self.config.aiab_mode == "tinfoil":
+                    raise RuntimeError("Classifier startup verification failed") from None
                 return
         self.healthy = True
         self._workers = [
@@ -284,17 +286,17 @@ def create_app(
     settings.validate()
     configure_logging(settings.log_level)
     implementation = classifier or make_classifier(settings)
-    if settings.aiab_mode != "local":
-        raise ConfigurationError("Tinfoil serving integration is not available in this milestone")
-    if settings.tinfoil_api_key and not isinstance(implementation, TinfoilLLMClassifier):
+    if (settings.aiab_mode == "tinfoil" or settings.tinfoil_api_key) and not isinstance(
+        implementation, TinfoilLLMClassifier
+    ):
         raise ConfigurationError("SDK classifier required when TINFOIL_API_KEY is configured")
     client = upstream_client or httpx.AsyncClient(follow_redirects=False, trust_env=False)
     runtime = Runtime(settings, implementation, client)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        await runtime.start()
         try:
+            await runtime.start()
             yield
         finally:
             await runtime.close()

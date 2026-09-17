@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>AIAB · Governed chat demo</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #172b35; background: #f4f6f7; }
+    body { max-width: 760px; margin: 3rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: .4rem; font-size: 1.9rem; }
+    p { line-height: 1.5; }
+    #status { overflow-wrap: anywhere; font-size: .9rem; }
+    #messages { padding: 0; list-style: none; }
+    .message { padding: 1rem; margin: 1rem 0; background: white; border: 1px solid #c9d3d8; border-radius: .5rem; }
+    .message p { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; }
+    .blocked { background: #fff0f0; border-color: #bb2937; color: #821520; }
+    .error { background: #eceff1; color: #303a40; }
+    .user { border-left: 4px solid #315c80; }
+    .controls { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1rem 0; }
+    button, textarea { font: inherit; }
+    button { padding: .6rem .8rem; cursor: pointer; border: 1px solid #637b89; border-radius: .35rem; background: white; color: #172b35; }
+    button:disabled { cursor: wait; opacity: .6; }
+    button:focus-visible, textarea:focus-visible { outline: 3px solid #1674c4; outline-offset: 3px; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 130px; padding: .8rem; border: 1px solid #637b89; border-radius: .35rem; }
+    #send { background: #173f5f; color: white; }
+    .note { font-size: .9rem; color: #435967; }
+  </style>
+  <script src="config.js"></script>
+</head>
+<body>
+  <main>
+    <h1>AIAB · Governed chat</h1>
+    <p>Try a conversation through the AIAB policy gate.</p>
+    <p id="status" role="status">Connecting…</p>
+    <p class="note">Demo UI, not an attestation verifier. Use synthetic messages. Conversation history stays in this page’s memory and is sent to AIAB when you send a message.</p>
+    <ul id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></ul>
+    <div class="controls">
+      <button id="benign" type="button" disabled>Load benign prompt</button>
+      <button id="ml_training" type="button" disabled>Load ML-training prompt</button>
+      <button id="clear" type="button">New conversation</button>
+    </div>
+    <form id="chat">
+      <label for="prompt">Message</label>
+      <textarea id="prompt" required maxlength="20000" aria-describedby="send-help"></textarea>
+      <p id="send-help" class="note">Blocked or failed turns remain visible but are excluded from future conversation history.</p>
+      <div class="controls"><button id="send" type="submit" disabled>Send</button><button id="retry" type="button">Reconnect</button></div>
+    </form>
+  </main>
+  <script>
+    "use strict";
+    const byId = (id) => document.getElementById(id);
+    const history = [];
+    let model = null;
+    let busy = false;
+    let aiabUrl = null;
+
+    function card(title, message, kind = "") {
+      const item = document.createElement("li");
+      item.className = `message ${kind}`;
+      const heading = document.createElement("strong");
+      heading.textContent = title;
+      const content = document.createElement("p");
+      content.textContent = message;
+      item.append(heading, content);
+      byId("messages").append(item);
+    }
+
+    function setBusy(value) {
+      busy = value;
+      byId("send").disabled = busy || !model;
+      byId("retry").disabled = busy;
+      byId("clear").disabled = busy;
+      byId("prompt").disabled = busy;
+    }
+
+    async function request(url, options = {}) {
+      return fetch(url, { ...options, credentials: "omit", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(45000) });
+    }
+
+    async function readBody(response) {
+      try { return await response.json(); } catch { return null; }
+    }
+
+    function errorMessage(body, fallback) {
+      return typeof body?.error?.message === "string" ? body.error.message : fallback;
+    }
+
+    async function connect() {
+      if (busy) return;
+      model = null;
+      setBusy(true);
+      try {
+        const parsed = new URL(window.AIAB_URL);
+        if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== "/") throw new Error("Invalid configuration");
+        aiabUrl = parsed.origin;
+        byId("status").textContent = `AIAB: ${aiabUrl} · Connecting…`;
+        const healthResponse = await request(`${aiabUrl}/aiab/health`);
+        const health = await readBody(healthResponse);
+        if (!healthResponse.ok || health?.status !== "ready" || !["block", "monitor"].includes(health.enforcement_mode)) {
+          card(`Connection error · HTTP ${healthResponse.status}`, errorMessage(health, "AIAB is not ready."), "error");
+          return;
+        }
+        byId("status").textContent = `AIAB: ${aiabUrl} · mode: ${health.enforcement_mode} · ${health.aiab_mode ?? "unknown"}`;
+        const modelsResponse = await request(`${aiabUrl}/v1/models`);
+        const models = await readBody(modelsResponse);
+        const selected = models?.data?.find((item) => typeof item?.id === "string" && item.id.length > 0)?.id;
+        if (!modelsResponse.ok || !selected) {
+          card(`Connection error · HTTP ${modelsResponse.status}`, errorMessage(models, "No usable inference model is available."), "error");
+          return;
+        }
+        model = selected;
+      } catch {
+        card("Connection error · network/configuration", "Cannot reach AIAB. Check the configured URL, CORS origin, and local certificate trust, then reconnect.", "error");
+      } finally {
+        if (!model) byId("status").textContent = `AIAB: ${aiabUrl ?? "not configured"} · unavailable`;
+        setBusy(false);
+      }
+    }
+
+    byId("chat").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const content = byId("prompt").value.trim();
+      if (busy || !model || !content) return;
+      const user = { role: "user", content };
+      card("You", content, "user");
+      byId("prompt").value = "";
+      setBusy(true);
+      try {
+        const response = await request(`${aiabUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model, messages: [...history, user], stream: false })
+        });
+        const body = await readBody(response);
+        if (response.status === 403 && body?.error?.code === "aiab_blocked") {
+          card("Blocked by AIAB", `${errorMessage(body, "Blocked by policy.")}\nClassifier: ${body.error.classifier_id ?? "unknown"}\nConfidence: ${body.error.confidence ?? "unknown"}`, "blocked");
+        } else if (response.status === 200 && typeof body?.choices?.[0]?.message?.content === "string") {
+          const assistant = { role: "assistant", content: body.choices[0].message.content };
+          history.push(user, assistant);
+          card("Assistant", assistant.content);
+        } else {
+          card(`Request error · HTTP ${response.status}`, errorMessage(body, "AIAB returned an unsuccessful or invalid response."), "error");
+        }
+      } catch {
+        card("Request error · network", "The request failed or timed out. Check AIAB connectivity and reconnect if needed.", "error");
+      } finally {
+        setBusy(false);
+        byId("prompt").focus();
+      }
+    });
+    byId("clear").addEventListener("click", () => {
+      if (busy) return;
+      history.length = 0;
+      byId("messages").replaceChildren();
+      byId("prompt").value = "";
+      byId("prompt").focus();
+    });
+    byId("retry").addEventListener("click", connect);
+
+    async function loadPresets() {
+      try {
+        const response = await request("demo_prompts.json");
+        const presets = await readBody(response);
+        if (!response.ok || !presets) throw new Error("Presets unavailable");
+        for (const id of ["benign", "ml_training"]) {
+          if (typeof presets[id] !== "string") throw new Error("Invalid preset");
+          byId(id).disabled = false;
+          byId(id).addEventListener("click", () => {
+            if (busy) return;
+            byId("prompt").value = presets[id];
+            byId("prompt").focus();
+          });
+        }
+      } catch {
+        card("Preset error", "Could not load the demo prompts. You can still type a message.", "error");
+      }
+    }
+    loadPresets();
+    connect();
+  </script>
+</body>
+</html>

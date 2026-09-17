@@ -9,10 +9,21 @@ from aiab.proxy import create_app
 
 
 def main() -> None:
-    """Start local TLS with ephemeral in-memory certificate/key material."""
+    """Serve local TLS, or private HTTP behind the Tinfoil enclave's TLS shim."""
     try:
         config = Config.from_env()
         app = create_app(config)
+        if config.aiab_mode == "tinfoil":
+            uvicorn.run(
+                app,
+                host="0.0.0.0",
+                port=config.listen_port,
+                access_log=False,
+                log_config=None,
+                server_header=False,
+                proxy_headers=False,
+            )
+            return
         with ephemeral_tls_files() as (certificate, private_key):
             uvicorn.run(
                 app,
@@ -23,6 +34,7 @@ def main() -> None:
                 access_log=False,
                 log_config=None,
                 server_header=False,
+                proxy_headers=False,
             )
     except (ConfigurationError, RuntimeError) as exc:
         event("startup_failed")

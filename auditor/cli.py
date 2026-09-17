@@ -9,12 +9,13 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import httpx
 
 from aiab.reporter import COUNTERS, canonical_json
+from auditor.attestation import AttestedClient, production_inputs, verify_attestation
 from auditor.checkpoint import checkpoint_warnings, load_checkpoint, save_checkpoint
 from auditor.verify import VerificationError, VerifiedReports, strict_json, verify_reports
 
@@ -56,7 +57,11 @@ def local_origin(host: str) -> str:
         ) from None
 
 
-def fetch_artifacts(client: httpx.Client, *, reports: bool) -> tuple[Any, Any, Any]:
+class ArtifactClient(Protocol):
+    def get(self, path: str) -> httpx.Response: ...
+
+
+def fetch_artifacts(client: ArtifactClient, *, reports: bool) -> tuple[Any, Any, Any]:
     def get(path: str) -> Any:
         response = client.get(path)
         if response.status_code != 200:
@@ -106,8 +111,12 @@ def _parser() -> argparse.ArgumentParser:
     for command in ("verify", "report", "rollup"):
         sub = commands.add_parser(command)
         sub.add_argument("--host", required=True)
-        sub.add_argument("--repo", help="Reviewed source repository (used by future attestation)")
-        sub.add_argument("--expected-digest", default=os.getenv("EXPECTED_AIAB_DIGEST"))
+        sub.add_argument("--repo", help="Reviewed Tinfoil config repository (owner/repo)")
+        sub.add_argument(
+            "--expected-digest",
+            default=os.getenv("EXPECTED_AIAB_DIGEST"),
+            help="Approved Tinfoil release tinfoil.hash digest, not Docker image digest",
+        )
         sub.add_argument("--expected-policy-digest", default=os.getenv("EXPECTED_POLICY_DIGEST"))
         sub.add_argument("--insecure-local", action="store_true")
         if command != "verify":
@@ -118,27 +127,34 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     try:
-        if not args.insecure_local:
-            raise VerificationError(
-                "Tinfoil attestation verification is not implemented yet. "
-                "Attested mode requires --repo and independently approved image and policy "
-                "digests; use --insecure-local only for local development."
+        evidence = None
+        if args.insecure_local:
+            origin = local_origin(args.host)
+            print(
+                "WARNING: INSECURE LOCAL MODE — TLS identity and enclave attestation are NOT "
+                "verified. A local endpoint can replace both reports and signing keys.",
+                file=sys.stderr,
             )
-        origin = local_origin(args.host)
-        print(
-            "WARNING: INSECURE LOCAL MODE — TLS identity and enclave attestation are NOT "
-            "verified. A local endpoint can replace both reports and signing keys.",
-            file=sys.stderr,
-        )
+        else:
+            production_inputs(
+                args.host, args.repo, args.expected_digest, args.expected_policy_digest
+            )
+            evidence = verify_attestation(args.host, args.repo, args.expected_digest)
         state_file = getattr(args, "state_file", None)
         previous = load_checkpoint(state_file) if state_file else None
-        # Environment proxies and redirects could escape the loopback boundary.
-        with httpx.Client(
-            base_url=origin, verify=False, trust_env=False, follow_redirects=False, timeout=15
-        ) as client:
-            identity, manifest, envelopes = fetch_artifacts(
-                client, reports=args.command != "verify"
-            )
+        if evidence is not None:
+            with AttestedClient(evidence) as client:
+                identity, manifest, envelopes = fetch_artifacts(
+                    client, reports=args.command != "verify"
+                )
+        else:
+            # Environment proxies and redirects could escape the loopback boundary.
+            with httpx.Client(
+                base_url=origin, verify=False, trust_env=False, follow_redirects=False, timeout=15
+            ) as client:
+                identity, manifest, envelopes = fetch_artifacts(
+                    client, reports=args.command != "verify"
+                )
         verified = verify_reports(
             identity, manifest, envelopes, expected_policy_digest=args.expected_policy_digest
         )
@@ -153,14 +169,20 @@ def main(argv: Sequence[str] | None = None) -> None:
             print(CONTINUITY_LIMITATION, file=sys.stderr)
         if state_file:
             save_checkpoint(state_file, verified, previous)
-        print("Image digest: UNVERIFIED (insecure local mode)")
+        if evidence is None:
+            print("Image digest: UNVERIFIED (insecure local mode)")
+        else:
+            print(f"Tinfoil release digest: {evidence.release_digest}")
         print(f"Policy digest: {verified.identity['policy_digest']}")
-        if args.expected_digest:
+        if args.expected_digest and args.insecure_local:
             print(
                 "WARNING: Expected image digest cannot be checked in local mode.", file=sys.stderr
             )
         if args.command == "verify":
-            print("Local manifest and public identity are consistent; no attestation claim.")
+            if evidence is None:
+                print("Local manifest and public identity are consistent; no attestation claim.")
+            else:
+                print("Attested release, approved policy and public identity verified.")
         elif args.command == "report":
             for report in verified.reports:
                 print(canonical_json(report))

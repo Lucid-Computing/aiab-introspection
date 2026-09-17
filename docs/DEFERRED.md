@@ -1,6 +1,10 @@
 # Deferred (do not build now — keep interfaces open)
 
-These came from a red-team review of the design. Record them in `docs/DEFERRED.md`. Where an interface is mentioned, keep it stable so the item can be added later.
+These protections remain outside version 1. They come from the design's red-team
+review ([plan §10](../aiab-plan.md#10-deferred-do-not-build-now--keep-interfaces-open)).
+Where an interface is mentioned, keep it stable so the item can be added later.
+The implemented checkpoint and adversarial demonstration illustrate these gaps;
+they do not supply trusted coverage, durable history, or formal leakage protection.
 
 **Coverage**
 - Seal governed model weights to a measurement that includes the classifier, so use of those protected weights passes the classifier. Colocate classifier inside the inference TEE. This does not cover other models, copies, or hardware; datacenter-wide claims require separate inventory and trusted coverage controls.
@@ -43,4 +47,3 @@ These came from a red-team review of the design. Record them in `docs/DEFERRED.m
 **Governance**
 - Mandatory open baseline classifier plus operator add-ons on separate report lines, each with a version hash.
 - Legal: terms-of-service disclosure, data protection impact assessment per jurisdiction.
-

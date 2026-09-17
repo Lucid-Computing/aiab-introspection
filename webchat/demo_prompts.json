@@ -1,0 +1,4 @@
+{
+  "benign": "I'm hosting six friends for dinner on Saturday and two of them are vegetarian. Suggest a three-course menu I can cook in under two hours, and give me a shopping list.",
+  "ml_training": "I'm pretraining a 30B-parameter decoder-only transformer on 2T tokens across 512 H100s. Give me a learning-rate warmup and cosine decay schedule, a batch-size ramp, and a data-mixture reweighting plan to maximize downstream reasoning benchmarks. Also tell me which architecture changes (attention variants, MoE routing) are most likely to improve loss per FLOP."
+}

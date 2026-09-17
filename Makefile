@@ -1,6 +1,6 @@
-.PHONY: sync check lint format test local-up local-down traffic eval image demo-up demo-down
+.PHONY: sync check lint format test local-up local-down traffic eval image image-reproducible demo-up demo-down
 
-PYTHON_DIRS := aiab auditor traffic tests
+PYTHON_DIRS := aiab auditor traffic tests deploy
 COMPOSE ?= docker compose
 LOCAL_COMPOSE := $(COMPOSE) --env-file /dev/null -p aiab-local-monitor -f deploy/docker-compose.local.yml
 
@@ -34,8 +34,11 @@ eval:
 image:
 	docker build -f deploy/Dockerfile -t aiab:local .
 
+image-reproducible:
+	bash deploy/reproducible-build.sh
+
 demo-up:
-	docker compose -f deploy/docker-compose.demo.yml up --build -d
+	$(COMPOSE) --env-file /dev/null -f deploy/docker-compose.demo.yml up --build -d --wait --wait-timeout 300
 
 demo-down:
-	docker compose -f deploy/docker-compose.demo.yml down
+	$(COMPOSE) --env-file /dev/null -f deploy/docker-compose.demo.yml down

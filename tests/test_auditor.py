@@ -313,7 +313,7 @@ def test_attested_and_invalid_local_cli_never_connect(
     with pytest.raises(SystemExit) as error:
         main(["verify", "--host", "public.example"])
     assert error.value.code == 1
-    assert "not implemented yet" in capsys.readouterr().err
+    assert "independently approved release and policy digests" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         main(["rollup", "--host", "public.example", "--insecure-local"])
 

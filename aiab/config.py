@@ -75,7 +75,9 @@ class Config:
                 enforcement_mode=env.get("ENFORCEMENT_MODE", "monitor"),
                 block_threshold=float(env.get("BLOCK_THRESHOLD", "0.8")),
                 inference_url=env.get("INFERENCE_URL", "http://inference:8080").rstrip("/"),
-                listen_port=int(env.get("LISTEN_PORT", "8443")),
+                listen_port=int(
+                    env.get("LISTEN_PORT", "8080" if env.get("AIAB_MODE") == "tinfoil" else "8443")
+                ),
                 cors_allow_origin=env.get("CORS_ALLOW_ORIGIN") or None,
                 sample_rate=float(env.get("SAMPLE_RATE", "0.05")),
                 report_period_seconds=int(env.get("REPORT_PERIOD_SECONDS", "600")),

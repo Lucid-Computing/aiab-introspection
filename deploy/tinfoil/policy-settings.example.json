@@ -1,0 +1,14 @@
+{
+  "AIAB_MODE": "tinfoil",
+  "AIAB_ID": "aiab-demo",
+  "ENFORCEMENT_MODE": "block",
+  "BLOCK_THRESHOLD": "0.8",
+  "INFERENCE_URL": "https://REPLACE_INFERENCE_HOST",
+  "LISTEN_PORT": "8080",
+  "SAMPLE_RATE": "0.05",
+  "REPORT_PERIOD_SECONDS": "10",
+  "REPORT_HISTORY": "100",
+  "CLASSIFIER_MODEL": "gpt-oss-safeguard-120b",
+  "CLASSIFIER_DEFINITION": "classifiers/ai_capabilities.md",
+  "LOG_LEVEL": "INFO"
+}

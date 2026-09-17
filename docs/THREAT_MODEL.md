@@ -1,7 +1,8 @@
 # Version 1 threat model
 
-This document states design requirements and limits. Until implementation and live
-verification complete, it is not evidence that a particular deployment meets them.
+This document states implemented controls, deployment requirements and limits.
+Offline tests are not evidence that a particular deployment meets them; live
+Tinfoil verification remains outstanding.
 
 ## Claim and observation boundary
 
@@ -36,10 +37,21 @@ the endpoint itself is circular. The policy manifest is derived from effective
 startup settings and fetched over the same attested channel. Image identity alone
 does not establish environment settings. Debug enclaves must be rejected.
 
+The auditor pins the Tinfoil release's `tinfoil.hash`/Sigstore subject digest; the
+measured release config separately pins the OCI application image digest. CLI
+verification must succeed with complete code/enclave measurements and a matching
+TLS key. Audit artifacts are fetched through the SDK's verified, pinned TLS
+transport, with repo/release/code/key identity checked before and after each fetch.
+An SDK re-verification after key rotation requires a fresh audit. An expected policy
+manifest is generated offline from reviewed source/settings, never approved merely
+by fetching the running server's manifest. These integrations have offline tests;
+no public deployment or live hardware-verification result exists yet.
+
 Classifier calls must exclusively use the reviewed Tinfoil SDK verification path.
-The requested model identifier is not an immutable weight digest. Which serving
-code, routing settings, identifiers, or weights the provider actually attests remains
-an explicit open question until checked against its documentation. Local self-signed
+The requested model identifier is not an immutable weight digest. Serving-code
+measurements and the router release are exposed by the provider SDK. The model alias
+does not prove an independently pinned immutable weight digest; downstream provider
+verification remains part of the trust chain. Local self-signed
 TLS and the mock classifier provide development behavior, not enclave guarantees.
 
 ## Data handling and observable channels
@@ -51,13 +63,23 @@ error categories; no raw HTTP/SDK exception text or body debugging. Logging filt
 and sentinel regression tests are defense in depth and cannot prove that arbitrary
 plaintext or all covert channels are absent.
 
-Expected outbound destinations are the configured governed inference origin, the
-reviewed classifier SDK endpoint, and any provider verification infrastructure required
-by that SDK, to be inventoried after documentation review. No analytics or arbitrary
+Expected outbound destinations are the configured governed inference origin, SDK
+router discovery and selected router, GitHub/attestation certificate proxies and
+Sigstore/TUF verification infrastructure. The template uses open public egress with
+Tinfoil's private-range blocking because a complete dynamic hostname allowlist is
+not established. Application URLs remain fixed/reviewed; this is not an externally
+enforced destination allowlist or absence-of-exfiltration proof. See
+[OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) for the inventory. No analytics or arbitrary
 request-selected destinations are allowed. Browser traffic goes to the configured
 AIAB endpoint and same-origin static assets. Observable outputs include signed reports,
 public identity/manifest/health endpoints, HTTP responses and sizes, connection timing,
 and allowlisted operational logs. The provider and network may observe traffic metadata.
+
+The Tinfoil shim supplies the attested external TLS boundary and forwards HTTP to
+the application's private port 8080. SDK public caches use tmpfs directories in the
+template; no application volume persists. Ordinary browser and traffic-generator
+connections use Web PKI HTTPS and do not independently attest the AIAB; only the
+auditor and explicitly verified SDK/CLI client paths make that channel claim.
 
 The fixed report schema is not a fixed byte length or a proven bandwidth limit.
 Exact counts, particularly in short periods, can reveal information. Version 1 has
@@ -87,9 +109,15 @@ response sizes and timing may also reveal it to network observers. Responses are
 not classified before release in this mode.
 
 Classifier verification must succeed before startup admits chat traffic. Later
-attestation failure closes admission with 503 until verification recovers, with no
-mock fallback. Processing deadlines prevent late results from revising signed periods
+attestation failure permanently closes this boot's admission gate with 503. Recovery
+requires a restart and successful startup verification, with no mock fallback.
+Processing deadlines prevent late results from revising signed periods
 or forwarding requests after block-mode timeout.
+
+Tinfoil mode aborts startup if classifier verification fails. Its container readiness
+probe requires the loopback health endpoint to return HTTP 200 and `status=ready`;
+process existence does not establish verification. Local mode permits an unavailable
+503 endpoint for diagnostics after failed startup verification.
 
 ## Report identity and continuity
 
@@ -116,4 +144,3 @@ See [DEFERRED.md](DEFERRED.md) for trusted coverage controls, verifiable/token s
 persistent keys, classifier hardening, output privacy, durable collection, stronger
 rollback/fork protection, and other excluded features. No version 1 claim assumes
 these protections already exist.
-

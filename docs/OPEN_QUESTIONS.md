@@ -6,8 +6,8 @@ and tests deliberately do not read the user's secret or make a keyed API call.
 
 1. **TLS and app port.** The shim exposes configured paths and forwards to
    `shim.upstream-port` over its private `shim-net` bridge. Secure clients verify
-   the enclave before sending requests. The intended deployment uses plain HTTP
-   on an internal application port behind that shim; the TLS termination model
+   the enclave before sending requests. The implemented Tinfoil mode uses plain HTTP
+   on port 8080 behind that shim; the TLS termination model
    is an inference from those routing and connection docs, not a tested deployment.
    The application port must match the configured upstream port; the docs do not
    mandate a universal port. [Networking and routing](https://docs.tinfoil.sh/containers/config-networking),
@@ -33,6 +33,11 @@ and tests deliberately do not read the user's secret or make a keyed API call.
    needs authorization. A deployment must validate the complete list against its
    selected platform/router; allowing only `inference.tinfoil.sh` is insufficient.
    This inventory is source-derived and is not a verified deployment allowlist.
+   The template therefore explicitly uses `egress: open`, which permits public
+   destinations while Tinfoil blocks private/internal ranges. Frozen upstream URLs,
+   disabled upstream redirects and the verified classifier SDK constrain application
+   destinations; there is no externally enforced hostname allowlist claim. A complete
+   allowlist must be established in a live run before narrowing this setting.
    [Networking rules](https://docs.tinfoil.sh/containers/config-networking),
    [SDK source](https://github.com/tinfoilsh/tinfoil-python/tree/main/src/tinfoil).
 
@@ -79,5 +84,38 @@ fresh opaque per-boot value explicitly, which stays in memory and is neither a u
 identifier nor an API key. It is absent from reports and manifests. This scopes
 prompt-cache sharing for the boot; it does not disable provider prompt caching or
 provide per-user cache isolation. Public attestation/trust metadata may still be
-cached by SDK dependencies; production ephemeral cache directories must be considered
-separately. [Prompt caching](https://docs.tinfoil.sh/sdk/prompt-caching).
+cached by SDK dependencies. The image sets cache/data directories under `/tmp`, and
+the Tinfoil template mounts `/tmp` as tmpfs with a read-only root; no persistent
+volume is configured. [Prompt caching](https://docs.tinfoil.sh/sdk/prompt-caching).
+
+8. **Auditor digest semantics.** Current CLI v0.18.5 JSON `digest` and Python SDK
+   0.14.0 `release_digest` are the release's `tinfoil.hash`/Sigstore subject digest.
+   They are not Docker image digests or raw SNP/TDX measurements. AIAB's
+   `--expected-digest` pins that release value, and the tagged measured config must
+   separately pin the approved image. The CLI JSON has no explicit debug boolean;
+   the upstream verifier rejects debug hardware policies and the adapter requires
+   status `ok`, complete measurements and matching TLS keys. Unknown record fields
+   fail closed. All fetched audit artifacts use the SDK's verified transport and
+   are checked against the same release, code measurement and TLS key before/after
+   each request. These paths are tested offline; real deployment acceptance remains
+   unperformed. [CLI source](https://github.com/tinfoilsh/tinfoil-cli/blob/v0.18.5/attestation.go),
+   [deployment and approval steps](../deploy/tinfoil/README.md).
+
+9. **Release/runtime acceptance.** CVM 0.14.7 and 2 CPUs/8192 MB follow the current
+   official template. Actual organization/repository, public inference origin,
+   registry digest, measured release, hostname and independently approved policy
+   remain unavailable. A temporary checksum-verified Buildx 0.37.1 setup and pinned
+   BuildKit 0.26.2 produced matching clean timestamp-normalized OCI image digests;
+   see [REPRODUCIBILITY.md](REPRODUCIBILITY.md). Tinfoil startup verification failure
+   now aborts the application lifespan, and the template has a loopback readiness
+   probe. No public image or deployment was created.
+
+10. **Adversarial deployment acceptance.** The staged
+    [adversarial driver](../demo/ADVERSARIAL.md) exercises local startup refusal and
+    provides operator-assisted live probes. Tamper/debug/configuration/restart
+    deployments and direct-inference bypass remain unperformed. A threshold change
+    in measured YAML can change the Tinfoil release digest while keeping the same
+    OCI image. To isolate policy rejection, independently approve the candidate
+    release while retaining the original policy pin. The current adapter suppresses
+    CLI error details, so a generic verifier rejection cannot by itself establish
+    debug-policy causality; retain independently reviewed hardware-debug evidence.
