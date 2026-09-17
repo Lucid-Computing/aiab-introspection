@@ -1,0 +1,49 @@
+[project]
+name = "aiab-introspection"
+version = "0.1.0"
+description = "Attestable, privacy-preserving introspection of inference received by a proxy"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Typed HTTP routes and request validation at the proxy boundary.
+    "fastapi>=0.115,<1",
+    # ASGI serving, including the local TLS endpoint.
+    "uvicorn>=0.34,<1",
+    # Async requests to the governed inference server and local auditor transport.
+    "httpx>=0.28,<1",
+    # Ed25519 report signatures and ephemeral local TLS certificates.
+    "cryptography>=44,<47",
+]
+
+[dependency-groups]
+dev = [
+    # Behavioral regression tests for privacy, accounting, and verification.
+    "pytest>=8,<10",
+    # Async proxy and lifecycle tests.
+    "pytest-asyncio>=0.25,<2",
+    # Shared lint and formatting checks.
+    "ruff>=0.9,<1",
+]
+
+[project.scripts]
+aiab = "aiab.main:main"
+auditor = "auditor.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aiab", "auditor"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
