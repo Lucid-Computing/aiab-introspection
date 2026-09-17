@@ -19,7 +19,7 @@ from aiab.classifier import (
     ClassificationError,
     Classifier,
     ClassifyResult,
-    MockClassifier,
+    TinfoilLLMClassifier,
     make_classifier,
     serialize_messages,
     strict_json_loads,
@@ -156,6 +156,9 @@ class Runtime:
             if isinstance(call, asyncio.Task):
                 call.cancel()
         self._executor.shutdown(wait=False, cancel_futures=True)
+        close = getattr(self.classifier, "close", None)
+        if close is not None:
+            await asyncio.to_thread(close)
 
     async def _period_worker(self) -> None:
         while True:
@@ -283,8 +286,8 @@ def create_app(
     implementation = classifier or make_classifier(settings)
     if settings.aiab_mode != "local":
         raise ConfigurationError("Tinfoil serving integration is not available in this milestone")
-    if isinstance(implementation, MockClassifier) and settings.tinfoil_api_key:
-        raise ConfigurationError("Mock classifier cannot replace a configured attested classifier")
+    if settings.tinfoil_api_key and not isinstance(implementation, TinfoilLLMClassifier):
+        raise ConfigurationError("SDK classifier required when TINFOIL_API_KEY is configured")
     client = upstream_client or httpx.AsyncClient(follow_redirects=False, trust_env=False)
     runtime = Runtime(settings, implementation, client)
 
@@ -438,6 +441,7 @@ def create_app(
                 "status": "ready" if runtime.healthy else "unavailable",
                 "enforcement_mode": settings.enforcement_mode,
                 "aiab_mode": settings.aiab_mode,
+                "classifier_verification": getattr(implementation, "verification_metadata", None),
             },
             status_code=200 if runtime.healthy else 503,
         )

@@ -81,7 +81,12 @@ class Config:
                 report_period_seconds=int(env.get("REPORT_PERIOD_SECONDS", "600")),
                 report_history=int(env.get("REPORT_HISTORY", "100")),
                 tinfoil_api_key=env.get("TINFOIL_API_KEY") or None,
-                classifier_model=env.get("CLASSIFIER_MODEL", "mock-keywords/v1"),
+                classifier_model=env.get("CLASSIFIER_MODEL")
+                or (
+                    "gpt-oss-safeguard-120b"
+                    if env.get("TINFOIL_API_KEY") or env.get("AIAB_MODE") == "tinfoil"
+                    else "mock-keywords/v1"
+                ),
                 classifier_definition=definition,
                 definition_text=path.read_text(encoding="utf-8"),
                 log_level=env.get("LOG_LEVEL", "INFO").upper(),
@@ -94,6 +99,10 @@ class Config:
     def validate(self) -> None:
         if self.aiab_mode not in {"local", "tinfoil"}:
             raise ConfigurationError("AIAB_MODE must be local or tinfoil")
+        if self.aiab_mode == "tinfoil" and not self.tinfoil_api_key:
+            raise ConfigurationError("Tinfoil mode requires TINFOIL_API_KEY")
+        if not re_model_id(self.classifier_model):
+            raise ConfigurationError("Invalid CLASSIFIER_MODEL identifier")
         if self.enforcement_mode not in {"monitor", "block"}:
             raise ConfigurationError("ENFORCEMENT_MODE must be monitor or block")
         if not self.aiab_id or len(self.aiab_id) > 128:
@@ -113,3 +122,14 @@ class Config:
             raise ConfigurationError("CORS_ALLOW_ORIGIN must be one exact origin")
         if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ConfigurationError("Unsupported LOG_LEVEL")
+
+
+def re_model_id(value: str) -> bool:
+    return (
+        bool(value)
+        and len(value) <= 128
+        and all(
+            character.isascii() and (character.isalnum() or character in "_./:-")
+            for character in value
+        )
+    )

@@ -1,0 +1,11 @@
+# Only reviewed runtime sources and dependency inputs enter the build context.
+**
+!pyproject.toml
+!uv.lock
+!aiab/
+!aiab/*.py
+!classifiers/
+!classifiers/*.md
+!deploy/
+!deploy/Dockerfile
+!.dockerignore

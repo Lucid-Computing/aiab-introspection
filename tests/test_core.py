@@ -94,7 +94,7 @@ def test_configuration_is_frozen_and_rejects_override() -> None:
     with pytest.raises(ConfigurationError):
         create_app(settings(aiab_mode="tinfoil"))
     with pytest.raises(ConfigurationError):
-        create_app(settings(tinfoil_api_key="never-fallback"))
+        create_app(settings(tinfoil_api_key="never-fallback"), classifier=MockClassifier())
 
 
 @pytest.mark.parametrize(

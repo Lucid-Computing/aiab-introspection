@@ -5,6 +5,7 @@ import logging
 _EVENTS = frozenset(
     {
         "startup_ready",
+        "classifier_verified",
         "startup_failed",
         "stream_rejected",
         "classifier_error",
@@ -20,7 +21,19 @@ def configure_logging(level: str = "INFO") -> None:
     logging.basicConfig(level=getattr(logging, level))
     logging.getLogger("aiab").setLevel(getattr(logging, level))
     # URLs, exception strings and wire traces can contain private conversation data.
-    for name in ("httpx", "httpcore", "openai", "tinfoil", "uvicorn.access", "uvicorn.error"):
+    for name in (
+        "httpx",
+        "httpcore",
+        "httpx2",
+        "httpcore2",
+        "openai",
+        "tinfoil",
+        "ehbp",
+        "sigstore",
+        "urllib3",
+        "uvicorn.access",
+        "uvicorn.error",
+    ):
         logger = logging.getLogger(name)
         logger.disabled = True
         logger.propagate = False

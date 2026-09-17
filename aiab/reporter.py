@@ -12,7 +12,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from aiab.classifier import SERIALIZATION_VERSION, Classifier, ClassifyResult, build_system_prompt
+from aiab.classifier import (
+    SERIALIZATION_VERSION,
+    TINFOIL_ENDPOINT,
+    TINFOIL_VERIFICATION_POLICY,
+    Classifier,
+    ClassifyResult,
+    TinfoilLLMClassifier,
+    build_system_prompt,
+    generation_parameters,
+)
 from aiab.config import Config, origin
 from aiab.keys import SigningKey
 
@@ -53,6 +62,7 @@ def policy_digest(manifest: dict[str, Any]) -> str:
 
 def build_manifest(config: Config, classifier: Classifier) -> dict[str, Any]:
     """An explicit allowlist of non-secret effective policy settings."""
+    attested = isinstance(classifier, TinfoilLLMClassifier)
     return {
         "schema": "aiab-manifest/v1",
         "classifier_id": classifier.id,
@@ -62,9 +72,13 @@ def build_manifest(config: Config, classifier: Classifier) -> dict[str, Any]:
             build_system_prompt(config.definition_text).encode("utf-8")
         ).hexdigest(),
         "requested_model": config.classifier_model,
-        "classifier_endpoint": "local:mock",
-        "classifier_verification_policy": "local-development-unattested",
-        "generation_parameters": {},  # The local keyword implementation has no generation.
+        "classifier_endpoint": TINFOIL_ENDPOINT if attested else "local:mock",
+        "classifier_verification_policy": (
+            TINFOIL_VERIFICATION_POLICY if attested else "local-development-unattested"
+        ),
+        "generation_parameters": generation_parameters() if attested else {},
+        "classifier_sdk_retries": 0,
+        "classifier_cache_scope": "random-per-boot-memory-only" if attested else "none",
         "input_serialization_version": SERIALIZATION_VERSION,
         "enforcement_mode": config.enforcement_mode,
         "block_threshold": config.block_threshold,

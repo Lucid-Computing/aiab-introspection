@@ -1,0 +1,74 @@
+name: aiab-local-monitor
+
+services:
+  inference:
+    image: ghcr.io/ggml-org/llama.cpp:server-b10524@sha256:57e505f69c3a55fa5dd9c15fced47cff7a899f5b5b504ea93d75b2f401b87830
+    command:
+      - --model
+      - /models/model.gguf
+      - --alias
+      - aiab-demo
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ctx-size
+      - "4096"
+      - --parallel
+      - "1"
+      - --no-webui
+      - --log-disable
+    volumes:
+      - type: bind
+        source: ${INFERENCE_MODEL_PATH:-../models/qwen2.5-1.5b-instruct-q4_k_m.gguf}
+        target: /models/model.gguf
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      start_period: 120s
+      retries: 12
+    logging:
+      driver: none
+
+  aiab:
+    image: aiab:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      AIAB_MODE: local
+      AIAB_ID: aiab-local-monitor
+      ENFORCEMENT_MODE: monitor
+      INFERENCE_URL: http://inference:8080
+      LISTEN_PORT: "8443"
+      SAMPLE_RATE: "1.0"
+      REPORT_PERIOD_SECONDS: "10"
+      REPORT_HISTORY: "1000"
+      CLASSIFIER_MODEL: mock-keywords/v1
+      # An explicit empty value keeps this local demo on the mock classifier.
+      TINFOIL_API_KEY: ""
+    ports:
+      - "127.0.0.1:8443:8443"
+    depends_on:
+      inference:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import httpx;
+          httpx.get('https://127.0.0.1:8443/aiab/health', verify=False,
+          trust_env=False, timeout=3).raise_for_status()
+      interval: 5s
+      timeout: 4s
+      start_period: 10s
+      retries: 12

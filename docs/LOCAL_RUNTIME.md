@@ -45,9 +45,29 @@ text remains transient memory, and operational logging uses static categories/co
 Audit endpoints return only the approved manifest, public boot identity, finalized
 signed reports, or a minimal health state.
 
-This milestone supports the local mock only. Configuring a Tinfoil API key or deployed
-mode fails explicitly until the reviewed SDK integration is installed. There is no
-fallback to mock for unavailable attested configurations. The classifier interface
-accepts synchronous or asynchronous implementations; verification failures close the
-chat admission gate. The Tinfoil integration must supply explicit verified recovery
-before reopening that gate.
+Without a key, local mode uses the mock. Setting `TINFOIL_API_KEY` selects the locked
+Tinfoil SDK classifier, defaulting to `gpt-oss-safeguard-120b`; no `.env` file is loaded
+automatically. The SDK verifies its router before admission. `/aiab/health` exposes
+allowlisted verification metadata, and startup logs a static `classifier_verified`
+event. Later attestation failure closes the gate for this boot; restart and successful
+verification are required for recovery. There is no fallback to the mock. Deployed
+serving mode remains a separate integration stage.
+
+The runtime owns the one classification retry, with SDK inference retries disabled.
+Generation uses temperature zero, at most 512 output tokens, no streaming, and a
+strict JSON schema; these effective settings are in the policy manifest. The full
+definition/schema stays in the system message, with all conversation/response data
+delimited in the user message. Delimiters do not establish prompt-injection resistance.
+The SDK receives a fresh in-memory opaque cache scope for each boot, preventing its
+default cache-scope secret file. Provider prefix caching remains possible within that
+boot. See [integration evidence and limitations](OPEN_QUESTIONS.md).
+
+`make eval` calls the selected classifier directly over the synthetic corpora and
+prints development and held-out metrics separately, including false positives,
+false negatives, and errors. Accuracy, precision and recall use successful results;
+the capabilities block fraction uses all capabilities examples, including errors.
+It also runs the exact two demo prompts and four synthetic request/response pairs.
+No labels or split metadata reach the classifier. The output records the policy
+digest and requested model. This smoke evaluation is not evidence of robustness;
+the evaluator/corpora are excluded from the production image. Live Tinfoil quality
+and latency have not been measured by the offline tests.
