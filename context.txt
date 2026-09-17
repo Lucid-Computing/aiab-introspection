@@ -1,0 +1,92 @@
+Privacy-Preserving Agentic Introspection
+
+One concern with workload classification is that most efforts so far have focused on classifying training versus inference. However especially once we get into RSI, inference may still be very effective at advancing the frontier if the inference can be used for AI research.
+One way to address this is to look at the prompts and responses with a classifier and trigger an alarm if the content suggests that the inference is being used for AI research, or other capabilities increase-related activity. However that means examining the traffic in plaintext, which raises data privacy concerns for end users and other concerned parties.
+A possible solution to this is to introduce an AIAB into the network uplink which only has the keys to decrypt the traffic inside the TEE.
+The AIAB will pick random samples of traffic and decrypt and examine them in plaintext using an LLM.
+The LLM will attempt to classify the data as capabilities-related or not and return some signal related to this using a bandwidth-constrained reporting channel to interested parties in the outside world without revealing details about the user data.
+One end use case for this might be an auditor who gets to see a kind of rollup of all of that for different data centers where they can receive a report that says something like "X% of the inference traffic sampled in the last month appeared to be related to AI research or other capabilities increase related activity"
+
+i thought the main interesting thing would be to lay out what constitutes "dangerous inference" and demonstrating our ability to identify it
+
+actually IMO that part is the least interesting because we actually would want to leave that as something that the users of this design would ultimately define (although we might provide a base implementation)
+
+the reason is that there are other types of classifiers you might want to use with this as well (e.g. synthetic biology / dangerous bio)
+
+the adversarial co-op parts are actually probably the hardest parts in practice. and making sure that the TEE can be made secure in that context
+
+explore and red team this with me. consider the pros costs and tradeoffs.
+
+Searched the web
+Yes. Tinfoil fits the design well, and it removes most of the work in stages 2 and 3.
+
+How the design maps onto Tinfoil
+
+The box becomes a Tinfoil Container. You bring your own container image and run it inside a secure enclave, and verification is pinned to the container hash. This is option B from the key section: the enclave terminates TLS with a key that the operator never holds. 
+Tinfoil
+The classifier becomes a call to the Tinfoil inference API from inside the box. Use the Tinfoil SDK, not raw HTTP. On each connection the SDK fetches the hardware-signed attestation report, verifies the certificate chain back to the CPU vendor, fetches the Sigstore bundle from the open-source build, compares the measurements, and opens a TLS session bound to the attested public key. If any check fails, it refuses to send data. That is the "check the attestation of the GPU node" step, already written for you. 
+Tinfoil
+The chain is a documented pattern. Each enclave in the chain verifies the next one before it forwards data, and Tinfoil's own inference backend chains verification across two enclaves. 
+Tinfoil
+The auditor uses the Tinfoil CLI. The command tinfoil attestation verify -e <host> -r <owner/repo> checks that an enclave runs the expected code, and tinfoil certificate audit checks that a TLS certificate matches the enclave's attestation. 
+GitHub
+Two ways to run the classifier. Pick one.
+
+Shared inference API. Fast to set up. The classifier is a general chat model, so the injection resistance from the earlier design is weaker. Reduce the risk: fix the system prompt, wrap the sampled text in delimiters, use structured output with a one-token label, and run two different models and report disagreement. The API already offers several models, so the ensemble is cheap.
+Your own GPU Tinfoil Container. Tinfoil Containers can add single or multi-GPU confidential computing with NVIDIA Hopper and Blackwell GPUs. Deploy your own encoder model with a label head. This keeps the injection resistance. It costs more per hour. 
+Tinfoil
+Start with option 1 for the demo. Move to option 2 when you have a trained classifier.
+
+What changes in the trust model
+
+Tinfoil is a new party. Plaintext exists on Tinfoil's hardware in Tinfoil's data center. The TEE protects the data from Tinfoil if the hardware holds. But the earlier design put the box in the operator's rack under auditor ownership. Say this openly in the demo.
+Tinfoil sees metadata: request sizes, timing, and your API key. It does not see content. For a demo this is acceptable.
+Two-vendor redundancy is not available. Tinfoil runs one CPU vendor per enclave.
+Your application does not need to be open source for attestation to work. For the demo, make it public anyway. The auditor must read the code, not only match a hash. 
+Tinfoil
+Concrete steps
+
+Keep stage 1 from the earlier plan. Build the pipeline on a laptop first. Use the Tinfoil SDK for the classifier call from day one.
+Put the box code in a public GitHub repository with a reproducible Dockerfile. Tinfoil pins the image digest and publishes it to Sigstore.
+Deploy the box as a Tinfoil Container with a custom domain. Confirm that outbound connections to the inference API are allowed.
+In the box code, pin the exact enclave and repository for the classifier model. Fail closed if the measurement does not match.
+Publish two digests: the box image and the classifier enclave. The auditor script checks both.
+Use a debug enclave to develop and troubleshoot before you deploy to prod. Never run the demo in debug mode. The auditor script must reject debug measurements. 
+Tinfoil
+Keep the governed inference server on a normal VM. Do not put it on Tinfoil. The roles must stay separate.
+Adversarial demo updates
+
+Change one byte in the box image. Redeploy. The auditor's attestation verify fails.
+Point the box at a classifier endpoint without attestation. The SDK refuses to send. Show the error.
+Redeploy the box as a debug enclave. The auditor script rejects the report.
+Keep the traffic-bypass test and the benign-flood test from before. They do not change.
+One thing to check with Tinfoil directly: whether a Tinfoil Container can generate and hold its own long-term signing key across restarts, or whether it must generate a new key at each boot. The answer decides how the auditor links the report key to the attestation over time.
+
+write up a plan. I know that we discussed modifications earlier, but I think that I want to keep them and look at them later. Give me an output that I can give to Claude Code to set up the repo
+
+Created a file, shared files
+The plan is ready to hand to Claude Code. It builds the base design only: TLS proxy, random sampling, Tinfoil-attested LLM classifier, signed fixed-size reports, and an auditor CLI. All the red-team modifications are listed in section 10 as deferred, with the interfaces that need to stay stable.
+
+One thing to do before you start Claude Code on it: decide which Tinfoil model to use for the classifier, since that depends on which ones support strict JSON output. The plan tells Claude Code to read the Tinfoil docs and fill in that gap, but you may already know the answer.
+
+
+Aiab demo plan
+Document·MD 
+at the end i want to be able to demo this with a web-based chat interface that rejects obviously ML training related chats. have 2 demo prompts, one benign and one "dangerous".
+
+Ran a command, shared files
+
+Presented file
+Updated plan is below. The main additions:
+
+Block mode (ENFORCEMENT_MODE=block). The AIAB classifies every prompt before forwarding and returns HTTP 403 with an aiab_blocked error when confidence is at or above BLOCK_THRESHOLD (default 0.8). Monitor mode is unchanged. The report gains enforcement_mode and requests_blocked.
+Web chat (webchat/). One static HTML file served by nginx, with two preset buttons. A blocked request renders a red "Blocked by AIAB" card showing the classifier id and confidence.
+Milestone 5 with the full demo sequence: verify → benign → blocked → rollup.
+The two prompts are in section 5.10. The benign one is a dinner-menu request. The ML-training one is a 30B pretraining question about LR schedules, data mixture, and MoE routing.
+One design point worth knowing: blocking changes the privacy story. In monitor mode the classifier sees a 5% sample. In block mode it sees 100% of prompts. The plan says this in the threat-model instructions, so the demo stays honest about it.
+
+
+Aiab demo plan
+Document·MD 
+
+
