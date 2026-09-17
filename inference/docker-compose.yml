@@ -1,0 +1,35 @@
+services:
+  inference:
+    image: ghcr.io/ggml-org/llama.cpp:server-b10524@sha256:57e505f69c3a55fa5dd9c15fced47cff7a899f5b5b504ea93d75b2f401b87830
+    command:
+      - --model
+      - /models/model.gguf
+      - --alias
+      - aiab-demo
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ctx-size
+      - "4096"
+      - --parallel
+      - "1"
+      - --no-webui
+      - --log-disable
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - type: bind
+        source: ${INFERENCE_MODEL_PATH:?Set INFERENCE_MODEL_PATH to an absolute path to a downloaded instruct GGUF}
+        target: /models/model.gguf
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      start_period: 120s
+      retries: 12
+    logging:
+      driver: none
