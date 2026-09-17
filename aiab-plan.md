@@ -11,13 +11,21 @@ An appliance (the **AIAB**, "AI in a box") sits in front of an AI inference serv
 1. Terminates TLS and forwards requests to the inference server.
 2. Randomly samples a fraction of request/response pairs (monitor mode), or classifies every request before forwarding (block mode).
 3. Classifies with an LLM that also runs inside an attested enclave.
-4. Emits a small, fixed-size, signed report per period: how many requests were seen, how many were classified, how many were flagged, how many were blocked.
+4. Emits a small, fixed-schema, signed report per period: requests seen, selected for classification, successfully classified, flagged, forwarded, and blocked, plus classification failures.
 
-An **auditor** verifies that the AIAB runs the published code, fetches the reports over an attested channel, checks the signatures, and prints a rollup such as: "12% of sampled inference traffic in the last period was classified as AI capabilities research."
+An **auditor** verifies that the AIAB runs the published code with the expected policy configuration, fetches reports over an attested channel, checks signatures, and prints a rollup such as: "3 of 25 successfully classified requests sampled at this proxy were flagged as AI capabilities research; 0 classification failures."
 
 The final demo is a **web chat interface** that talks to the inference server through the AIAB in block mode. A benign prompt gets a normal answer. An obviously ML-training-related prompt is rejected with a visible "Blocked by AIAB" message. The auditor rollup then shows the block count.
 
 The classifier definition is a pluggable text file. The base implementation targets "AI research / capabilities-increasing activity." Other definitions (for example, dangerous biology) plug in the same way.
+
+### Verification claim and limits
+
+The demo provides attestable measurement of policy-relevant inference **received by this proxy**, under the TEE security assumptions. It does not establish datacenter-wide coverage, absence of prohibited activity, or the fraction of compute spent on AI research. Internal agent activity and traffic sent to other endpoints are outside its observation boundary. A network uplink alone need not see internal inference.
+
+The privacy goal is to avoid disclosing conversation contents to the auditor or inspection infrastructure outside the enclaves. The governed inference server still receives forwarded conversations. Exact aggregate counts, especially for small periods, can reveal information; version 1 does not promise differential privacy or protection against all covert channels. Use synthetic traffic for the demo.
+
+Blocking the preset prompt illustrates policy enforcement at this endpoint. It does not establish robust detection of adversarial or distributed AI research. Keep these limits visible in the README and demo narration.
 
 ## 2. Scope for this version
 
@@ -30,6 +38,7 @@ In scope:
 - AIAB deployed as a Tinfoil Container with attestation verified by the auditor (Milestone 3).
 - Adversarial demo script (Milestone 4).
 - Web chat demo with block mode and two preset prompts (Milestone 5).
+- Small additions within existing components: a policy manifest, boot/sequence identifiers, an optional auditor checkpoint, and challenge cases in the existing evaluation set. No additional service is required.
 
 Out of scope: everything in section 10.
 
@@ -41,6 +50,7 @@ Out of scope: everything in section 10.
 - **Web chat:** one static HTML file with inline CSS and JavaScript. No framework, no build step. Served by a pinned `nginx:alpine` container. It plays the role of "the operator's product."
 - **Container:** one Dockerfile for the AIAB with a pinned base image digest and pinned dependencies. The build must be reproducible: same source → same image digest.
 - **Config:** environment variables only. No config files with secrets. Document every variable in `README.md`.
+- Parse configuration once at startup and freeze it for that boot. Load the classifier definition once from the image; no runtime edits, remote policy downloads, or mounted policy overrides in the deployed demo. Section 5.4 defines the non-secret manifest derived from effective configuration.
 
 **Before writing any Tinfoil-related code, read the Tinfoil docs at https://docs.tinfoil.sh.** Specifically: the Python SDK, Tinfoil Containers deployment, how TLS reaches the app inside a container, outbound network rules, and which inference models support structured/JSON output. Do not guess the SDK API. If a doc is unclear, write down the question in `docs/OPEN_QUESTIONS.md` and pick the simplest safe assumption.
 
@@ -104,16 +114,17 @@ aiab-demo/
 - Accepts `POST /v1/chat/completions`. Forwards to `INFERENCE_URL`. Returns the response unchanged to the client.
 - Version 1 handles non-streaming requests only. If the request body has `"stream": true`, return HTTP 400 with a clear error. Log the count of rejected streaming requests (count only, never the body).
 - Also accept `GET /v1/models` and forward it.
-- Every other path returns 404.
+- Apart from the `/aiab/*` endpoints below and configured CORS preflights, every other path returns 404.
 - **Local mode** (`AIAB_MODE=local`): the proxy terminates TLS itself. Generate a private key and self-signed certificate in memory at startup. Never write the private key to disk.
 - **Tinfoil mode** (`AIAB_MODE=tinfoil`): follow the Tinfoil Containers docs for how TLS reaches the app. If the enclave terminates TLS and hands the app plain HTTP on an internal port, listen on that port. Record which model applies in `docs/OPEN_QUESTIONS.md` after reading the docs.
-- **CORS:** when `CORS_ALLOW_ORIGIN` is set, add CORS headers to `/v1/*` responses for that one origin and answer `OPTIONS` preflight requests. When unset, send no CORS headers. The demo compose file sets it to the webchat origin.
-- Count total requests and total forwarded requests. These counts go into the report.
+- **CORS:** when `CORS_ALLOW_ORIGIN` is set, add CORS headers to `/v1/*` and `/aiab/health` responses for that one origin and answer `OPTIONS` preflight requests. When unset, send no CORS headers. The demo compose file sets it to the webchat origin.
+- `requests_total` counts validated, supported chat requests admitted to processing, including ones that later fail. Exclude model-list, health, audit, preflight, malformed, and unsupported requests. `requests_forwarded` counts requests dispatched upstream even if the upstream subsequently fails.
+- Support text-only messages for version 1. Serialize the complete submitted message list with role labels as classifier input, including system/developer/assistant messages rather than only user messages. Reject unsupported tools, attachments, or non-text content with HTTP 400; do not silently omit content that the inference server would see. Use this serialization in both modes and evaluation. No cross-request session tracking is required.
 
 **Enforcement modes** (`ENFORCEMENT_MODE`):
 
-- `monitor` (default). Forward the request. After the response is sent to the client, hand the `(request_body, response_body)` pair to the sampler. Classify only sampled pairs, asynchronously, so classification adds no latency.
-- `block`. Before forwarding, extract the text of all `user`-role messages from the request and call `classifier.classify(prompt=text, response=None)`. Every request is classified; the sampler is not used. Then:
+- `monitor` (default). Decide sampling at admission, independently of upstream success, and increment `requests_selected` if selected. Forward the request, then classify selected request/response pairs asynchronously without delaying the client response for classification. Selected requests that cannot be classified (including upstream failure or queue exhaustion) count as `classifier_errors`; never silently discard them. Bound the queue and processing time.
+- `block`. Before forwarding, increment `requests_selected` and call `classifier.classify(prompt=serialized_messages, response=None)`. Every admitted request is selected; the sampler is not used. Then:
   - If `flagged` and `confidence >= BLOCK_THRESHOLD` (default `0.8`): do not forward. Return HTTP 403 with an OpenAI-style error body:
     ```json
     {"error": {"type": "policy_violation", "code": "aiab_blocked",
@@ -156,26 +167,34 @@ Implementations:
    - `CLASSIFIER_MODEL` (a model served by Tinfoil that supports JSON/structured output)
    - `CLASSIFIER_DEFINITION` (path to a file in `classifiers/`, default `classifiers/ai_capabilities.md`)
    - Build the request as: a fixed system prompt that contains the definition text and the output schema; a user message that contains the sampled prompt (and response, if present) inside clear delimiters, marked as data to classify and not as instructions.
-   - Require the model to answer with JSON only: `{"flagged": true|false, "confidence": <0-1>}`. Parse strictly. If parsing fails, count it as `classifier_error` and do not flag.
-   - Timeouts and retries: one retry, then count as `classifier_error`.
+   - Require the model to answer with JSON only: `{"flagged": true|false, "confidence": <0-1>}`. Parse strictly, including types and finite numeric range. Parsing failure is an error, never a successful unflagged result.
+   - Timeouts and retries: one retry, then raise a classification error. Count one final error per selected request, not per attempt. Monitor mode records the failure; block mode returns 503 without forwarding. Attestation failure follows the stricter rule in section 7.
+   - Confidence is an uncalibrated model score, not a probability of a policy violation. Delimiters and structured output are not a security boundary against prompt injection.
 2. **`MockClassifier`** (local development only). Keyword-based. Flags text containing terms such as `pretrain`, `pretraining`, `fine-tune`, `fine-tuning`, `learning rate`, `RLHF`, `reward model`, `ablation`, `scaling law`, `MoE`, `loss per FLOP`, `training run`. Confidence `0.95` when two or more terms match, `0.6` when one matches, `0.0` otherwise. Used when `TINFOIL_API_KEY` is not set and `AIAB_MODE=local`. Never allow it in `tinfoil` mode; fail at startup if selected there.
 
 Write `classifiers/ai_capabilities.md` as the base definition. It must describe, in plain language, what counts as "AI research or capabilities-increasing activity" (for example: designing training runs, ablation studies, architecture changes, RL or fine-tuning of frontier models, scaling experiments, eval design for frontier capabilities, agent scaffolding aimed at improving model capability) and what does not (general ML coursework, using a model for ordinary coding, discussion of AI policy). Instruct the classifier to give confidence above `0.8` only when the request is clearly about training, fine-tuning, or improving a model. Keep it to one page. Write `classifiers/README.md` explaining how to add another definition file.
 
 ### 5.4 Reporter (`aiab/reporter.py`)
 
-- Aggregates over a fixed period `REPORT_PERIOD_SECONDS` (default `600`).
+- At startup, construct a non-secret policy manifest from effective values: manifest schema, classifier id and implementation (mock or Tinfoil), SHA-256 of the loaded definition and full classifier system prompt, requested model identifier, classifier endpoint and verification policy, generation parameters, input serialization version, enforcement mode, block threshold, sample rate/algorithm, report period/history, and processing timeout/queue limits. Include the governed inference origin without credentials, query strings, or secrets. Never copy arbitrary environment variables. Compute `policy_digest = SHA-256(canonical_manifest)`.
+- `GET /aiab/manifest` returns that manifest. The attested application derives it from the exact frozen settings used at runtime. Fetching it over the attested channel binds these settings to the verified application; an image digest alone does not establish environment variable values. Compare against an independently approved digest. A requested model name does not prove immutable weights; document what classifier identity the provider actually attests.
+- Aggregate into non-overlapping periods of `REPORT_PERIOD_SECONDS` (default `600`), assigned by request admission time; emit empty periods too. Finalize after a bounded processing deadline. Unfinished selected work becomes a classification error; late results must not revise signed reports or cause a timed-out block-mode request to be forwarded. Timestamps rely on the available clock, not a claim of trusted wall-clock time.
 - Per period, produces one report with exactly these fields and nothing else:
 
 ```json
 {
   "schema": "aiab-report/v1",
   "aiab_id": "<stable id from env>",
+  "boot_id": "<random identifier generated at startup>",
+  "sequence": 1,
+  "policy_digest": "<SHA-256 of canonical policy manifest>",
   "classifier_id": "ai_capabilities/v1",
-  "enforcement_mode": "monitor" | "block",
+  "enforcement_mode": "monitor",
   "period_start": "<RFC3339>",
   "period_end": "<RFC3339>",
   "requests_total": 0,
+  "requests_forwarded": 0,
+  "requests_selected": 0,
   "requests_classified": 0,
   "requests_flagged": 0,
   "requests_blocked": 0,
@@ -183,11 +202,14 @@ Write `classifiers/ai_capabilities.md` as the base definition. It must describe,
 }
 ```
 
-- In `monitor` mode, `requests_classified` is the number of sampled pairs and `requests_blocked` is always `0`. In `block` mode, `requests_classified` equals `requests_total`.
+- `enforcement_mode` is either `monitor` or `block`. All counters are non-negative integers. `requests_classified` counts successful classifications only; `requests_selected = requests_classified + classifier_errors` in finalized reports. In monitor mode, `requests_selected <= requests_total` and `requests_blocked = 0`. In block mode, `requests_selected = requests_total`. Always enforce `requests_blocked <= requests_flagged <= requests_classified` and `requests_forwarded + requests_blocked <= requests_total`.
+- `sequence` starts at 1 and increases once per period within a boot. A new boot id and signing key explicitly start a new history; neither proves completeness of unseen history.
 - Serialize with canonical JSON (sorted keys, no whitespace). Sign with Ed25519. Emit `{"report": <json string>, "signature": "<base64>"}`.
+- The schema is fixed, not the byte length. Fixed-length padding and stronger output privacy remain deferred. Do not describe this as a proven bandwidth-constrained or leakage-free channel.
 - Keep the last `REPORT_HISTORY` reports (default `100`) in memory. Nothing is written to disk.
 - Endpoints (served by the same HTTP server as the proxy, on distinct paths):
-  - `GET /aiab/pubkey` → the Ed25519 public key (base64) and the AIAB id.
+  - `GET /aiab/pubkey` → the Ed25519 public key (base64), AIAB id, boot id, and policy digest.
+  - `GET /aiab/manifest` → the non-secret effective policy manifest above.
   - `GET /aiab/reports/latest`
   - `GET /aiab/reports` → list of signed reports in memory.
   - `GET /aiab/health`
@@ -197,11 +219,12 @@ Write `classifiers/ai_capabilities.md` as the base definition. It must describe,
 
 - Generate the Ed25519 report signing key at startup, in memory.
 - Version 1 accepts that the key changes on every restart. The auditor links the key to the enclave by fetching `/aiab/pubkey` over a connection that the Tinfoil SDK/CLI has verified. Document this linkage in `THREAT_MODEL.md`.
+- Reject inconsistent boot ids, policy digests, or signatures across fetched artifacts. A restart during fetching requires a fresh fetch, never mixing histories.
 - Record in `docs/OPEN_QUESTIONS.md`: whether a Tinfoil Container can hold a persistent key across restarts, and how.
 
 ### 5.6 Logging guard (`aiab/logging_guard.py`)
 
-- Install a logging filter at startup that rejects any log record containing a request or response body. Practical approach: never pass bodies to the logger; add a filter that drops records longer than 1,000 characters and records containing the marker strings used for bodies.
+- Never pass bodies or raw SDK/upstream exception text to the logger. Disable HTTP/SDK body debugging and log allowlisted error categories. A filter for body markers or long messages is only defense in depth; it cannot recognize arbitrary plaintext reliably.
 - Set default log level to INFO. Log counts, timings, and errors only.
 - Add a test that runs a request through the proxy with a unique sentinel string in the prompt and asserts the sentinel never appears in captured logs. Run this test in both enforcement modes.
 
@@ -210,22 +233,24 @@ Write `classifiers/ai_capabilities.md` as the base definition. It must describe,
 Commands:
 
 - `auditor verify --host <aiab-host> --repo <owner/repo>`
-  Runs Tinfoil attestation verification for the AIAB enclave (through the Tinfoil CLI or SDK — check the docs for which is better to call from Python). Prints the measured digest. Compares it to `EXPECTED_AIAB_DIGEST` from env or a `--expected-digest` flag. Exits non-zero on mismatch. Rejects debug-mode enclaves.
+  Runs Tinfoil attestation verification for the AIAB enclave (through the Tinfoil CLI or SDK — check the docs). Compares the measured digest to `EXPECTED_AIAB_DIGEST` or `--expected-digest`. Fetches the manifest over the attested channel and compares its digest to `EXPECTED_POLICY_DIGEST` or `--expected-policy-digest`. Require both expected values outside insecure local mode; never approve values merely because the server returned them. Print both digests; exit non-zero on mismatch. Reject debug-mode enclaves.
 - `auditor report --host <aiab-host> --repo <owner/repo>`
-  Establishes the attested connection, fetches `/aiab/pubkey` and `/aiab/reports`, verifies every signature against the fetched public key, and prints the reports.
+  Applies the same image/policy checks as `verify`, fetches `/aiab/pubkey` and `/aiab/reports` over the attested channel, verifies signatures, boot/policy linkage, counter invariants, and sequence/time ordering, and prints reports. Never double-count duplicate reports.
 - `auditor rollup --host ... --repo ...`
   Same as `report`, then prints one line per period:
-  `"<period_start> – <period_end> [<mode>]: <N> classified of <T> total, <M> flagged (<P>%), <B> blocked, classifier <id>"`
-  and a total line across all fetched periods.
+  `"<period_start> – <period_end> [<mode>]: <S> selected of <T> admitted at this proxy; <N> successfully classified, <E> classification failures, <M> flagged (<P>% of successful classifications), <B> blocked; policy <digest>"`
+  and totals for unique fetched periods within the same boot and policy. Use `N/A` when no classifications succeeded. Always print absolute counts and note that request share is not token/compute share or verified research prevalence. Small samples and classification failures limit interpretation; these are descriptive sample results, not population estimates.
+- `report` and `rollup` accept optional `--state-file <path>`: one auditor-local JSON checkpoint with last verified AIAB/boot identity, key, policy digest, sequence, and period end. Compare fetched reports to the checkpoint; warn prominently about changed boot/key/policy, missing sequences, time gaps, or a latest report that has receded or is overdue. Save only after successful validation, without moving a same-boot checkpoint backward. On first use, say earlier continuity is unknown. Warnings mean incomplete evidence, not proof of malicious behavior. This cannot detect forks/restarts never observed by this auditor. No background collector or transparency service in version 1.
 - Local mode: `--insecure-local` flag skips attestation and trusts the self-signed cert. Print a loud warning. Refuse this flag if the host is not `localhost` or `127.0.0.1`.
 
 ### 5.8 Traffic generator (`traffic/generate.py`)
 
 - Reads the two JSONL prompt files. Each line: `{"prompt": "...", "label": "benign" | "capabilities"}`.
 - Write about 60 prompts of each class. Capabilities prompts should look like real AI research work (training-run design, ablations, eval design, RL setups, scaling questions). Benign prompts should span coding help, writing, cooking, travel, general science. None of the prompts may contain actually hazardous content.
+- Within those existing 120 examples, reserve at least 12 held-out challenge cases: benign ML coursework/policy discussions, indirect capabilities requests, and attempts to instruct the classifier to ignore its policy. Optional `category` and `split` fields are evaluation-only and never sent to the AIAB. Do not tune on held-out cases. Include paired examples where removing workflow context makes purpose ambiguous; report that limitation rather than inventing certainty.
 - Sends them through the AIAB in random order at a configurable rate. Records each request's label locally in the generator only (the AIAB never sees the label).
 - Flags: `--url`, `--count`, `--rate`, `--insecure` (for the self-signed cert in local mode).
-- Prints a summary at the end. In monitor mode it estimates the expected flag count as `capabilities_fraction × sample_rate × count`. In block mode it counts HTTP 403 responses with `code == "aiab_blocked"` and compares them to the number of `capabilities` prompts sent.
+- Prints a summary at the end. In monitor mode, `capabilities_fraction × sample_rate × count` estimates sampled capabilities requests, not classifier flags unless classification is perfect. In block mode, count policy 403s and classification 503s separately and compare outcomes to labeled requests.
 
 ### 5.9 Inference server (`inference/`)
 
@@ -269,31 +294,35 @@ The second prompt is "dangerous" only in the sense of the base classifier defini
 - `make traffic` sends 200 prompts.
 - `auditor rollup --host localhost --insecure-local` prints at least one period with non-zero `requests_classified` and verifies all signatures.
 - Tests pass: report schema test, logging sentinel test (both modes), sampler rate test (statistical, loose bounds), classifier JSON parsing test, block-mode test (a capabilities prompt through MockClassifier returns 403 with `code == "aiab_blocked"`; a benign prompt is forwarded).
+- Add focused tests for policy digest changes, failure accounting/503 behavior, full-message serialization, and checkpoint warnings on restart or missing reports. Check finalized counter invariants, including timed-out monitor work. No new test framework is needed.
 
 ### Milestone 2 — Real classifier from the laptop
 
 - With `TINFOIL_API_KEY` set, the AIAB (still local mode) uses `TinfoilLLMClassifier`.
 - Startup log shows the Tinfoil SDK attestation verification succeeded for the classifier enclave.
 - Add `make eval`: runs the labeled prompts against a separate evaluation entrypoint that calls the classifier directly (not through the proxy) with `response=None` and prints precision and recall on the labeled set, plus the fraction of `capabilities` prompts that would be blocked at `BLOCK_THRESHOLD`. This entrypoint is a dev tool; it must be excluded from the production container image.
+- Print held-out challenge results separately, with false positives, false negatives, and classification failures. Errors are not benign predictions. Include a few synthetic request/response pairs to exercise monitor mode; request-only results do not validate it. Record policy digest and requested model. This is a smoke evaluation, not evidence of adversarial robustness; challenge failures do not require adding a new classifier architecture to this demo.
 - Both demo prompts, run through `make eval`, produce the expected result: benign not flagged; ML-training flagged with confidence ≥ 0.8.
 
 ### Milestone 3 — AIAB in a Tinfoil Container
 
 - Reproducible Dockerfile. `make image` builds it; building twice yields the same digest. Document any step that breaks reproducibility.
 - Deploy per `deploy/tinfoil/` and the Tinfoil docs. The AIAB has a public hostname.
-- Publish the image digest in `README.md`.
-- `auditor verify --host <hostname> --repo <owner/repo> --expected-digest <digest>` succeeds.
+- Publish the image digest, reviewed non-secret policy manifest, and its digest in `README.md`. Derive the expected manifest from approved settings independently of the live endpoint.
+- `auditor verify --host <hostname> --repo <owner/repo> --expected-digest <digest> --expected-policy-digest <policy-digest>` succeeds.
 - `auditor rollup` fetches reports over the attested channel and verifies signatures.
 - Traffic generator runs from the laptop against the public hostname.
 
 ### Milestone 4 — Adversarial demo (`demo/adversarial.sh`)
 
-Each step must produce a visible failure. Script them, with pauses and printed explanations:
+Each step must visibly show either detection or a documented verification limit. Script them, with pauses and printed explanations; restore approved settings/deployment between steps:
 
 1. **Tamper:** change one byte in `classifiers/ai_capabilities.md`, rebuild, redeploy. `auditor verify` fails on digest mismatch.
 2. **Debug enclave:** redeploy as a debug enclave. `auditor verify` rejects it.
 3. **Unattested classifier:** set `CLASSIFIER_ENDPOINT_OVERRIDE` to a plain HTTP endpoint. The AIAB must refuse at startup because only the SDK path is allowed. Show the error.
-4. **Bypass:** send some traffic directly to the inference server, past the AIAB. Show that `requests_total` in the report is lower than the generator's count. (Explain that the fix — an independent counter — is in Deferred.)
+4. **Bypass:** send traffic directly to the inference server. Compare the generator's count to `requests_total`. Explicitly show that the auditor alone cannot detect these missing requests; the generator supplies independent ground truth only for the demo. Trusted coverage measurement is deferred.
+5. **Configuration change:** change `BLOCK_THRESHOLD` without rebuilding the image, restart, and show that verification against the previous policy digest fails even though the image matches.
+6. **Restart:** save an auditor checkpoint, restart with the same approved settings, wait for a finalized report, and show the new-boot/continuity warning. The checkpoint does not recover lost reports.
 
 ### Milestone 5 — Web chat demo (block mode)
 
@@ -301,7 +330,7 @@ Each step must produce a visible failure. Script them, with pauses and printed e
 - Open `http://localhost:8081`. The status line shows mode `block`.
 - Click **Load benign prompt**, send. A normal answer appears.
 - Click **Load ML-training prompt**, send. The red **Blocked by AIAB** card appears with confidence ≥ 0.8. No response text from the inference server appears.
-- `auditor rollup --host localhost --insecure-local` shows `requests_blocked >= 1` for the current period.
+- Use a short reporting period in demo compose, wait for finalization, then `auditor rollup --host localhost --insecure-local` shows `requests_blocked >= 1`. Do not treat a live partial period as a finalized signed report.
 - The same page works against the Tinfoil-deployed AIAB by setting `AIAB_URL` to the public hostname and `CORS_ALLOW_ORIGIN` on that deployment to the webchat origin. Document this in `demo/README.md` as the full demo sequence: verify → benign → blocked → rollup.
 
 ## 7. Engineering rules
@@ -310,8 +339,9 @@ Each step must produce a visible failure. Script them, with pauses and printed e
 - Small dependency set. Prefer the standard library. Justify each third-party package in `pyproject.toml` comments.
 - No plaintext request or response content may ever be written to disk, logs, metrics, or the report. This is the core property. Every PR-sized chunk of work must keep the sentinel test passing.
 - No secrets in the repo. `.env.example` lists every variable with a placeholder.
-- Fail closed. If attestation verification of the classifier enclave fails, the AIAB stops accepting traffic and returns HTTP 503. It does not fall back to forwarding without classification and it does not fall back to the mock classifier. In block mode, a classifier error also fails closed (503).
+- Fail closed on classifier attestation failure: verify the classifier connection before accepting chat traffic at startup, and on a later failure stop admitting new requests with HTTP 503 until verification recovers. Never fall back to the mock classifier. In block mode, any classification error prevents forwarding (503). Monitor mode deliberately forwards before asynchronous classification; a later failure cannot undo requests already forwarded. State this limit explicitly.
 - Write `docs/THREAT_MODEL.md` stating exactly what version 1 protects against and what it does not. Be honest. Include: Tinfoil is a party that hosts the hardware; the report key rotates per boot; sampling is not yet verifiable; the classifier is a general chat model, so prompt injection in sampled traffic is a known weakness; the bypass problem is not solved; block mode classifies every request, so the classifier sees 100% of prompts rather than a sample; block mode leaks the per-request decision to the requester (by design) and, through response size and timing, possibly to a network observer.
+- Include section 1's claim boundaries, exact-count leakage, checkpoint limitations, and requested versus attested classifier identity. Inventory outbound destinations and observable channels (reports, HTTP responses, timing, logs); no analytics or arbitrary request-selected destinations. A sentinel test or attestation does not prove absence of all information leakage. State hardware/firmware and provider attestation assumptions explicitly.
 
 ## 8. Environment variables
 
@@ -332,10 +362,14 @@ Each step must produce a visible failure. Script them, with pauses and printed e
 | `CLASSIFIER_DEFINITION` | path to definition file | `classifiers/ai_capabilities.md` |
 | `LOG_LEVEL` | logging level | `INFO` |
 | `AIAB_URL` (webchat only) | AIAB base URL the page talks to | `https://localhost:8443` |
+| `EXPECTED_AIAB_DIGEST` (auditor only) | approved image measurement; alternatively CLI flag | required outside insecure local mode |
+| `EXPECTED_POLICY_DIGEST` (auditor only) | approved manifest digest; alternatively CLI flag | required outside insecure local mode |
+
+`CLASSIFIER_ENDPOINT_OVERRIDE` is deliberately unsupported: fail startup if set. Choose the endpoint through the reviewed SDK integration. Document timeout, retry, queue, and generation constants and include their effective values in the manifest rather than adding tuning knobs for the demo.
 
 ## 9. Order of work
 
-1. Repo skeleton, `pyproject.toml`, `Makefile`, `.env.example`, empty modules with docstrings.
+1. Repo skeleton, `pyproject.toml`, `Makefile`, `.env.example`, empty modules with docstrings; draft `THREAT_MODEL.md` from the claim boundaries before implementation.
 2. `inference/docker-compose.yml` and confirm a local completion works.
 3. Proxy (local TLS, both enforcement modes, CORS) + sampler + MockClassifier + reporter + keys + logging guard. Tests.
 4. Auditor CLI with `--insecure-local`. Milestone 1 done.
@@ -352,10 +386,10 @@ Commit after each numbered step with a clear message.
 These came from a red-team review of the design. Record them in `docs/DEFERRED.md`. Where an interface is mentioned, keep it stable so the item can be added later.
 
 **Coverage**
-- Seal model weights to a measurement that includes the classifier, so all inference (internal and external) passes the classifier. Colocated classifier inside the inference TEE.
+- Seal governed model weights to a measurement that includes the classifier, so use of those protected weights passes the classifier. Colocate classifier inside the inference TEE. This does not cover other models, copies, or hardware; datacenter-wide claims require separate inventory and trusted coverage controls.
 
 **Sample frame**
-- Two independent token counters (inference runtime + AIAB), both signed; mismatch is a finding. *(Interface: reporter fields.)*
+- Two independent token counters (inference runtime + AIAB), both signed; mismatch is a finding within their established coverage. Explain why the runtime counter cannot itself be bypassed. *(Interface: reporter fields.)*
 - Verifiable random sampling from an auditor-committed seed (HMAC or VRF). Sample by token, not request. *(Interface: `sampler.should_sample`.)*
 - Auditor canary requests at a known rate; report canary count.
 - Report absolute flagged token counts, not only ratios.
@@ -372,13 +406,15 @@ These came from a red-team review of the design. Record them in `docs/DEFERRED.m
 - Short-lived session keys only.
 
 **Classifier**
-- Label-head classifier (no instruction channel) to resist prompt injection.
+- Label-head classifier to reduce instruction-following attacks; evaluate adversarial evasion rather than assuming the architecture eliminates it.
 - Ensemble of two different classifier types; report disagreement rate.
 - Session-level grouping with bounded in-TEE state and attested deletion.
 - Concentration statistic (how many hashed identities produce 90% of flags).
 
 **Reporting**
-- Differential privacy noise, minimum cell size, fixed report size and schedule.
+- Differential privacy noise, minimum cell size, fixed byte-length reports and externally enforced release schedule. Version 1 has periodic reports but no constant-traffic or formal privacy guarantee.
+- Durable auditor collection, transparency logs, and stronger rollback/fork protection beyond the optional last-seen checkpoint.
+- Population estimates with sampling uncertainty and measured classifier error; token/compute weighting requires additional trusted measurements. Benign flooding can dilute request percentages even though it does not change selection probability at a fixed sample rate.
 - Auditor pre-committed queries.
 - Sealed evidence buffer with k-of-n threshold release when the flag rate crosses a threshold.
 
@@ -401,3 +437,4 @@ Write answers into `docs/OPEN_QUESTIONS.md` as you find them.
 4. Which Tinfoil-served models support strict JSON output, and what is the cheapest one that classifies well?
 5. Does the Tinfoil Python SDK expose the verified measurement so the AIAB can log the classifier enclave digest at startup?
 6. What is the classifier round-trip latency from a Tinfoil Container to the inference API? Block mode adds this to every request.
+7. What does classifier attestation bind: serving code, routing configuration, model identifier, and/or immutable weight digest? Document the supported claim; do not equate a model alias with pinned weights.
