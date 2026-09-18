@@ -93,7 +93,13 @@ def test_caddy_preserves_route_boundaries_and_limits_overload(tmp_path: Path) ->
                     if arrivals == 4:
                         saturated.set()
                 released.wait(10)
-            body = json.dumps({"path": self.path, "cookie": self.headers.get("Cookie")}).encode()
+            body = json.dumps(
+                {
+                    "path": self.path,
+                    "cookie": self.headers.get("Cookie"),
+                    "authorization": self.headers.get("Authorization"),
+                }
+            ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -160,14 +166,26 @@ def test_caddy_preserves_route_boundaries_and_limits_overload(tmp_path: Path) ->
                 assert redirect.status_code == 308
                 assert redirect.headers["location"] == "/aiab-introspection/"
                 for asset in ("", "index.html", "config.js", "demo_prompts.json"):
-                    response = client.get(f"/aiab-introspection/{asset}")
-                    assert response.json()["path"] == f"/{asset}"
+                    response = client.get(
+                        f"/aiab-introspection/{asset}",
+                        headers={"Cookie": "fixture-cookie", "Authorization": "Basic fixture"},
+                    )
+                    assert response.json() == {
+                        "path": f"/{asset}",
+                        "cookie": None,
+                        "authorization": None,
+                    }
                 assert client.get("/aiab-introspection/private.txt").status_code == 404
                 assert client.get("/aiab-introspection/api-extra/aiab/health").status_code == 404
                 response = client.get(
-                    "/aiab-introspection/api/aiab/health?probe=1", headers={"Cookie": "secret"}
+                    "/aiab-introspection/api/aiab/health?probe=1",
+                    headers={"Cookie": "fixture-cookie", "Authorization": "Basic fixture"},
                 )
-                assert response.json() == {"path": "/aiab/health?probe=1", "cookie": None}
+                assert response.json() == {
+                    "path": "/aiab/health?probe=1",
+                    "cookie": None,
+                    "authorization": None,
+                }
                 with ThreadPoolExecutor(max_workers=4) as pool:
                     pending = [
                         pool.submit(client.get, "/aiab-introspection/api/hold", timeout=15)

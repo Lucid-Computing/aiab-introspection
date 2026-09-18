@@ -21,7 +21,7 @@ const context = {
   URL, AbortSignal,
   fetch: async (url, options) => {
     assert.equal(options.redirect, "error");
-    assert.equal(options.credentials, "omit");
+    assert.equal(options.credentials, "same-origin");
     let status = 200;
     let body;
     if (url === "demo_prompts.json") body = { benign: "dinner", ml_training: "pretraining" };

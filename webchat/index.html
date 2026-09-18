@@ -75,7 +75,8 @@
     }
 
     async function request(url, options = {}) {
-      return fetch(url, { ...options, credentials: "omit", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(45000) });
+      // Reuse the hosted page's Basic Auth only on its own origin.
+      return fetch(url, { ...options, credentials: "same-origin", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(45000) });
     }
 
     async function readBody(response) {
