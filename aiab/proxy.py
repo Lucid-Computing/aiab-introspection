@@ -14,6 +14,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
+from aiab import anthropic
 from aiab.classifier import (
     AttestationError,
     ClassificationError,
@@ -264,10 +265,16 @@ class Runtime:
                 # Release body references before idling on the next queue read.
                 del prompt, response
 
-    async def forward(self, ticket: Ticket, body: bytes) -> httpx.Response:
+    async def forward(
+        self, ticket: Ticket, body: bytes, anthropic_body: dict[str, Any] | None = None
+    ) -> httpx.Response:
         if not self.healthy or not self.reporter.forwarded(ticket):
             raise ClassificationError("Request deadline or verification gate closed")
         async with asyncio.timeout(max(0, ticket.deadline - self.reporter.clock())):
+            if self.config.inference_provider == "anthropic":
+                if anthropic_body is None:
+                    raise ValueError("Missing validated Anthropic request")
+                return await anthropic.complete(self.client, self.config, anthropic_body)
             return await self.client.post(
                 self.config.inference_url + "/v1/chat/completions",
                 content=body,
@@ -360,12 +367,25 @@ def create_app(
                 raise ValueError("A model identifier is required")
             prompt = serialize_messages(decoded.get("messages"))
             validate_generation_options(decoded)
+            anthropic_body = (
+                anthropic.prepare_request(decoded, settings)
+                if settings.inference_provider == "anthropic"
+                else None
+            )
         except (ValueError, TypeError, UnicodeError):
             # Static error text prevents reflecting rejected content or validation internals.
             return error_response(
                 400,
                 "unsupported_request",
-                "Use non-streaming chat with a model and text-only messages; tools are unsupported",
+                (
+                    "Use the configured model, non-streaming text, leading system messages and "
+                    "user/assistant history starting and ending with user; tools and developer "
+                    "roles are unsupported. Use n=1, max_tokens or max_completion_tokens=1..2048, "
+                    "temperature or top_p=0..1, and at most four text stop sequences."
+                    if settings.inference_provider == "anthropic"
+                    else "Use non-streaming chat with a model and text-only messages; "
+                    "tools are unsupported"
+                ),
             )
         selected = settings.enforcement_mode == "block" or runtime.sampler.should_sample("")
         ticket = runtime.reporter.admit(selected=selected)
@@ -389,7 +409,7 @@ def create_app(
                         },
                         status_code=403,
                     )
-            upstream = await runtime.forward(ticket, bytes(body))
+            upstream = await runtime.forward(ticket, bytes(body), anthropic_body)
             if selected and settings.enforcement_mode == "monitor":
                 if upstream.is_success:
                     runtime.enqueue(ticket, prompt, upstream.text)
@@ -408,6 +428,20 @@ def create_app(
 
     @app.get("/v1/models")
     async def models() -> Response:
+        if settings.inference_provider == "anthropic":
+            return JSONResponse(
+                {
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": settings.anthropic_model,
+                            "object": "model",
+                            "created": 0,
+                            "owned_by": "anthropic",
+                        }
+                    ],
+                }
+            )
         try:
             upstream = await client.get(
                 settings.inference_url + "/v1/models", timeout=settings.upstream_timeout_seconds

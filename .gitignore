@@ -13,3 +13,6 @@ build/
 *.egg-info/
 *.gguf
 models/
+# Defense in depth; actual production credentials belong outside the repository.
+secrets/
+*.secret

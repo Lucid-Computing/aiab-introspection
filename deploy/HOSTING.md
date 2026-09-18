@@ -2,7 +2,8 @@
 
 Target: **https://jonathan.quest/aiab-introspection/** on server **206.189.165.5**.
 This is the existing local-mode AIAB with the keyword mock classifier and local
-llama.cpp inference. It has **no enclave attestation**. Public HTTPS authenticates
+llama.cpp inference by default, or the optional Sonnet upstream below. It has
+**no enclave attestation**. Public HTTPS authenticates
 the website, not an enclave or the report-signing identity. Use synthetic messages.
 
 The hosted Compose file fixes `AIAB_MODE=local`, block enforcement, and
@@ -63,6 +64,91 @@ For a standalone Compose executable use, for example,
 `hosted-config` and `hosted-down`. Stop `make demo-down` or `make local-down` first
 if that stack owns ports 8081/8443. Keep Docker enabled on boot. A restart policy
 restarts exited containers; it does not automatically repair an unhealthy service.
+
+## Optional Sonnet answer inference
+
+The separate `docker-compose.hosted.anthropic.yml` overlay uses Anthropic's native
+Messages API and exposes the same text-only `/v1/chat/completions` interface to the
+browser. Its pinned default is [`claude-sonnet-4-6`](https://platform.claude.com/docs/en/models/sonnet-4-6/overview),
+an active Sonnet model. The local keyword classifier and block policy stay in place;
+Anthropic receives only allowed conversations. This provider does not attest AIAB.
+
+The API key stays in a private host file mounted read-only into AIAB as a Docker
+secret. It is read once at startup, retained in the AIAB process, and sent only in
+the HTTPS request to `api.anthropic.com`. It is absent from browser assets, browser
+requests, model/health/report endpoints, container environment, image, and resolved
+Compose configuration. Host root and the AIAB process can access it. Do not paste
+the key into chat, `.env`, command arguments, Docker build arguments, or Git.
+
+Provision a new private file from an interactive server terminal. This prompt hides
+input; the command text contains no credential. UID 65532 matches the image user;
+the enclosing host directory is root-only. The command refuses to overwrite an
+existing file. If using Docker user-namespace remapping, use the corresponding
+mapped host UID instead.
+
+```sh
+sudo install -d -m 0700 /etc/aiab-introspection
+sudo python3 - <<'PY'
+import getpass
+import os
+
+key = getpass.getpass("Anthropic API key (hidden): ")
+if not key or len(key) > 4096 or any(not 33 <= ord(c) <= 126 for c in key):
+    raise SystemExit("Invalid key format")
+fd = os.open("/etc/aiab-introspection/anthropic.secret", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+with os.fdopen(fd, "w", encoding="ascii") as output:
+    os.fchown(output.fileno(), 65532, 65532)
+    output.write(key + "\n")
+PY
+```
+
+The loader rejects symlinks, non-files, relative paths, group/world-readable files,
+invalid owners, empty/oversized files, and whitespace inside the key. It accepts one
+optional final LF. Missing, malformed, or unreadable secret files stop startup;
+there is no fallback to local inference and no support for an `ANTHROPIC_API_KEY`
+environment variable. Startup does not authenticate with Anthropic. A well-formed
+but invalid or revoked key is discovered on completion and returns a sanitized
+upstream failure.
+
+With Docker Compose supporting `!reset` (v2.24.4 or newer), select the overlay
+explicitly. The exported value is only an **absolute file path**, never the key.
+Use the same two Compose files for subsequent operations:
+
+```sh
+export AIAB_ANTHROPIC_KEY_FILE=/etc/aiab-introspection/anthropic.secret
+case "$AIAB_ANTHROPIC_KEY_FILE" in /*) ;; *) exit 1 ;; esac
+docker compose --env-file /dev/null -f deploy/docker-compose.hosted.yml \
+  -f deploy/docker-compose.hosted.anthropic.yml config --quiet
+docker compose --env-file /dev/null -f deploy/docker-compose.hosted.yml \
+  -f deploy/docker-compose.hosted.anthropic.yml up --build -d --wait --wait-timeout 300
+```
+
+The overlay disables the local inference dependency and places that service behind
+the `local-inference` profile, so no model file is required. An already-running
+local inference container may be stopped separately. The default `make hosted-up`
+continues to select local inference and does not require a secret. To rotate the
+credential, replace the host file securely with the same owner/mode and recreate
+the AIAB container using both Compose files; restarting the process does not update
+an existing bind mount if the host file was replaced by rename.
+
+Only the configured model is listed and accepted. Supported inputs are leading
+system messages, then text user/assistant messages starting and ending with user;
+nonempty OpenAI text-part arrays are accepted. Streaming, tools, images, developer
+messages, assistant prefills, unknown fields, and unsupported generation options
+are rejected before an Anthropic request. `n` must be 1; the output defaults to 512
+tokens and is capped at 2048; either `max_tokens` or `max_completion_tokens` may set
+the cap. Either `temperature` or `top_p` may be set in [0, 1]; at most four nonempty
+stop strings of at most 256 characters are allowed. Other generation controls are
+unsupported. The upstream has a 15-second timeout within the 30-second processing
+deadline and a 1 MiB response cap, with no redirects, environment proxies, or
+automatic retries. Long answers can time out. Provider errors and headers are
+replaced by fixed public error messages.
+
+Keeping the credential private does **not** limit public API spending: this demo
+has no login, per-user rate quota, or application billing cap. Anyone who can reach
+the public chat can consume this account's Anthropic usage. The concurrency and
+output limits bound individual requests, not total account usage. Configure an
+appropriate provider-side spending limit before enabling a paid public endpoint.
 
 ## Add the Caddy routes
 

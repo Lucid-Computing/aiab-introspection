@@ -1,0 +1,20 @@
+# Optional overlay; use together with docker-compose.hosted.yml and --env-file /dev/null.
+# Only the absolute host file path is interpolated. Never put the key in an environment variable.
+services:
+  inference:
+    profiles: [local-inference]
+
+  aiab:
+    depends_on: !reset {}
+    environment:
+      INFERENCE_PROVIDER: anthropic
+      INFERENCE_URL: https://api.anthropic.com
+      ANTHROPIC_MODEL: claude-sonnet-4-6
+      ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
+    secrets:
+      - source: anthropic_api_key
+        target: anthropic_api_key
+
+secrets:
+  anthropic_api_key:
+    file: ${AIAB_ANTHROPIC_KEY_FILE:?Set AIAB_ANTHROPIC_KEY_FILE to an absolute private host file path}

@@ -50,6 +50,8 @@ flowchart TD
     end
     R -->|"signed aggregate reports"| A["Local auditor · --insecure-local"]
     P -->|"manifest and signing public key"| A
+    P -. "Optional allowed-message HTTPS / replies" .-> S["Anthropic · Sonnet"]
+    K["Private host secret file"] -. "mounted in AIAB only" .-> P
     P -. "Optional alternative to mock: verified SDK" .-> T["Tinfoil classifier enclave"]
 ```
 
@@ -58,6 +60,12 @@ The local auditor reads loopback endpoints and checks report signatures and
 manifest consistency; this provides no enclave or image-identity proof. It receives
 aggregate reports, not conversation transcripts. See the
 [host deployment and routing guide](deploy/HOSTING.md).
+
+The optional [Sonnet overlay](deploy/HOSTING.md#optional-sonnet-answer-inference)
+replaces local answer inference with Anthropic. Its API key is read from a private
+host file mounted into AIAB, never sent to the browser or embedded in an image.
+Allowed conversation contents are sent to Anthropic. The public demo has no user
+quota or billing cap, so key secrecy alone does not prevent public usage costs.
 
 The dashed Tinfoil classifier branch is **optional and disabled in the hosted
 configuration**. Using a verified remote classifier does not attest the local AIAB
