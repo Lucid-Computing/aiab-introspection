@@ -134,10 +134,53 @@ docker compose --env-file /dev/null -f deploy/docker-compose.hosted.yml \
 The overlay disables the local inference dependency and places that service behind
 the `local-inference` profile, so no model file is required. An already-running
 local inference container may be stopped separately. The default `make hosted-up`
-continues to select local inference and does not require a secret. To rotate the
-credential, replace the host file securely with the same owner/mode and recreate
-the AIAB container using both Compose files; restarting the process does not update
-an existing bind mount if the host file was replaced by rename.
+continues to select local inference and does not require a secret.
+
+To rotate an existing Anthropic credential, run this command from the repository
+root in an **interactive server terminal**, and paste the new key only at its
+hidden prompt:
+
+```sh
+sudo python3 deploy/rotate_anthropic_secret.py
+```
+
+The helper never reads `.env` or the existing credential contents, and accepts no
+credential arguments or environment variables. It fails if hidden terminal input
+is unavailable. It requires 1–4096 printable ASCII non-space characters. The
+existing `/etc/aiab-introspection` directory must be root:root with mode `0700`;
+the existing `anthropic.secret` must be a regular, single-link file owned by
+`65532:65532` with mode `0400`. Symlink components and unsafe parent permissions
+are rejected. This helper assumes the standard container UID mapping described
+above and does not support remapped host UIDs.
+
+Rotation writes and syncs a randomly named staging file inside the root:root
+`0700` directory `/etc/aiab-introspection/.anthropic-rotation`, then atomically
+replaces the destination with the completed `65532:65532/0400` file. Readers see
+either the complete old file or the complete new file. Linux cannot atomically
+replace an existing filename directly from an unnamed `O_TMPFILE` inode, so
+rotation needs this protected staging name. Handled failures clean up the staged
+file. Abrupt termination or power loss can leave a staging file accessible only
+through the root-only directory; the next invocation removes stale entries only
+after strict filename, type, ownership, permissions, size, and link-count checks.
+Unexpected entries stop rotation. Directory locks prevent concurrent helper runs,
+and file and directory syncs provide durability. A sync failure after replacement
+can report failure even though the new credential is installed.
+
+After successful rotation, **recreate the AIAB container**; a restart retains the
+old bind-mounted inode and does not load the replaced file. For the Sonnet-only
+configuration above:
+
+```sh
+export AIAB_ANTHROPIC_KEY_FILE=/etc/aiab-introspection/anthropic.secret
+docker compose --env-file /dev/null -f deploy/docker-compose.hosted.yml \
+  -f deploy/docker-compose.hosted.anthropic.yml \
+  up -d --no-deps --force-recreate --wait --wait-timeout 300 aiab
+```
+
+If using verified Tinfoil classification, keep `AIAB_TINFOIL_KEY_FILE` set to its
+existing host path and also include `-f deploy/docker-compose.hosted.tinfoil.yml`
+after the Anthropic overlay. Preserve every other overlay and setting used by the
+running deployment. The rotation helper itself does not recreate containers.
 
 Only the configured model is listed and accepted. Supported inputs are leading
 system messages, then text user/assistant messages starting and ending with user;
