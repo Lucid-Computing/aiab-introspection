@@ -157,7 +157,8 @@ def test_provider_selection_and_endpoint_fail_closed(tmp_path: Path) -> None:
         assert KEY not in str(failure.value)
     with pytest.raises(ConfigurationError):
         Config.from_env({"ANTHROPIC_API_KEY_FILE": str(path)})
-    assert Config.from_env({"ANTHROPIC_API_KEY": KEY}).inference_provider == "openai"
+    with pytest.raises(ConfigurationError):
+        Config.from_env({"ANTHROPIC_API_KEY": KEY})
     with pytest.raises(ConfigurationError):
         replace(anthropic_settings(), inference_provider="openai").validate()
 

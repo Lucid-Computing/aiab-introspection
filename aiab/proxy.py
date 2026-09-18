@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
+import secrets
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -316,6 +317,14 @@ def create_app(
 
     @app.middleware("http")
     async def privacy_and_cors(request: Request, call_next: Any) -> Response:
+        # Protect costly inference before reading a body or admitting a report ticket.
+        # Audit artifacts remain public so independent attested auditors need no secret.
+        if settings.gateway_token and request.url.path.startswith("/v1/"):
+            values = request.headers.getlist("authorization")
+            expected = f"Bearer {settings.gateway_token}".encode("ascii")
+            supplied = values[0].encode("utf-8") if len(values) == 1 else b""
+            if not secrets.compare_digest(supplied, expected):
+                return error_response(401, "unauthorized", "Gateway authentication required")
         allowed_method = _CORS_METHODS.get(request.url.path)
         requested_method = (
             request.headers.get("access-control-request-method", allowed_method)

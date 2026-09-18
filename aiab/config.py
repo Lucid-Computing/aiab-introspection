@@ -93,6 +93,8 @@ class Config:
     inference_provider: str = "openai"
     anthropic_model: str = ANTHROPIC_MODEL
     anthropic_api_key: str | None = field(default=None, repr=False)
+    gateway_token: str | None = field(default=None, repr=False)
+    require_gateway_token: bool = False
     listen_port: int = 8443
     cors_allow_origin: str | None = None
     sample_rate: float = 0.05
@@ -133,12 +135,24 @@ class Config:
         key = None
         if provider == "anthropic":
             if "ANTHROPIC_API_KEY" in env:
-                raise ConfigurationError("Use ANTHROPIC_API_KEY_FILE, never ANTHROPIC_API_KEY")
-            key = read_anthropic_key(env.get("ANTHROPIC_API_KEY_FILE", ""))
-        elif "ANTHROPIC_API_KEY_FILE" in env or "ANTHROPIC_MODEL" in env:
+                if env.get("AIAB_MODE") != "tinfoil" or "ANTHROPIC_API_KEY_FILE" in env:
+                    raise ConfigurationError("Environment Anthropic key requires Tinfoil mode only")
+                # Tinfoil repository secrets are injected as environment variables.
+                key = env["ANTHROPIC_API_KEY"]
+                if not key or len(key) > 4096 or any(not 33 <= ord(c) <= 126 for c in key):
+                    raise ConfigurationError("Invalid Anthropic repository secret")
+            else:
+                key = read_anthropic_key(env.get("ANTHROPIC_API_KEY_FILE", ""))
+        elif any(
+            name in env
+            for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_FILE", "ANTHROPIC_MODEL")
+        ):
             raise ConfigurationError(
                 "Anthropic configuration requires INFERENCE_PROVIDER=anthropic"
             )
+        required_token = env.get("AIAB_REQUIRE_GATEWAY_TOKEN", "false")
+        if required_token not in {"true", "false"}:
+            raise ConfigurationError("AIAB_REQUIRE_GATEWAY_TOKEN must be true or false")
         try:
             definition = env.get("CLASSIFIER_DEFINITION", "classifiers/ai_capabilities.md")
             # Read exactly once. Paths outside bundled definitions are not policy inputs.
@@ -159,6 +173,8 @@ class Config:
                 inference_provider=provider,
                 anthropic_model=env.get("ANTHROPIC_MODEL", ANTHROPIC_MODEL),
                 anthropic_api_key=key,
+                gateway_token=env.get("AIAB_GATEWAY_TOKEN") or None,
+                require_gateway_token=required_token == "true",
                 listen_port=int(
                     env.get("LISTEN_PORT", "8080" if env.get("AIAB_MODE") == "tinfoil" else "8443")
                 ),
@@ -183,13 +199,22 @@ class Config:
         return config
 
     def validate(self) -> None:
+        if self.require_gateway_token and not self.gateway_token:
+            raise ConfigurationError("Gateway authentication requires a repository secret")
+        if self.gateway_token is not None and (
+            not 32 <= len(self.gateway_token) <= 256
+            or any(not (c.isascii() and (c.isalnum() or c in "_-")) for c in self.gateway_token)
+        ):
+            raise ConfigurationError("Gateway token must be 32 to 256 URL-safe characters")
         if self.inference_provider not in {"openai", "anthropic"}:
             raise ConfigurationError("INFERENCE_PROVIDER must be openai or anthropic")
         if self.inference_provider == "anthropic":
             if self.inference_url != ANTHROPIC_ORIGIN:
                 raise ConfigurationError("Anthropic inference requires its fixed HTTPS origin")
             if not self.anthropic_api_key or not re_model_id(self.anthropic_model):
-                raise ConfigurationError("Anthropic inference requires a key file and valid model")
+                raise ConfigurationError(
+                    "Anthropic inference requires a credential and valid model"
+                )
         elif self.anthropic_api_key:
             raise ConfigurationError("Anthropic key requires the Anthropic provider")
         if self.aiab_mode not in {"local", "tinfoil"}:

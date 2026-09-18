@@ -1,0 +1,41 @@
+# Optional standalone gateway. Does not replace any hosted service or Caddy route.
+# docker compose --env-file /dev/null -f deploy/docker-compose.gateway.yml ...
+name: aiab-verified-gateway
+services:
+  gateway:
+    init: true
+    image: aiab-verified-gateway:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8444:8444"
+    environment:
+      AIAB_ENCLAVE_HOST: ${AIAB_ENCLAVE_HOST:?Independent enclave hostname required}
+      AIAB_ENCLAVE_REPO: ${AIAB_ENCLAVE_REPO:?Approved owner/repo required}
+      EXPECTED_AIAB_DIGEST: ${EXPECTED_AIAB_DIGEST:?Approved Tinfoil release digest required}
+      EXPECTED_POLICY_DIGEST: ${EXPECTED_POLICY_DIGEST:?Independently generated policy digest required}
+      AIAB_GATEWAY_TOKEN_FILE: /run/secrets/gateway_token
+    secrets:
+      - gateway_token
+    volumes:
+      - type: bind
+        source: ${TINFOIL_CLI_PATH:?Path to reviewed checksummed static Tinfoil CLI required}
+        target: /usr/local/bin/tinfoil
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=65532,gid=65532,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 1
+    logging:
+      driver: none
+secrets:
+  gateway_token:
+    file: /etc/aiab-introspection/gateway.secret

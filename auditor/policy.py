@@ -20,6 +20,9 @@ PUBLIC_SETTINGS = frozenset(
         "ENFORCEMENT_MODE",
         "BLOCK_THRESHOLD",
         "INFERENCE_URL",
+        "INFERENCE_PROVIDER",
+        "ANTHROPIC_MODEL",
+        "AIAB_REQUIRE_GATEWAY_TOKEN",
         "LISTEN_PORT",
         "CORS_ALLOW_ORIGIN",
         "SAMPLE_RATE",
@@ -41,7 +44,12 @@ def expected_manifest(settings: Any) -> dict[str, Any]:
     ):
         raise VerificationError("Expected only public string settings with AIAB_MODE=tinfoil")
     # Construction is network-free; never load a real key or use ambient environment.
-    config = Config.from_env({**settings, "TINFOIL_API_KEY": "offline-policy-generation"})
+    synthetic = {"TINFOIL_API_KEY": "offline-policy-generation"}
+    if settings.get("INFERENCE_PROVIDER") == "anthropic":
+        synthetic["ANTHROPIC_API_KEY"] = "offline-policy-generation"
+    if settings.get("AIAB_REQUIRE_GATEWAY_TOKEN") == "true":
+        synthetic["AIAB_GATEWAY_TOKEN"] = "offline-policy-generation-token-0000"
+    config = Config.from_env({**settings, **synthetic})
     return build_manifest(config, TinfoilLLMClassifier(config))
 
 

@@ -95,6 +95,11 @@ def build_manifest(config: Config, classifier: Classifier) -> dict[str, Any]:
         "classifier_concurrency": config.classifier_concurrency,
         "max_request_bytes": config.max_request_bytes,
         "inference_origin": origin(config.inference_url),
+        "inference_provider": config.inference_provider,
+        "inference_model": config.anthropic_model
+        if config.inference_provider == "anthropic"
+        else None,
+        "gateway_authentication": "bearer" if config.gateway_token else "none",
     }
 
 

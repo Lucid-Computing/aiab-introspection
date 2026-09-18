@@ -1,5 +1,12 @@
 # Tinfoil release and deployment procedure
 
+For the Anthropic + authenticated gateway deployment, use the concrete
+[migration runbook](MIGRATION.md) and `prepare_release.py`. Its separate public
+candidate and pinned workflows supersede the generic OpenAI-origin template below.
+No candidate has been published or deployed. Never send direct unauthenticated
+traffic-generator requests to the new token-protected inference endpoint; use the
+authenticated host route after verified gateway acceptance.
+
 This is a reviewed configuration template and an offline-tested auditor integration,
 not a deployed service. No public hostname, approved image digest, release digest,
 or approved policy digest exists yet. Do not treat the all-zero image placeholder
@@ -138,7 +145,7 @@ Once the release and secrets exist, the operator can use these current CLI comma
 (replace the uppercase values; these commands were not executed during development):
 
 ```sh
-tinfoil container create aiab-demo --repo OWNER/REPO --tag VERSION
+tinfoil container create aiab-demo --repo OWNER/REPO --tag VERSION --secret TINFOIL_API_KEY
 tinfoil container get aiab-demo
 ```
 

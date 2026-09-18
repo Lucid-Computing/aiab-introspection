@@ -20,7 +20,7 @@ _REGISTER_COUNTS = {
     _PREDICATE + "tdx-guest/v2": 5,
     _PREDICATE + "snp-tdx-multiplatform/v1": 3,
 }
-_AUDIT_PATHS = frozenset({"/aiab/pubkey", "/aiab/manifest", "/aiab/reports"})
+_AUDIT_PATHS = frozenset({"/aiab/pubkey", "/aiab/manifest", "/aiab/reports", "/aiab/health"})
 
 
 def production_inputs(host: str, repo: str | None, digest: str | None, policy: str | None) -> None:
@@ -145,7 +145,14 @@ class AttestedClient:
         try:
             from tinfoil import SecureClient
 
-            self._secure = SecureClient(
+            class FixedIdentityClient(SecureClient):
+                # SDK 0.14.0 otherwise retries after reattesting a *new* key,
+                # before our post-request approval check. Never send a secret
+                # to that newly selected identity. A fresh audit is required.
+                def _rebuild_sync_transport(self) -> httpx.BaseTransport:
+                    raise VerificationError("TLS identity changed; fetch again")
+
+            self._secure = FixedIdentityClient(
                 enclave=evidence.host,
                 repo=evidence.repo,
                 transport="tls",
@@ -204,6 +211,43 @@ class AttestedClient:
     def close(self) -> None:
         if self._http is not None:
             self._http.close()
+
+    def inference(self, method: str, path: str, body: bytes, token: str) -> httpx.Response:
+        """Fixed inference routes, no ambient credentials, cookies, or redirects.
+
+        The gateway must verify its independently pinned policy using this same
+        client before invoking this method. The SDK pins TLS before sending HTTP.
+        """
+        if (method, path) not in {
+            ("GET", "/v1/models"),
+            ("POST", "/v1/chat/completions"),
+        } or not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", token):
+            raise VerificationError("Unsupported inference request")
+        try:
+            self._check()
+            assert self._http is not None
+            self._http.cookies.clear()
+            with self._http.stream(
+                method,
+                f"https://{self.evidence.host}{path}",
+                content=body,
+                headers={"authorization": f"Bearer {token}", "content-type": "application/json"},
+                timeout=60,
+                follow_redirects=False,
+            ) as response:
+                # Never relay redirects or their bodies; a caller cannot use
+                # the enclave as a credential-bearing arbitrary URL proxy.
+                if 300 <= response.status_code < 400:
+                    raise VerificationError("Redirect rejected")
+                chunks = bytearray()
+                for chunk in response.iter_bytes():
+                    chunks.extend(chunk)
+                    if len(chunks) > 2_097_152:
+                        raise VerificationError("Oversized inference response")
+                self._check()
+                return httpx.Response(response.status_code, content=bytes(chunks))
+        except Exception:
+            raise VerificationError("Attested inference request failed") from None
 
     def __enter__(self) -> AttestedClient:
         return self

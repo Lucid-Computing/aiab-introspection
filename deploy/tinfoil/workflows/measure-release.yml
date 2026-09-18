@@ -1,0 +1,32 @@
+name: Measure reviewed AIAB release
+on:
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: aiab-measure-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  measure:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - name: Refuse an unfinished candidate
+        run: |
+          if grep -Eq 'REPLACE_|sha256:0{64}' tinfoil-config.yml; then
+            echo 'Complete and review the candidate before releasing.' >&2
+            exit 1
+          fi
+      - uses: tinfoilsh/measure-image-action@c33809b2a4a9ced570ab869765aecd44b4d3cbd5 # v0.11.0
+        with:
+          config-file: ${{ github.workspace }}/tinfoil-config.yml
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # SDK 0.14.0 resolves the latest GitHub release.
+          mark-as-latest: 'true'
