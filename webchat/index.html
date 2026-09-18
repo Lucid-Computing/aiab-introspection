@@ -31,9 +31,10 @@
 <body>
   <main>
     <h1>AIAB · Governed chat</h1>
-    <p>Try a conversation through the AIAB policy gate.</p>
+    <p>AIAB checks each admitted conversation against policy before forwarding allowed requests for an answer, and signs aggregate audit reports.</p>
     <p id="status" role="status">Connecting…</p>
-    <p class="note">Demo UI, not an attestation verifier. Use synthetic messages. Conversation history stays in this page’s memory and is sent to AIAB when you send a message.</p>
+    <p class="note">Hosted flow: verified Tinfoil classifier (gpt-oss-safeguard-120b) → Anthropic Sonnet (claude-sonnet-4-6). Blocked requests stop at AIAB. Tinfoil verification covers the classifier connection; the self-hosted AIAB is not enclave-attested.</p>
+    <p class="note">History stays in this page’s memory and is sent with your next message. Admitted conversations reach the classifier; allowed conversations also reach the answer provider. Audit reports contain aggregate counts, not transcripts. Use the supplied presets for a walkthrough.</p>
     <ul id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></ul>
     <div class="controls">
       <button id="benign" type="button" disabled>Load benign prompt</button>

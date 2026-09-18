@@ -1,8 +1,9 @@
 # Version 1 threat model
 
 This document states implemented controls, deployment requirements and limits.
-Offline tests are not evidence that a particular deployment meets them; live
-Tinfoil verification remains outstanding.
+Offline tests are not evidence that a particular deployment meets them. The hosted
+service uses a verified Tinfoil classifier connection; enclave deployment and
+attestation of AIAB itself remain outstanding.
 
 ## Claim and observation boundary
 
@@ -45,7 +46,7 @@ transport, with repo/release/code/key identity checked before and after each fet
 An SDK re-verification after key rotation requires a fresh audit. An expected policy
 manifest is generated offline from reviewed source/settings, never approved merely
 by fetching the running server's manifest. These integrations have offline tests;
-no public deployment or live hardware-verification result exists yet.
+no enclave-attested AIAB deployment or auditor hardware-verification result exists yet.
 
 Classifier calls must exclusively use the reviewed Tinfoil SDK verification path.
 The requested model identifier is not an immutable weight digest. Serving-code

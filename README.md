@@ -1,87 +1,71 @@
-# AIAB inference introspection demo
+# AIAB inference introspection
 
-AIAB ("AI in a box") measures policy-relevant inference received by one proxy. The
-appliance samples request/response pairs in monitor mode or classifies every
-request before forwarding in block mode, then emits signed aggregate reports for an
-auditor. The web demo illustrates endpoint enforcement with synthetic prompts.
+AIAB ("AI in a box") puts a policy gate in front of model inference and produces
+signed aggregate audit reports. The [live hosted chat](https://jonathan.quest/aiab-introspection/)
+uses Tinfoil's verified production classifier (`gpt-oss-safeguard-120b`) to check
+each admitted conversation. Policy-blocked requests stop at AIAB; allowed requests
+are forwarded to Anthropic Sonnet (`claude-sonnet-4-6`) for an answer.
 
-The local runtime, Tinfoil SDK classifier,
-synthetic traffic generator, direct classifier evaluation, and auditor with local
-and attested transports are implemented. Tinfoil integration is covered by offline SDK tests;
-live keyed classification and attested deployment have not been run. See
-[the implementation plan](aiab-plan.md).
-
-## What the demonstration establishes
-
-With correctly verified deployment and under the TEE assumptions, evidence concerns
-traffic admitted at this proxy and its effective policy. It does not establish
-datacenter-wide coverage, absence of prohibited activity, or the fraction of compute
-spent on AI research. Other endpoints and internal agent activity are outside the
-observation boundary. A preset prompt being blocked does not demonstrate robust
-detection of adversarial or distributed capabilities research.
-
-In an attested deployment, conversation contents should stay inside the
-appliance/classifier enclaves and the governed inference server. That server still
-receives forwarded conversations.
-Exact counts can disclose information in small periods; there is no differential
-privacy or general covert-channel guarantee. Use synthetic traffic only. See the
-[threat model](docs/THREAT_MODEL.md), [deferred work](docs/DEFERRED.md), and
-[open questions](docs/OPEN_QUESTIONS.md).
-
-## Hosted demo information flow
-
-The self-hosted configuration runs in **local mode without AIAB enclave
-attestation**. The base stack uses a keyword mock classifier and local inference;
-the optional Tinfoil and Sonnet overlays select a verified remote classifier and
-Anthropic answer inference. Caddy terminates public HTTPS; Caddy and the server
-operator can access conversation contents.
+## Live hosted information flow
 
 ```mermaid
 flowchart TD
-    B["Browser · webchat"] <-->|"HTTPS requests / replies"| C["Caddy · jonathan.quest"]
-    C <-->|"/aiab-introspection/ · UI assets"| W["nginx · webchat files"]
-    C <-->|"/aiab-introspection/api/* · strip prefix"| P
-    subgraph Local["Self-hosted local mode · no enclave attestation"]
-        P["AIAB proxy · block enforcement"]
-        M["Base: MockClassifier · keyword policy"]
-        I["Base: local llama.cpp inference"]
-        R["AIAB reporting · in-memory aggregates"]
-        P <-->|"prompt / policy decision"| M
-        P <-->|"allowed messages / replies"| I
-        P -->|"counts and outcomes"| R
-    end
-    R -->|"signed aggregate reports"| A["Local auditor · --insecure-local"]
-    P -->|"manifest and signing public key"| A
-    P -. "Optional allowed-message HTTPS / replies" .-> S["Anthropic · Sonnet"]
-    K["Private host key files · Tinfoil / Anthropic"] -. "Docker secrets in AIAB only" .-> P
-    P -. "Tinfoil overlay: all admitted messages / decision via verified SDK" .-> T["Tinfoil classifier enclave · gpt-oss-safeguard-120b"]
+    B["Browser"] --> C["Caddy · HTTPS + Basic Auth"]
+    C --> W["Hosted webchat / API route"]
+    W --> P["AIAB · policy gate"]
+    P --> T["Verified Tinfoil production classifier<br/>gpt-oss-safeguard-120b"]
+    T --> D{"AIAB policy decision"}
+    D -->|"Blocked"| X["AIAB · HTTP 403"]
+    D -->|"Allowed forwarding"| S["Anthropic Sonnet<br/>claude-sonnet-4-6"]
+    S --> R["AIAB · answer response"]
+    X --> B
+    R --> B
+    P -. "Aggregate counts and outcomes" .-> A["Signed aggregate-only audit reports"]
+    A --> V["Auditor · signature and manifest checks"]
 ```
 
-Blocked requests return HTTP 403 through AIAB and Caddy before reaching inference.
-The local auditor reads loopback endpoints and checks report signatures and
-manifest consistency; this provides no enclave or image-identity proof. It receives
-aggregate reports, not conversation transcripts. See the
+Responses return through the same API route and Caddy. Caddy serves the webchat
+assets and routes API requests to AIAB; the webchat container serves static files.
+The hosted deployment combines the base, Anthropic, and Tinfoil Compose files.
+There is no automatic mock fallback: failed classifier verification closes chat
+admission, and classification errors do not forward requests to Sonnet.
+Readiness and input validation can reject requests before classification.
+
+**Verification boundary:** Tinfoil SDK verification applies to the classifier
+connection. The self-hosted AIAB runs in local mode and is **not enclave-attested**.
+The local auditor checks report signatures and manifest consistency; those checks
+do not prove the AIAB image or host identity. Reports contain aggregate counts,
+not conversation transcripts. The separate [AIAB enclave deployment path](deploy/tinfoil/README.md)
+still requires deployment and independently approved release and policy digests.
+
+Caddy and the host operator can access conversations. Every admitted conversation
+reaches the Tinfoil classifier; only policy-allowed conversations reach Anthropic.
+The browser keeps history in page memory and resends successful turns with the
+next message. AIAB does not persist transcripts or include them in audit reports;
+this is not a claim about external providers' retention. Basic Auth controls access,
+but the application has no per-user quota or billing cap. See the
 [host deployment and routing guide](deploy/HOSTING.md).
 
-The optional [Sonnet overlay](deploy/HOSTING.md#optional-sonnet-answer-inference)
-replaces local answer inference with Anthropic. Its API key is read from a private
-host file mounted into AIAB, never sent to the browser or embedded in an image.
-Allowed conversation contents are sent to Anthropic. The public demo has no user
-quota or billing cap, so key secrecy alone does not prevent public usage costs.
+## What this demonstrates
 
-The [Tinfoil overlay](deploy/HOSTING.md#optional-verified-tinfoil-classification)
-replaces the keyword mock with SDK-verified `gpt-oss-safeguard-120b` classification.
-Every admitted conversation reaches the classifier; only policy-allowed messages
-reach Anthropic. Readiness and input validation can reject requests before
-classification. Invalid secret files stop startup, and failed classifier
-verification keeps readiness and chat admission closed without a mock fallback.
-This overlay must be selected explicitly; the base stack remains mock-based.
-Using a verified remote classifier **does not attest the local AIAB proxy**.
-The separate [attested deployment path](deploy/tinfoil/README.md) places AIAB
-behind Tinfoil's enclave transport and requires the auditor to verify independently
-approved release and policy digests. That live deployment remains unverified here.
+The hosted service demonstrates real classification, policy enforcement, answer
+inference, and signed aggregate reporting for traffic admitted at this proxy.
+It does not establish datacenter-wide coverage, absence of prohibited activity,
+or the fraction of compute spent on AI research. Other endpoints and internal
+agent activity are outside the observation boundary. A preset prompt being blocked
+does not demonstrate robust detection of adversarial or distributed capabilities
+research. Exact counts can disclose information in small periods; there is no
+differential privacy or general covert-channel guarantee. Use the supplied
+synthetic presets for walkthroughs. See the [threat model](docs/THREAT_MODEL.md),
+[deferred work](docs/DEFERRED.md), and [open questions](docs/OPEN_QUESTIONS.md).
 
-## Development
+## Development and testing
+
+The local development stacks use a keyword mock classifier and local llama.cpp
+inference unless explicitly configured otherwise. These are testing configurations;
+the hosted service above uses the Tinfoil and Anthropic overlays. Offline tests
+exercise provider integrations and failure handling; they do not measure live
+provider accuracy or latency. See [the implementation plan](aiab-plan.md).
 
 Use Python 3.12 and `uv`. Dependency versions are resolved in `uv.lock`.
 `make sync` installs the locked environment; `make check` runs Ruff lint, format
@@ -92,7 +76,7 @@ Stop the local containers with `make local-down`. `make demo-up` starts the
 implemented block-mode web chat stack; open `http://localhost:8081` and follow the
 [demo sequence](demo/README.md) for certificate setup, benign and blocked prompts,
 and a finalized rollup. Stop that stack with `make demo-down`.
-For hosting the **non-attested local demo** at
+For operating the hosted service at
 `https://jonathan.quest/aiab-introspection/`, see the
 [host deployment and rollback guide](deploy/HOSTING.md).
 `make eval` calls the classifier directly and reports development and held-out
@@ -104,7 +88,7 @@ keyword mock. Live provider accuracy and latency remain unmeasured.
 The auditor's `--insecure-local` mode is development-only, restricted to `localhost`
 and `127.0.0.1`, and provides no enclave-attestation claim.
 
-## Local monitor demo (M1)
+### Local monitor demo (M1)
 
 Install Docker Engine, Docker Compose with `--wait` support, Python 3.12, and `uv`.
 Obtain an instruct GGUF using the pinned download in
@@ -218,9 +202,9 @@ uv run --locked auditor verify --host HOSTNAME --repo OWNER/REPO \
   --expected-policy-digest APPROVED_POLICY_DIGEST
 ```
 
-There is no approved image/release/policy digest or public AIAB hostname to publish
-yet. Live classification, deployment and attestation
-acceptance remain outstanding.
+There is no independently approved AIAB enclave image/release/policy digest yet.
+The hosted classifier is live, but deployment and attestation acceptance for AIAB
+itself remain outstanding.
 
 ## Adversarial demonstration (M4)
 
@@ -244,7 +228,7 @@ and a generic verifier failure does not establish debug-policy causality.
 Configuration comes from environment variables and is parsed once per boot. No
 secret configuration is committed. `.env.example` lists the supported variables;
 copying it does not automatically load it into a process. Never publish API keys.
-No real deployment measurements are approved or published yet.
+No AIAB enclave deployment measurements are approved or published yet.
 
 | Variable | Purpose | Default |
 |---|---|---|

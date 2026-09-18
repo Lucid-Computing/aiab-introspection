@@ -1,20 +1,28 @@
-# Host the non-attested local demo
+# Operate the hosted AIAB service
 
-Target: **https://jonathan.quest/aiab-introspection/** on server **206.189.165.5**.
-This is the existing local-mode AIAB with the keyword mock classifier and local
-llama.cpp inference by default, with optional verified Tinfoil classification and
-Sonnet answer inference below. The self-hosted AIAB has
-**no enclave attestation**. Public HTTPS authenticates
-the website, not an enclave or the report-signing identity. Use synthetic messages.
+Live service: **https://jonathan.quest/aiab-introspection/** on server **206.189.165.5**.
+Caddy provides HTTPS and Basic Auth. AIAB checks admitted conversations with the
+verified Tinfoil production classifier `gpt-oss-safeguard-120b`, blocks policy-denied
+requests, and forwards allowed conversations to Anthropic `claude-sonnet-4-6`.
+The running configuration uses the hosted base plus both provider overlays below.
 
-The base hosted Compose file fixes `AIAB_MODE=local`, block enforcement, and
-`mock-keywords/v1`; it does not inherit a Tinfoil key or classifier from the shell.
-It publishes only `127.0.0.1:8081` (webchat) and `127.0.0.1:8443` (AIAB local TLS).
-Inference has no host port. All services restart with Docker unless explicitly
-stopped. AIAB's report state, signing keys, and local certificate are ephemeral
-and reset when AIAB restarts. Browser conversation history stays in the open
-page's memory across server restarts; reload the page or select **New conversation**
-to clear it. Caddy is the only public entry point.
+Tinfoil verification covers the classifier connection. The self-hosted AIAB has
+**no enclave attestation**; public HTTPS authenticates the website, and local audit
+verification checks signatures and manifest consistency without proving AIAB image
+or host identity. See the [live flow and its boundaries](../README.md#live-hosted-information-flow).
+
+Only `127.0.0.1:8081` (webchat) and `127.0.0.1:8443` (AIAB local TLS) are published.
+Caddy is the only public entry point. Services restart with Docker unless explicitly
+stopped. AIAB's aggregate report state, signing keys, and local certificate are
+ephemeral and reset when AIAB restarts. Browser history stays in the open page's
+memory; reload or select **New conversation** to clear it. Conversation contents
+reach the classifier and, when allowed, Anthropic; this does not make a retention
+claim about external providers.
+
+For the current live stack, use [Sonnet answer inference](#optional-sonnet-answer-inference)
+and [verified Tinfoil classification](#optional-verified-tinfoil-classification)
+together. Use all three reviewed Compose files for every live-stack operation.
+The base-only startup procedure below is for development and testing.
 
 ## DNS change
 
@@ -43,8 +51,9 @@ dig +short AAAA jonathan.quest @1.1.1.1
 dig +short A files.jonathan.quest @1.1.1.1
 ```
 
-## Start the loopback services
+## Development and testing: base-only loopback services
 
+The base stack uses the keyword mock classifier and local llama.cpp inference.
 Use Docker Engine, Docker Compose with `extends` and `--wait` support, and the
 existing system Caddy (validated with stock Caddy 2.11.2). Obtain the model via
 [the pinned model download](../inference/README.md#obtain-a-model). No service
