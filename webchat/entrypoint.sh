@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Accept only an HTTP(S) origin, with an optional trailing slash. This narrow
-# grammar excludes credentials, paths, control characters and JS string escapes.
+# Accept an HTTP(S) origin with an optional unencoded ASCII path prefix.
+# Keep this grammar aligned with configuredBaseUrl() in index.html. Reject all
+# percent encodings so neither browsers nor proxies can decode a different path.
 # Never echo invalid input: deployment configuration may contain credentials.
 if ! printf '%s\n' "${AIAB_URL-}" | awk '
     function ipv6(address, halves, pieces, n, groups, j, k) {
@@ -24,7 +25,16 @@ if ! printf '%s\n' "${AIAB_URL-}" | awk '
         value = $0
         if (value !~ /^https?:\/\//) { bad = 1; next }
         sub(/^https?:\/\//, "", value)
-        sub(/\/$/, "", value)
+        path = value
+        sub(/^[^\/]*/, "", path)
+        value = substr(value, 1, length(value) - length(path))
+        if (path != "" && path != "/") {
+            if (path !~ /^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*\/?$/) bad = 1
+            count = split(path, segments, "/")
+            for (i = 1; i <= count; i++) {
+                if (segments[i] == "." || segments[i] == "..") bad = 1
+            }
+        }
         if (value ~ /^\[[0-9a-fA-F:]+\](:[0-9]+)?$/) {
             address = value
             sub(/^\[/, "", address)
@@ -46,6 +56,11 @@ if ! printf '%s\n' "${AIAB_URL-}" | awk '
                     if (labels[i] + 0 > 255 ||
                         (length(labels[i]) > 1 && substr(labels[i], 1, 1) == "0")) bad = 1
                 }
+            } else if (labels[count] ~ /^[0-9]+$/ ||
+                       labels[count] ~ /^0[xX][0-9a-fA-F]+$/) {
+                # WHATWG URLs interpret numeric final labels as IPv4; do not
+                # accept alternate hex, octal, or abbreviated IP spellings.
+                bad = 1
             }
             value = substr(value, length(host) + 1)
         }
@@ -54,7 +69,7 @@ if ! printf '%s\n' "${AIAB_URL-}" | awk '
     }
     END { exit (NR != 1 || bad) }
 '; then
-    printf '%s\n' 'AIAB_URL must be a valid HTTP(S) origin.' >&2
+    printf '%s\n' 'AIAB_URL must be a valid HTTP(S) origin with an optional safe path prefix.' >&2
     exit 1
 fi
 

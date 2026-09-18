@@ -1,0 +1,12 @@
+# Add this site only if jonathan.quest is not already configured. Otherwise,
+# import the fragment into its existing site and preserve its other handlers.
+# This is an ADDITION to /etc/caddy/Caddyfile, never a replacement for it.
+jonathan.quest {
+	import /etc/caddy/aiab-introspection.caddy
+
+	# Keep the current apex fallback here, if one exists. An existing unconditional
+	# respond/rewrite/reverse_proxy should live in a fallback handle { ... } block
+	# so that it does not preempt the more specific application handles.
+}
+
+# Retain the existing files.jonathan.quest site block exactly as it is.

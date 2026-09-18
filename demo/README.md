@@ -86,7 +86,12 @@ Set that deployment's `CORS_ALLOW_ORIGIN` to the exact web page origin, such as
 `http://localhost:8081`, before it starts. The allowed origin is frozen for the
 boot and affects the manifest. Set `ENFORCEMENT_MODE=block`, approve the resulting
 manifest, and use a trusted HTTPS hostname for the deployed AIAB. `AIAB_URL` must
-be a plain HTTP(S) origin without credentials, path, query, or fragment.
+be an HTTP(S) origin, optionally followed by an unencoded ASCII path prefix.
+Path segments may contain letters, digits, `.`, `_`, `~`, and `-`; standalone
+`.`/`..` segments, duplicate slashes, percent encodings, credentials, query strings,
+fragments, backslashes, and control characters are rejected. The prefix is retained
+when appending API paths; `config.js` and presets remain relative to the UI page.
+For the non-attested same-origin host setup, see [the hosting guide](../deploy/HOSTING.md).
 
 Build and run just the UI against that already-running deployment:
 

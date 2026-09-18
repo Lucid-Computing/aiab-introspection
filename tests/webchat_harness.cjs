@@ -11,11 +11,13 @@ class Element {
 }
 const ids = Object.fromEntries(["status", "messages", "benign", "ml_training", "clear", "chat", "prompt", "send", "retry"].map(id => [id, new Element()]));
 const requests = [];
+const configuredUrl = process.env.AIAB_TEST_URL || "https://localhost:8443";
+const baseUrl = configuredUrl.replace(/\/$/, "");
 let nextStatus = 200;
 let nextBody = { choices: [{ message: { content: "<script>unsafe HTML</script>" } }] };
 const context = {
   document: { getElementById: id => ids[id], createElement: () => new Element() },
-  window: { AIAB_URL: "https://localhost:8443" },
+  window: { AIAB_URL: configuredUrl },
   URL, AbortSignal,
   fetch: async (url, options) => {
     assert.equal(options.redirect, "error");
@@ -23,10 +25,10 @@ const context = {
     let status = 200;
     let body;
     if (url === "demo_prompts.json") body = { benign: "dinner", ml_training: "pretraining" };
-    else if (url === "https://localhost:8443/aiab/health") body = { status: "ready", enforcement_mode: "block", aiab_mode: "local" };
-    else if (url === "https://localhost:8443/v1/models") body = { data: [{ id: "from-model-endpoint" }] };
+    else if (url === `${baseUrl}/aiab/health`) body = { status: "ready", enforcement_mode: "block", aiab_mode: "local" };
+    else if (url === `${baseUrl}/v1/models`) body = { data: [{ id: "from-model-endpoint" }] };
     else {
-      assert.equal(url, "https://localhost:8443/v1/chat/completions");
+      assert.equal(url, `${baseUrl}/v1/chat/completions`);
       requests.push(JSON.parse(options.body));
       status = nextStatus; body = nextBody;
     }
@@ -41,7 +43,7 @@ const submit = async (value) => {
 };
 (async () => {
   await settle();
-  assert.match(ids.status.textContent, /https:\/\/localhost:8443 · mode: block/);
+  assert.equal(ids.status.textContent, `AIAB: ${baseUrl} · mode: block · local`);
   assert.equal(ids.send.disabled, false);
   ids.benign.listeners.click();
   assert.equal(ids.prompt.value, "dinner");

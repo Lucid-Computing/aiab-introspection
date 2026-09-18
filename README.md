@@ -20,12 +20,50 @@ spent on AI research. Other endpoints and internal agent activity are outside th
 observation boundary. A preset prompt being blocked does not demonstrate robust
 detection of adversarial or distributed capabilities research.
 
-Conversation contents should stay inside the appliance/classifier enclaves and the
-governed inference server. That server still receives forwarded conversations.
+In an attested deployment, conversation contents should stay inside the
+appliance/classifier enclaves and the governed inference server. That server still
+receives forwarded conversations.
 Exact counts can disclose information in small periods; there is no differential
 privacy or general covert-channel guarantee. Use synthetic traffic only. See the
 [threat model](docs/THREAT_MODEL.md), [deferred work](docs/DEFERRED.md), and
 [open questions](docs/OPEN_QUESTIONS.md).
+
+## Hosted demo information flow
+
+The current self-hosted configuration runs in **local mode with a keyword mock
+classifier, without enclave attestation**. Caddy terminates public HTTPS; Caddy
+and the server operator can access conversation contents.
+
+```mermaid
+flowchart TD
+    B["Browser · webchat"] <-->|"HTTPS requests / replies"| C["Caddy · jonathan.quest"]
+    C <-->|"/aiab-introspection/ · UI assets"| W["nginx · webchat files"]
+    C <-->|"/aiab-introspection/api/* · strip prefix"| P
+    subgraph Local["Self-hosted local mode · no enclave attestation"]
+        P["AIAB proxy · block enforcement"]
+        M["MockClassifier · keyword policy"]
+        I["Local llama.cpp inference"]
+        R["AIAB reporting · in-memory aggregates"]
+        P <-->|"prompt / policy decision"| M
+        P <-->|"allowed messages / replies"| I
+        P -->|"counts and outcomes"| R
+    end
+    R -->|"signed aggregate reports"| A["Local auditor · --insecure-local"]
+    P -->|"manifest and signing public key"| A
+    P -. "Optional alternative to mock: verified SDK" .-> T["Tinfoil classifier enclave"]
+```
+
+Blocked requests return HTTP 403 through AIAB and Caddy before reaching inference.
+The local auditor reads loopback endpoints and checks report signatures and
+manifest consistency; this provides no enclave or image-identity proof. It receives
+aggregate reports, not conversation transcripts. See the
+[host deployment and routing guide](deploy/HOSTING.md).
+
+The dashed Tinfoil classifier branch is **optional and disabled in the hosted
+configuration**. Using a verified remote classifier does not attest the local AIAB
+proxy. The separate [attested deployment path](deploy/tinfoil/README.md) places AIAB
+behind Tinfoil's enclave transport and requires the auditor to verify independently
+approved release and policy digests. That live deployment remains unverified here.
 
 ## Development
 
@@ -38,6 +76,9 @@ Stop the local containers with `make local-down`. `make demo-up` starts the
 implemented block-mode web chat stack; open `http://localhost:8081` and follow the
 [demo sequence](demo/README.md) for certificate setup, benign and blocked prompts,
 and a finalized rollup. Stop that stack with `make demo-down`.
+For hosting the **non-attested local demo** at
+`https://jonathan.quest/aiab-introspection/`, see the
+[host deployment and rollback guide](deploy/HOSTING.md).
 `make eval` calls the classifier directly and reports development and held-out
 metrics, classification errors, synthetic request/response pairs, the policy digest,
 and requested model. With `TINFOIL_API_KEY` set, the classifier uses the Tinfoil SDK
@@ -204,7 +245,7 @@ No real deployment measurements are approved or published yet.
 | `CLASSIFIER_MODEL` | Requested provider model identifier | `gpt-oss-safeguard-120b` with a key; `mock-keywords/v1` without one |
 | `CLASSIFIER_DEFINITION` | Definition bundled into image | `classifiers/ai_capabilities.md` |
 | `LOG_LEVEL` | Allowlisted operational log verbosity | `INFO` |
-| `AIAB_URL` | Webchat's proxy base URL | `https://localhost:8443` |
+| `AIAB_URL` | Webchat's HTTP(S) proxy base URL, optionally with a safe path prefix | `https://localhost:8443` |
 | `EXPECTED_AIAB_DIGEST` | Auditor's approved Tinfoil release digest (`tinfoil.hash`), distinct from OCI image digest | Required outside insecure local mode |
 | `EXPECTED_POLICY_DIGEST` | Auditor's independently approved policy manifest digest | Required outside insecure local mode |
 

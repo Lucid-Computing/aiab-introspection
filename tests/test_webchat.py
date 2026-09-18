@@ -14,6 +14,66 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBCHAT = ROOT / "webchat"
+VALID_URLS = [
+    "https://localhost:8443",
+    "http://127.0.0.1:8443/",
+    "https://demo.example.test",
+    "https://[::1]:8443",
+    "https://[2001:db8::1234]",
+    "https://jonathan.quest/aiab-introspection/api",
+    "https://jonathan.quest/aiab-introspection/api/",
+    "http://127.0.0.1:8080/demo_1/v2.0/~api/",
+    "https://[::1]:8443/aiab-introspection/api",
+]
+INVALID_URLS = [
+    None,
+    "",
+    "https://",
+    "https://[:::]",
+    "https://[1]",
+    "https://999.0.0.1",
+    "https://127.01.0.1",
+    "https://127.1",
+    "https://0x7f.0.0.1",
+    "https://0x7f000001",
+    "https://2130706433",
+    "https://localhost:0",
+    "https://localhost:65536",
+    "https://localhost:",
+    "javascript:alert(1)",
+    "https://secret@localhost",
+    "https://user:secret@localhost/api",
+    'https://localhost/";alert(1);//',
+    "https://localhost/\\evil",
+    "https://localhost?secret=abc",
+    "https://localhost#fragment",
+    "https://localhost/api?",
+    "https://localhost/api#",
+    "https://localhost\nhttps://evil.test",
+    "https://localhost\r",
+    "https://localhost\t",
+    "https://localhost/api\n",
+    "https://localhost/api\tmore",
+    "https://localhost/api\x01",
+    "https://localhost//evil.test",
+    "https://localhost/api//v1",
+    "https://localhost/api//",
+    "https://localhost/./api",
+    "https://localhost/api/../v1",
+    "https://localhost/api/.",
+    "https://localhost/api/..",
+    "https://localhost/%2e%2e/api",
+    "https://localhost/api%2f..%2f",
+    "https://localhost/api/%5c",
+    "https://localhost/api/%252e%252e",
+    "https://localhost/api/%00",
+    "https://localhost/api/%41",
+    "https://localhost/api/hello world",
+    "https://localhost/api/é",
+    "https://localhost./api",
+    "https:///localhost/api",
+    "//localhost/api",
+]
 
 
 def test_presets_match_reviewed_plan() -> None:
@@ -23,16 +83,7 @@ def test_presets_match_reviewed_plan() -> None:
     assert json.loads((WEBCHAT / "demo_prompts.json").read_text()) == expected
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        "https://localhost:8443",
-        "http://127.0.0.1:8443/",
-        "https://demo.example.test",
-        "https://[::1]:8443",
-        "https://[2001:db8::1234]",
-    ],
-)
+@pytest.mark.parametrize("url", VALID_URLS)
 def test_entrypoint_renders_literal_configuration(tmp_path: Path, url: str) -> None:
     bin_path = tmp_path / "bin"
     bin_path.mkdir()
@@ -53,29 +104,7 @@ def test_entrypoint_renders_literal_configuration(tmp_path: Path, url: str) -> N
     )
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        None,
-        "",
-        "https://",
-        "https://[:::]",
-        "https://[1]",
-        "https://999.0.0.1",
-        "https://127.01.0.1",
-        "https://localhost:0",
-        "https://localhost:65536",
-        "javascript:alert(1)",
-        "https://secret@localhost",
-        'https://localhost/";alert(1);//',
-        "https://localhost/\\evil",
-        "https://localhost?secret=abc",
-        "https://localhost#fragment",
-        "https://localhost\nhttps://evil.test",
-        "https://localhost\r",
-        "https://localhost\t",
-    ],
-)
+@pytest.mark.parametrize("url", INVALID_URLS)
 def test_entrypoint_rejects_invalid_or_injected_url(tmp_path: Path, url: str | None) -> None:
     environ = {"PATH": "/usr/bin:/bin", "WEBCHAT_ROOT": str(tmp_path)}
     if url is not None:
@@ -88,12 +117,18 @@ def test_entrypoint_rejects_invalid_or_injected_url(tmp_path: Path, url: str | N
         check=False,
     )
     assert result.returncode == 1
-    assert result.stderr == "AIAB_URL must be a valid HTTP(S) origin.\n"
+    assert result.stderr == (
+        "AIAB_URL must be a valid HTTP(S) origin with an optional safe path prefix.\n"
+    )
     assert result.stdout == ""
     assert not (tmp_path / "config.js").exists()
 
 
-def test_browser_response_handling_and_ephemeral_history() -> None:
+@pytest.mark.parametrize(
+    "url",
+    ["https://localhost:8443", "https://jonathan.quest/aiab-introspection/api/"],
+)
+def test_browser_response_handling_and_ephemeral_history(url: str) -> None:
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is required for the browser logic smoke test")
@@ -103,6 +138,24 @@ def test_browser_response_handling_and_ephemeral_history() -> None:
     result = subprocess.run(
         [node, "-e", harness],
         input=script,
+        env={"AIAB_TEST_URL": url},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_browser_rejects_unsafe_urls_before_network_access() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for the browser URL boundary test")
+    html = (WEBCHAT / "index.html").read_text()
+    assert '<script src="config.js">' in html
+    script = re.findall(r"<script>(.*?)</script>", html, re.DOTALL)[0]
+    result = subprocess.run(
+        [node, str(ROOT / "tests/webchat_urls.cjs")],
+        input=json.dumps({"script": script, "valid": VALID_URLS, "invalid": INVALID_URLS}),
         capture_output=True,
         text=True,
         check=False,

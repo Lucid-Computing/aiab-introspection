@@ -86,14 +86,31 @@
       return typeof body?.error?.message === "string" ? body.error.message : fallback;
     }
 
+    function configuredBaseUrl(value) {
+      // Validate the raw string before URL can normalize traversal, backslashes,
+      // controls, or alternate IP spellings. Keep aligned with entrypoint.sh.
+      if (typeof value !== "string") throw new Error("Invalid configuration");
+      const match = value.match(/^(https?):\/\/(\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+)(?::([0-9]+))?(\/[A-Za-z0-9._~/-]*)?$/);
+      if (!match || match[0] !== value) throw new Error("Invalid configuration");
+      const [, , host, port, path = ""] = match;
+      if (path.includes("//") || path.split("/").some(part => part === "." || part === "..")) throw new Error("Invalid configuration");
+      if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) throw new Error("Invalid configuration");
+      if (!host.startsWith("[")) {
+        const labels = host.split(".");
+        if (host.length > 253 || labels.some(label => label.length > 63 || !/^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label))) throw new Error("Invalid configuration");
+        if (/^[0-9.]+$/.test(host) && (labels.length !== 4 || labels.some(label => Number(label) > 255 || (label.length > 1 && label.startsWith("0"))))) throw new Error("Invalid configuration");
+      }
+      const parsed = new URL(value);
+      if (!host.startsWith("[") && parsed.hostname !== host.toLowerCase()) throw new Error("Invalid configuration");
+      return `${parsed.origin}${path.replace(/\/$/, "")}`;
+    }
+
     async function connect() {
       if (busy) return;
       model = null;
       setBusy(true);
       try {
-        const parsed = new URL(window.AIAB_URL);
-        if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== "/") throw new Error("Invalid configuration");
-        aiabUrl = parsed.origin;
+        aiabUrl = configuredBaseUrl(window.AIAB_URL);
         byId("status").textContent = `AIAB: ${aiabUrl} · Connecting…`;
         const healthResponse = await request(`${aiabUrl}/aiab/health`);
         const health = await readBody(healthResponse);
