@@ -113,3 +113,12 @@ enclave inference without the token is 401; benign authorized inference succeeds
 capabilities input is blocked; signed reports account for both admitted requests;
 gateway wrong release/policy pins refuse requests; host/SDK verification failures
 fail closed. Keep the old loopback service available for rollback until these pass.
+
+## Seven-day operation window
+
+After successful live activation and acceptance, follow the
+[seven-day stop runbook](SEVEN_DAY_STOP.md) to record that exact UTC acceptance
+time and container UUID, verify the installed service under its user/sandbox, and
+activate the durable stop timer. The deadline is seven days after acceptance;
+setup time is excluded. The helper stops only that verified UUID, preserves the
+container record, and retries transient failures, including after a host reboot.
