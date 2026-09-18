@@ -195,10 +195,11 @@ deadline and a 1 MiB response cap, with no redirects, environment proxies, or
 automatic retries. Long answers can time out. Provider errors and headers are
 replaced by fixed public error messages.
 
-Keeping the credential private does **not** limit public API spending: this demo
-has no login, per-user rate quota, or application billing cap. Anyone who can reach
-the public chat can consume this account's Anthropic usage. The concurrency and
-output limits bound individual requests, not total account usage. Configure an
+Keeping the provider credential private does **not** limit API spending. Caddy
+Basic Auth restricts the hosted demo to holders of the demo password, but there is
+no per-user rate quota or application billing cap. Anyone with the demo password
+can consume this account's Anthropic usage. The concurrency and output limits
+bound individual requests, not total account usage. Configure an
 appropriate provider-side spending limit before enabling a paid public endpoint.
 
 ## Optional verified Tinfoil classification
@@ -384,15 +385,24 @@ Back up the live file, install the app fragment, and edit the existing Caddyfile
 
 ```sh
 AIAB_CADDY_BACKUP="/etc/caddy/Caddyfile.before-aiab.$(date -u +%Y%m%dT%H%M%SZ)"
-sudo cp -a /etc/caddy/Caddyfile "$AIAB_CADDY_BACKUP"
+sudo install -o root -g root -m 0600 /etc/caddy/Caddyfile "$AIAB_CADDY_BACKUP"
 printf 'Rollback file: %s\n' "$AIAB_CADDY_BACKUP"
 sudo install -m 0644 deploy/caddy/aiab-introspection.caddy /etc/caddy/aiab-introspection.caddy
 sudoedit /etc/caddy/Caddyfile
 ```
 
-Inside the **existing `jonathan.quest` site block**, add:
+Generate a fresh strong demo password and keep it in a password manager, outside
+source files, shell history, and logs. Run `caddy hash-password` and enter it at the
+hidden terminal prompt; place only the resulting hash in Caddy configuration.
+Do not activate the public site without Basic Auth.
+
+Inside the **existing `jonathan.quest` site block**, add the site-wide
+authentication block and app import, replacing the hash placeholder:
 
 ```caddyfile
+basic_auth {
+    demo REPLACE_WITH_GENERATED_PASSWORD_HASH
+}
 import /etc/caddy/aiab-introspection.caddy
 ```
 
@@ -402,8 +412,18 @@ current Caddyfile with that example. Preserve `files.jonathan.quest`, including 
 sensitive-file guard. Keep
 existing unrelated apex routes and place any unconditional fallback
 `respond`/`rewrite`/`reverse_proxy` in a fallback `handle { ... }` block so it cannot
-preempt the app's specific handlers. Do not enable request-body/access logging for
-the demo or expose Docker ports beyond loopback.
+preempt the app's specific handlers. Authentication must run before every apex
+handler, including redirects and the fallback. The fragment strips browser
+`Authorization` and `Cookie` headers before both upstreams. Do not enable
+request-body/access logging for the demo or expose Docker ports beyond loopback.
+When another site has access logging, verify the adapted server configuration
+excludes `jonathan.quest` from it. Preserve that other site's existing logging.
+
+Prepare a candidate from the current configuration, validate and adapt it before
+activation, and atomically replace the active file only after those checks pass.
+Check the files site's guard, authentication, file serving, and logging are
+unchanged; do not activate a stale candidate that predates the sensitive-file
+guard. Reload the installed configuration:
 
 ```sh
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -428,22 +448,30 @@ overload receives 503 without proxy retries. This uses stock Caddy's
 [`unhealthy_request_count`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#passive-health-checks)
 and [`request_body`](https://caddyserver.com/docs/caddyfile/directives/request_body).
 It is overload protection, not a per-IP request-rate quota. Stock Caddy has no
-rate-limit handler here; no unverified plugin syntax is installed. The public
-demo has no login or per-user quotas, so anyone can submit synthetic prompts.
+rate-limit handler here; no unverified plugin syntax is installed. Basic Auth
+limits access to demo password holders; there are no per-user quotas.
 
 ## Verify the public route
 
 ```sh
-curl --silent --show-error --head https://jonathan.quest/aiab-introspection
-curl --fail --silent --show-error https://jonathan.quest/aiab-introspection/config.js
-curl --fail --silent --show-error https://jonathan.quest/aiab-introspection/api/aiab/health
-curl --fail --silent --show-error https://jonathan.quest/aiab-introspection/api/v1/models
+curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://jonathan.quest/
+curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://jonathan.quest/aiab-introspection/
+curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://jonathan.quest/aiab-introspection/api/aiab/health
+# --user demo prompts for the password; never add the password to the command.
+curl --user demo --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://jonathan.quest/aiab-introspection
+curl --user demo --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://jonathan.quest/aiab-introspection/config.js
+curl --user demo --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://jonathan.quest/aiab-introspection/api/aiab/health
+curl --user demo --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://jonathan.quest/aiab-introspection/api/v1/models
+curl --user demo --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://jonathan.quest/aiab-introspection/unknown
 ```
 
-Expect a 308 to `/aiab-introspection/`, the configured API URL including its path,
-and health showing local/block mode. Open the page, send the benign preset, then
-the ML-training preset; the latter should return a mock policy block. Confirm
-`files.jonathan.quest` and the prior apex paths still behave as before. Do not use
+Expect unauthenticated root, app, and API requests to return 401. With the demo
+credentials, expect a 308 to `/aiab-introspection/`, then 200 for config, health,
+and models, and 404 for an unknown static path. Open the page and authenticate
+with the same credentials. Synthetic benign and ML-training presets can exercise
+the configured classifier; only policy-allowed requests reach answer inference.
+Confirm `files.jonathan.quest` still returns 401 for normal unauthenticated paths
+and 404 for sensitive paths. Do not use
 `--insecure` for public HTTPS checks. Before DNS cutover, `curl --resolve
 jonathan.quest:443:206.189.165.5 ...` can test routing once Caddy has a trusted
 certificate; it cannot bypass ACME validation requirements.
@@ -451,11 +479,14 @@ certificate; it cannot bypass ACME validation requirements.
 ## Roll back
 
 Restore the recorded Caddy backup from the same shell (or substitute its saved
-absolute path), validate, and reload before stopping the application:
+absolute path), validate, and reload before stopping the application. The backup
+is root-only; restore the active configuration's owner/group and permissions
+(`root:caddy`, `0644` on this host) when preparing the rollback candidate:
 
 ```sh
-sudo cp -a "$AIAB_CADDY_BACKUP" /etc/caddy/Caddyfile
-sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo install -o root -g caddy -m 0644 "$AIAB_CADDY_BACKUP" /etc/caddy/.Caddyfile.rollback
+sudo caddy validate --config /etc/caddy/.Caddyfile.rollback --adapter caddyfile
+sudo mv /etc/caddy/.Caddyfile.rollback /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 make hosted-down
 ```
