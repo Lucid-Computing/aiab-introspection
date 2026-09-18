@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import fcntl
 import getpass
 import os
@@ -11,6 +10,7 @@ import re
 import resource
 import secrets
 import stat
+import sys
 import warnings
 from contextlib import ExitStack
 
@@ -148,7 +148,12 @@ def rotate() -> None:
 
 
 def main() -> None:
-    argparse.ArgumentParser(description=__doc__).parse_args()
+    # Reject even --help without echoing argv: an operator may accidentally
+    # paste a credential as an argument. Only the hidden prompt accepts input.
+    if len(sys.argv) != 1:
+        raise SystemExit(
+            "This helper accepts no arguments. Enter the key only at its hidden prompt."
+        )
     if os.geteuid() != 0 or os.getegid() != 0:
         raise SystemExit("Run with sudo from an interactive terminal; root:root is required.")
     os.umask(0o077)
