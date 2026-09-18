@@ -171,6 +171,26 @@ weight digest.
 
 Use the private file provisioning procedure above with a separate Tinfoil file:
 
+If the repository `.env` already contains `TINFOIL_API_KEY`, install it without
+displaying the value or exporting it into the shell:
+
+```sh
+sudo python3 deploy/install_tinfoil_secret.py
+```
+
+The helper reads `.env` relative to its repository, accepts one literal unquoted,
+single-quoted, or double-quoted assignment (optionally prefixed with `export`),
+and does no shell expansion or escape processing. It requires 1–4096 printable
+ASCII non-space bytes. It creates or restricts the root-owned destination
+directory to `0700`, then atomically installs `tinfoil.secret` owned by
+`65532:65532` with mode `0400`. It refuses any existing destination, including
+symlinks. Linux `O_TMPFILE` support is required: the temporary inode has no name
+and disappears on failure or interruption. It does not start or recreate any
+containers. An existing key must be handled separately as an intentional rotation;
+the helper never overwrites it.
+
+Alternatively, enter the key at a hidden prompt:
+
 ```sh
 sudo install -d -m 0700 /etc/aiab-introspection
 sudo python3 - <<'PY'
