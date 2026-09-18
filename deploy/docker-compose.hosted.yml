@@ -19,7 +19,6 @@ services:
       BLOCK_THRESHOLD: "0.8"
       # Caddy serves both UI and API on one origin. Never inherit shell secrets.
       CORS_ALLOW_ORIGIN: ""
-      TINFOIL_API_KEY: ""
       CLASSIFIER_MODEL: mock-keywords/v1
     logging:
       driver: none

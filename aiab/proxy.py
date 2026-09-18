@@ -296,7 +296,7 @@ def create_app(
     if (settings.aiab_mode == "tinfoil" or settings.tinfoil_api_key) and not isinstance(
         implementation, TinfoilLLMClassifier
     ):
-        raise ConfigurationError("SDK classifier required when TINFOIL_API_KEY is configured")
+        raise ConfigurationError("SDK classifier required when a Tinfoil credential is configured")
     client = upstream_client or httpx.AsyncClient(follow_redirects=False, trust_env=False)
     runtime = Runtime(settings, implementation, client)
 

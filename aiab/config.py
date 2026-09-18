@@ -17,14 +17,33 @@ class ConfigurationError(ValueError):
 
 ANTHROPIC_ORIGIN = "https://api.anthropic.com"
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
+TINFOIL_MODEL = "gpt-oss-safeguard-120b"
+MOCK_CLASSIFIER_MODEL = "mock-keywords/v1"
 
 
-def read_anthropic_key(filename: str) -> str:
-    """Read a private regular file once; never expose its path or contents in errors."""
+def read_private_key(filename: str, setting: str) -> str:
+    """Read once through directory descriptors, refusing symlinks in every component.
+
+    Only root or the process UID may own the 0400/0600 regular file. Return only
+    the key, never retain the path, and reflect neither value in errors.
+    ``setting`` is a caller-supplied constant, never an environment value.
+    """
+    directory_fd = None
     try:
-        if not Path(filename).is_absolute():
+        path = Path(filename)
+        if not path.is_absolute() or ".." in path.parts or len(path.parts) < 2:
             raise ValueError
-        fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        directory_fd = os.open(path.anchor, directory_flags)
+        for component in path.parts[1:-1]:
+            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        fd = os.open(
+            path.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=directory_fd,
+        )
         with os.fdopen(fd, "rb") as secret:
             metadata = os.fstat(secret.fileno())
             if (
@@ -39,9 +58,14 @@ def read_anthropic_key(filename: str) -> str:
             raise ValueError
         return value.decode("ascii")
     except (OSError, ValueError, UnicodeError):
-        raise ConfigurationError(
-            "ANTHROPIC_API_KEY_FILE must be a private regular key file"
-        ) from None
+        raise ConfigurationError(f"{setting} must be a private regular key file") from None
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
+def read_anthropic_key(filename: str) -> str:
+    return read_private_key(filename, "ANTHROPIC_API_KEY_FILE")
 
 
 def origin(value: str) -> str:
@@ -75,7 +99,7 @@ class Config:
     report_period_seconds: int = 600
     report_history: int = 100
     tinfoil_api_key: str | None = field(default=None, repr=False)
-    classifier_model: str = "mock-keywords/v1"
+    classifier_model: str = MOCK_CLASSIFIER_MODEL
     classifier_definition: str = "classifiers/ai_capabilities.md"
     definition_text: str = field(default="", repr=False)
     log_level: str = "INFO"
@@ -94,6 +118,15 @@ class Config:
         env = os.environ if environ is None else environ
         if "CLASSIFIER_ENDPOINT_OVERRIDE" in env:
             raise ConfigurationError("CLASSIFIER_ENDPOINT_OVERRIDE is unsupported")
+        if "TINFOIL_API_KEY_FILE" in env:
+            # Presence is ambiguous even if the legacy variable is empty. Hosted
+            # Compose omits it when selecting the file-only overlay.
+            if "TINFOIL_API_KEY" in env:
+                raise ConfigurationError("Configure only one Tinfoil credential source")
+            tinfoil_key = read_private_key(env["TINFOIL_API_KEY_FILE"], "TINFOIL_API_KEY_FILE")
+        else:
+            # Retained for the attested deployment's repository secret and local tools.
+            tinfoil_key = env.get("TINFOIL_API_KEY") or None
         provider = env.get("INFERENCE_PROVIDER", "openai")
         if provider not in {"openai", "anthropic"}:
             raise ConfigurationError("INFERENCE_PROVIDER must be openai or anthropic")
@@ -133,12 +166,12 @@ class Config:
                 sample_rate=float(env.get("SAMPLE_RATE", "0.05")),
                 report_period_seconds=int(env.get("REPORT_PERIOD_SECONDS", "600")),
                 report_history=int(env.get("REPORT_HISTORY", "100")),
-                tinfoil_api_key=env.get("TINFOIL_API_KEY") or None,
+                tinfoil_api_key=tinfoil_key,
                 classifier_model=env.get("CLASSIFIER_MODEL")
                 or (
-                    "gpt-oss-safeguard-120b"
-                    if env.get("TINFOIL_API_KEY") or env.get("AIAB_MODE") == "tinfoil"
-                    else "mock-keywords/v1"
+                    TINFOIL_MODEL
+                    if tinfoil_key or env.get("AIAB_MODE") == "tinfoil"
+                    else MOCK_CLASSIFIER_MODEL
                 ),
                 classifier_definition=definition,
                 definition_text=path.read_text(encoding="utf-8"),
@@ -162,9 +195,13 @@ class Config:
         if self.aiab_mode not in {"local", "tinfoil"}:
             raise ConfigurationError("AIAB_MODE must be local or tinfoil")
         if self.aiab_mode == "tinfoil" and not self.tinfoil_api_key:
-            raise ConfigurationError("Tinfoil mode requires TINFOIL_API_KEY")
+            raise ConfigurationError("Tinfoil mode requires a classifier credential")
         if not re_model_id(self.classifier_model):
             raise ConfigurationError("Invalid CLASSIFIER_MODEL identifier")
+        if self.classifier_model != MOCK_CLASSIFIER_MODEL and not self.tinfoil_api_key:
+            raise ConfigurationError("Non-mock classifier requires a Tinfoil credential")
+        if self.classifier_model == MOCK_CLASSIFIER_MODEL and self.tinfoil_api_key:
+            raise ConfigurationError("Tinfoil credential requires a non-mock classifier model")
         if self.enforcement_mode not in {"monitor", "block"}:
             raise ConfigurationError("ENFORCEMENT_MODE must be monitor or block")
         if not self.aiab_id or len(self.aiab_id) > 128:

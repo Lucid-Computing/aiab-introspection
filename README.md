@@ -30,9 +30,11 @@ privacy or general covert-channel guarantee. Use synthetic traffic only. See the
 
 ## Hosted demo information flow
 
-The current self-hosted configuration runs in **local mode with a keyword mock
-classifier, without enclave attestation**. Caddy terminates public HTTPS; Caddy
-and the server operator can access conversation contents.
+The self-hosted configuration runs in **local mode without AIAB enclave
+attestation**. The base stack uses a keyword mock classifier and local inference;
+the optional Tinfoil and Sonnet overlays select a verified remote classifier and
+Anthropic answer inference. Caddy terminates public HTTPS; Caddy and the server
+operator can access conversation contents.
 
 ```mermaid
 flowchart TD
@@ -41,8 +43,8 @@ flowchart TD
     C <-->|"/aiab-introspection/api/* · strip prefix"| P
     subgraph Local["Self-hosted local mode · no enclave attestation"]
         P["AIAB proxy · block enforcement"]
-        M["MockClassifier · keyword policy"]
-        I["Local llama.cpp inference"]
+        M["Base: MockClassifier · keyword policy"]
+        I["Base: local llama.cpp inference"]
         R["AIAB reporting · in-memory aggregates"]
         P <-->|"prompt / policy decision"| M
         P <-->|"allowed messages / replies"| I
@@ -51,8 +53,8 @@ flowchart TD
     R -->|"signed aggregate reports"| A["Local auditor · --insecure-local"]
     P -->|"manifest and signing public key"| A
     P -. "Optional allowed-message HTTPS / replies" .-> S["Anthropic · Sonnet"]
-    K["Private host secret file"] -. "mounted in AIAB only" .-> P
-    P -. "Optional alternative to mock: verified SDK" .-> T["Tinfoil classifier enclave"]
+    K["Private host key files · Tinfoil / Anthropic"] -. "Docker secrets in AIAB only" .-> P
+    P -. "Tinfoil overlay: all admitted messages / decision via verified SDK" .-> T["Tinfoil classifier enclave · gpt-oss-safeguard-120b"]
 ```
 
 Blocked requests return HTTP 403 through AIAB and Caddy before reaching inference.
@@ -67,9 +69,15 @@ host file mounted into AIAB, never sent to the browser or embedded in an image.
 Allowed conversation contents are sent to Anthropic. The public demo has no user
 quota or billing cap, so key secrecy alone does not prevent public usage costs.
 
-The dashed Tinfoil classifier branch is **optional and disabled in the hosted
-configuration**. Using a verified remote classifier does not attest the local AIAB
-proxy. The separate [attested deployment path](deploy/tinfoil/README.md) places AIAB
+The [Tinfoil overlay](deploy/HOSTING.md#optional-verified-tinfoil-classification)
+replaces the keyword mock with SDK-verified `gpt-oss-safeguard-120b` classification.
+Every admitted conversation reaches the classifier; only policy-allowed messages
+reach Anthropic. Readiness and input validation can reject requests before
+classification. Invalid secret files stop startup, and failed classifier
+verification keeps readiness and chat admission closed without a mock fallback.
+This overlay must be selected explicitly; the base stack remains mock-based.
+Using a verified remote classifier **does not attest the local AIAB proxy**.
+The separate [attested deployment path](deploy/tinfoil/README.md) places AIAB
 behind Tinfoil's enclave transport and requires the auditor to verify independently
 approved release and policy digests. That live deployment remains unverified here.
 
@@ -89,7 +97,8 @@ For hosting the **non-attested local demo** at
 [host deployment and rollback guide](deploy/HOSTING.md).
 `make eval` calls the classifier directly and reports development and held-out
 metrics, classification errors, synthetic request/response pairs, the policy digest,
-and requested model. With `TINFOIL_API_KEY` set, the classifier uses the Tinfoil SDK
+and requested model. With `TINFOIL_API_KEY_FILE` (or the legacy `TINFOIL_API_KEY`) set,
+the classifier uses the Tinfoil SDK
 and requests `gpt-oss-safeguard-120b` by default; without a key, local mode uses the
 keyword mock. Live provider accuracy and latency remain unmeasured.
 The auditor's `--insecure-local` mode is development-only, restricted to `localhost`
@@ -123,7 +132,7 @@ make local-down
 32 generated tokens to bound CPU work. The local stack samples every admitted
 request (`SAMPLE_RATE=1.0`) so a successful completion produces observable mock
 classification counts. This setting is for deterministic demo coverage; the ordinary
-runtime default remains 5%. The stack runs local monitor mode with an empty API key
+runtime default remains 5%. The stack runs local monitor mode without an API key
 and `MockClassifier`. Look for non-zero `requests_classified` in the verified rollup;
 HTTP success alone does not establish that classification succeeded. Upstream
 timeouts or slow CPU generation can produce errors: the inference timeout is 15
@@ -249,13 +258,24 @@ No real deployment measurements are approved or published yet.
 | `SAMPLE_RATE` | Monitor sampling probability | `0.05` |
 | `REPORT_PERIOD_SECONDS` | Non-overlapping report window | `600` |
 | `REPORT_HISTORY` | Finalized reports held in memory | `100` |
-| `TINFOIL_API_KEY` | Classifier API credential | Unset; mock allowed only locally |
+| `TINFOIL_API_KEY_FILE` | Absolute private classifier key file; required by the hosted Tinfoil overlay | Unset |
+| `TINFOIL_API_KEY` | Legacy classifier credential for local tools or the attested deployment; cannot coexist with the file variable, even if empty | Unset; mock allowed only locally |
 | `CLASSIFIER_MODEL` | Requested provider model identifier | `gpt-oss-safeguard-120b` with a key; `mock-keywords/v1` without one |
 | `CLASSIFIER_DEFINITION` | Definition bundled into image | `classifiers/ai_capabilities.md` |
 | `LOG_LEVEL` | Allowlisted operational log verbosity | `INFO` |
 | `AIAB_URL` | Webchat's HTTP(S) proxy base URL, optionally with a safe path prefix | `https://localhost:8443` |
 | `EXPECTED_AIAB_DIGEST` | Auditor's approved Tinfoil release digest (`tinfoil.hash`), distinct from OCI image digest | Required outside insecure local mode |
 | `EXPECTED_POLICY_DIGEST` | Auditor's independently approved policy manifest digest | Required outside insecure local mode |
+
+The hosted overlays interpolate only `AIAB_TINFOIL_KEY_FILE` and
+`AIAB_ANTHROPIC_KEY_FILE` as **host file paths**, never credential values. The app
+validates credentials at their in-container paths: mode `0400` or `0600`, root or
+process-UID ownership, and no symlinks in any path component. Operators must also
+ensure the host source paths are absolute and contain no symlinks; Docker resolves
+those paths before mounting them, so the app cannot validate their original form.
+Keys and file paths are omitted from the policy manifest, reports, and
+configuration representation. A non-mock classifier model
+requires a Tinfoil credential; a Tinfoil credential cannot select the mock model.
 
 `CLASSIFIER_ENDPOINT_OVERRIDE` is deliberately unsupported and must fail startup if
 set. The reviewed SDK integration chooses the classifier endpoint. Processing timeouts,

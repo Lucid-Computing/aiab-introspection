@@ -49,8 +49,7 @@ services:
       REPORT_PERIOD_SECONDS: "10"
       REPORT_HISTORY: "1000"
       CLASSIFIER_MODEL: mock-keywords/v1
-      # An explicit empty value keeps this local demo on the mock classifier.
-      TINFOIL_API_KEY: ""
+      # Credentials are omitted: Compose never inherits unlisted shell variables.
     ports:
       - "127.0.0.1:8443:8443"
     depends_on:

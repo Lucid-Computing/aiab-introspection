@@ -54,6 +54,19 @@ does not prove an independently pinned immutable weight digest; downstream provi
 verification remains part of the trust chain. Local self-signed
 TLS and the mock classifier provide development behavior, not enclave guarantees.
 
+The self-hosted Tinfoil classifier overlay preserves `AIAB_MODE=local` and block
+enforcement. Its verified remote classifier does not attest the AIAB host, Caddy,
+the application process, signing key, or reports. The host operator and Caddy can
+observe conversations; the host operator and AIAB process can access the private
+Tinfoil and Anthropic key files. The files are mounted only in AIAB, read once with
+no symlink traversal, restricted to root/process ownership and mode 0400/0600, and
+excluded from browser assets, environment values, images, logs and audit artifacts.
+An invalid credential file or ambiguous key sources stop startup. Failed SDK
+verification keeps readiness and admission closed without a mock fallback.
+Every admitted conversation reaches Tinfoil classification; only policy-allowed
+messages reach Anthropic when both hosted overlays are enabled. Classifier
+verification does not make Anthropic answer inference confidential or attested.
+
 ## Data handling and observable channels
 
 Request/response text must never be written to appliance disk, logs, reports, or

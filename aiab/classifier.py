@@ -183,7 +183,7 @@ class TinfoilLLMClassifier:
 
     def __init__(self, config: Config) -> None:
         if not config.tinfoil_api_key:
-            raise ConfigurationError("Tinfoil classifier requires TINFOIL_API_KEY")
+            raise ConfigurationError("Tinfoil classifier requires a credential")
         try:
             from tinfoil import TinfoilAI
         except ImportError:
@@ -315,6 +315,7 @@ class TinfoilLLMClassifier:
 
 
 def make_classifier(config: Config) -> Classifier:
+    config.validate()
     if config.aiab_mode == "local" and not config.tinfoil_api_key:
         return MockClassifier()
     return TinfoilLLMClassifier(config)

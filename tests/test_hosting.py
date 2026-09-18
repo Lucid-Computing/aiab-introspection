@@ -68,7 +68,7 @@ def test_hosted_compose_is_loopback_only_and_does_not_inherit_secrets(tmp_path: 
     assert environment["AIAB_MODE"] == "local"
     assert environment["ENFORCEMENT_MODE"] == "block"
     assert environment["CLASSIFIER_MODEL"] == "mock-keywords/v1"
-    assert environment["TINFOIL_API_KEY"] == ""
+    assert "TINFOIL_API_KEY" not in environment
     assert environment["CORS_ALLOW_ORIGIN"] == ""
     assert services["webchat"]["environment"]["AIAB_URL"] == (
         "https://jonathan.quest/aiab-introspection/api"

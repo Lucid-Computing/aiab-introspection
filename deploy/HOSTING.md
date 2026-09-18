@@ -2,11 +2,12 @@
 
 Target: **https://jonathan.quest/aiab-introspection/** on server **206.189.165.5**.
 This is the existing local-mode AIAB with the keyword mock classifier and local
-llama.cpp inference by default, or the optional Sonnet upstream below. It has
+llama.cpp inference by default, with optional verified Tinfoil classification and
+Sonnet answer inference below. The self-hosted AIAB has
 **no enclave attestation**. Public HTTPS authenticates
 the website, not an enclave or the report-signing identity. Use synthetic messages.
 
-The hosted Compose file fixes `AIAB_MODE=local`, block enforcement, and
+The base hosted Compose file fixes `AIAB_MODE=local`, block enforcement, and
 `mock-keywords/v1`; it does not inherit a Tinfoil key or classifier from the shell.
 It publishes only `127.0.0.1:8081` (webchat) and `127.0.0.1:8443` (AIAB local TLS).
 Inference has no host port. All services restart with Docker unless explicitly
@@ -58,7 +59,8 @@ curl --fail --silent --show-error --insecure https://127.0.0.1:8443/aiab/health
 ```
 
 Both Make targets pass `--env-file /dev/null`; the repository `.env` is never
-automatically read. `INFERENCE_MODEL_PATH` is the only interpolated hosted setting.
+automatically read. `INFERENCE_MODEL_PATH` is the only interpolated base-stack
+setting; the optional overlays add explicit host secret file paths.
 For a standalone Compose executable use, for example,
 `make COMPOSE=/absolute/path/to/docker-compose hosted-up` and the same override for
 `hosted-config` and `hosted-down`. Stop `make demo-down` or `make local-down` first
@@ -70,8 +72,9 @@ restarts exited containers; it does not automatically repair an unhealthy servic
 The separate `docker-compose.hosted.anthropic.yml` overlay uses Anthropic's native
 Messages API and exposes the same text-only `/v1/chat/completions` interface to the
 browser. Its pinned default is [`claude-sonnet-4-6`](https://platform.claude.com/docs/en/models/sonnet-4-6/overview),
-an active Sonnet model. The local keyword classifier and block policy stay in place;
-Anthropic receives only allowed conversations. This provider does not attest AIAB.
+an active Sonnet model. Block policy stays in place; the keyword classifier is
+used unless the Tinfoil overlay below is also selected. Anthropic receives only
+allowed conversations. This provider does not attest AIAB.
 
 The API key stays in a private host file mounted read-only into AIAB as a Docker
 secret. It is read once at startup, retained in the AIAB process, and sent only in
@@ -102,9 +105,13 @@ with os.fdopen(fd, "w", encoding="ascii") as output:
 PY
 ```
 
-The loader rejects symlinks, non-files, relative paths, group/world-readable files,
-invalid owners, empty/oversized files, and whitespace inside the key. It accepts one
-optional final LF. Missing, malformed, or unreadable secret files stop startup;
+The loader validates the in-container `/run/secrets/anthropic_api_key` mount. It
+rejects symlinks in any component of that path, non-files, relative paths,
+group/world-readable files, invalid owners, empty/oversized files, and whitespace
+inside the key. The operator must ensure the host source path is absolute and has
+no symlink components: after Docker resolves and mounts it, the app cannot inspect
+the original host path. The loader accepts one optional final LF. Missing,
+malformed, or unreadable secret files stop startup;
 there is no fallback to local inference and no support for an `ANTHROPIC_API_KEY`
 environment variable. Startup does not authenticate with Anthropic. A well-formed
 but invalid or revoked key is discovered on completion and returns a sanitized
@@ -149,6 +156,108 @@ has no login, per-user rate quota, or application billing cap. Anyone who can re
 the public chat can consume this account's Anthropic usage. The concurrency and
 output limits bound individual requests, not total account usage. Configure an
 appropriate provider-side spending limit before enabling a paid public endpoint.
+
+## Optional verified Tinfoil classification
+
+Layer `docker-compose.hosted.tinfoil.yml` after the hosted base and Sonnet overlay
+to classify every admitted conversation with `gpt-oss-safeguard-120b` through the
+reviewed Tinfoil SDK. AIAB stays in **local mode with block enforcement**. The SDK
+verifies the classifier's serving infrastructure and pins its TLS connection;
+this does **not** enclave-attest the self-hosted AIAB, Caddy, browser, signing key,
+or reports. Host root and the AIAB process can access both keys and conversation
+contents. Caddy terminates public HTTPS and can access conversation contents too.
+The requested safeguard model is a provider alias, not an independently pinned
+weight digest.
+
+Use the private file provisioning procedure above with a separate Tinfoil file:
+
+```sh
+sudo install -d -m 0700 /etc/aiab-introspection
+sudo python3 - <<'PY'
+import getpass
+import os
+
+key = getpass.getpass("Tinfoil API key (hidden): ")
+if not key or len(key) > 4096 or any(not 33 <= ord(c) <= 126 for c in key):
+    raise SystemExit("Invalid key format")
+fd = os.open("/etc/aiab-introspection/tinfoil.secret", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+with os.fdopen(fd, "w", encoding="ascii") as output:
+    os.fchown(output.fileno(), 65532, 65532)
+    output.write(key + "\n")
+PY
+```
+
+As an operator prerequisite, the host source path must be absolute and have no
+symlink components. Its file must be regular, readable by the container UID, owned
+by root or that UID, and exactly mode `0400` or `0600`. The app validates the
+in-container `/run/secrets/tinfoil_api_key` mount and each component of that path;
+it cannot validate the original host source path after Docker resolves it.
+Compose's file-backed secrets preserve host permissions, so provisioning
+the correct host owner/mode is required; do not make the key world-readable to fix
+a mount error. User-namespace remapping requires the mapped host UID. The loader
+reads the file once and freezes the key for the boot. Both `TINFOIL_API_KEY_FILE`
+and `TINFOIL_API_KEY` being present is an error, even when the latter is empty.
+The base stack omits credential variables; the overlay injects only
+`TINFOIL_API_KEY_FILE=/run/secrets/tinfoil_api_key`. It mounts the Tinfoil key only
+in AIAB and preserves the separate Anthropic secret, existing loopback ports,
+disabled container logging, dropped capabilities, and read-only root filesystem.
+The only writable filesystem addition is a 256 MiB `/tmp` tmpfs with
+`nosuid,nodev,noexec` for the SDK's public verification caches. The image already
+directs XDG cache/data paths there. It contains no persistent transcript volume;
+prompt-cache isolation uses a separate random in-memory secret for each boot.
+
+Select exactly these three reviewed files for configuration review and subsequent
+operations:
+
+```sh
+export AIAB_ANTHROPIC_KEY_FILE=/etc/aiab-introspection/anthropic.secret
+export AIAB_TINFOIL_KEY_FILE=/etc/aiab-introspection/tinfoil.secret
+case "$AIAB_ANTHROPIC_KEY_FILE" in /*) ;; *) exit 1 ;; esac
+case "$AIAB_TINFOIL_KEY_FILE" in /*) ;; *) exit 1 ;; esac
+docker compose --env-file /dev/null -f deploy/docker-compose.hosted.yml \
+  -f deploy/docker-compose.hosted.anthropic.yml \
+  -f deploy/docker-compose.hosted.tinfoil.yml config --quiet
+docker compose --env-file /dev/null -f deploy/docker-compose.hosted.yml \
+  -f deploy/docker-compose.hosted.anthropic.yml \
+  -f deploy/docker-compose.hosted.tinfoil.yml up --build -d --wait --wait-timeout 300
+```
+
+These commands export **file paths only**. Keys never enter Compose interpolation,
+container environment, browser assets or requests, images, public health/model
+endpoints, reports, manifests, or logs. The key is passed to the Tinfoil SDK inside
+AIAB. The overlay also works with only the hosted base when local answer inference
+is desired; in that case a local model file is still required.
+
+These guarantees apply to those two documented file combinations. This overlay
+does not sanitize arbitrary additional Compose files: an intervening overlay that
+sets `TINFOIL_API_KEY` can leave that value in the container environment and
+resolved Compose output. AIAB rejects the resulting ambiguous credential sources
+before loading a key file or admitting traffic, but startup rejection cannot undo
+that environment exposure. Do not add a legacy credential variable in another
+overlay.
+
+Missing, unreadable, unsafe, empty, or malformed key files abort configuration.
+A production classifier model without a key, or a key combined with the mock
+model, also fails startup. SDK verification must succeed before health becomes
+ready or chat traffic is admitted. In local mode a verification failure leaves
+only an unavailable diagnostic endpoint: health and chat return 503, and Compose
+`--wait` fails. There is no mock fallback. A well-formed revoked credential may be
+discovered only on classification; credential checks do not send a startup prompt.
+Classification failures return 503 without forwarding. A verification failure
+during operation closes admission for the rest of that boot; restart and successful
+verification are required for recovery.
+
+Every admitted text conversation is sent to the Tinfoil classifier. A policy block
+returns 403; only policy-allowed messages reach Anthropic. Answers are not classified
+in block mode. Both classifier requests (including blocked chats) and allowed answer
+requests can incur provider costs. The public demo has no per-user quota or billing
+cap. To rotate either key, securely replace its private host file and recreate AIAB
+with the same three Compose files. Returning to the base mock configuration is an
+explicit operator policy change, never an automatic recovery step.
+
+This configuration and failure behavior are tested with synthetic credentials and
+offline SDK/HTTP mocks. These tests do not establish live credential validity,
+provider accuracy, latency, or successful hosted deployment.
 
 ## Add the Caddy routes
 
