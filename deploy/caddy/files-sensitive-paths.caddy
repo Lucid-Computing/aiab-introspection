@@ -1,0 +1,5 @@
+# Import first INSIDE an explicit route block in the existing files site.
+# route preserves this response before authentication and file_server handlers.
+# Match decoded path components at every depth, including trailing path segments.
+@sensitive_file path_regexp sensitive_file (^|/)(\.env|[^/]*\.secret)(/|$)
+respond @sensitive_file 404

@@ -9,4 +9,5 @@ jonathan.quest {
 	# so that it does not preempt the more specific application handles.
 }
 
-# Retain the existing files.jonathan.quest site block exactly as it is.
+# Preserve the existing files.jonathan.quest service and its authentication.
+# Apply the separate sensitive-file guard documented in HOSTING.md.

@@ -28,7 +28,8 @@ that point elsewhere. If an apex AAAA record exists but this server is not servi
 the site over that IPv6 address, remove that stale apex AAAA record too.
 
 **Preserve `files.jonathan.quest` and all its records unchanged.** Do not change
-nameservers, wildcard records, mail records, or the `files` Caddy site. This apex
+nameservers, wildcard records, or mail records. Preserve the `files` service and
+apply its sensitive-file guard below independently of apex deployment. This apex
 change moves every `jonathan.quest` path to this server: migrate any existing apex
 site handlers before switching DNS. The app fragment itself only handles its own
 path prefix and leaves other apex paths to the existing configuration.
@@ -279,6 +280,61 @@ This configuration and failure behavior are tested with synthetic credentials an
 offline SDK/HTTP mocks. These tests do not establish live credential validity,
 provider accuracy, latency, or successful hosted deployment.
 
+## Protect the existing home-directory file service
+
+The existing `files.jonathan.quest` service serves `/home/jon`, which includes
+repository worktrees. Git ignore rules do not prevent HTTP access. Keep production
+credentials only in `/etc/aiab-introspection`, outside that document root, with the
+owner and permissions documented above. After verifying the deployed credential's
+metadata, remove any untracked, never-committed repository copy of `tinfoil.secret`
+without opening it. Check Git tracking and all reachable history by path name
+first; if a credential was committed, stop for a separate rotation/history plan.
+Never display or fetch a credential to check whether it is exposed.
+
+Install [files-sensitive-paths.caddy](caddy/files-sensitive-paths.caddy) as
+`/etc/caddy/files-sensitive-paths.caddy`. In the existing **files** site, put its
+import first in an explicit `route`, then nest the existing authentication, root,
+and file-server directives in a fallback `handle`. Preserve their values and all
+other site settings, including TLS and logging:
+
+```caddyfile
+files.jonathan.quest {
+    route {
+        import /etc/caddy/files-sensitive-paths.caddy
+        handle {
+            # Existing basic_auth block, root, and file_server directives here.
+        }
+    }
+    # Existing non-handler site settings remain here.
+}
+```
+
+The guard returns 404 for `.env` and any basename ending in `.secret` anywhere
+under the file-service root, including nested projects and URL-encoded paths.
+It runs before authentication and file serving; normal paths retain the existing
+authentication behavior. The explicit ordering follows Caddy's
+[route directive](https://caddyserver.com/docs/caddyfile/directives/route), and the
+[path matcher](https://caddyserver.com/docs/caddyfile/matchers#path_regexp) checks
+the decoded URL path. This is independent of the AIAB public routes below.
+
+Prepare a candidate beside the active Caddyfile, preserve the active file's owner
+and permissions, and run `caddy adapt` and `caddy validate` on the candidate before
+atomically replacing the active file and reloading Caddy. Capture command output
+privately: adapted configuration may contain authentication hashes. Validate that
+the guard precedes the unchanged authentication/root/file-server handlers. Check
+with HEAD requests and status output only, never fetch credential contents:
+
+```sh
+curl --silent --show-error --head --output /dev/null --write-out '%{http_code}\n' \
+  https://files.jonathan.quest/projects/aiab-introspection/.env
+curl --silent --show-error --head --output /dev/null --write-out '%{http_code}\n' \
+  https://files.jonathan.quest/projects/aiab-introspection/tinfoil.secret
+curl --silent --show-error --head --output /dev/null --write-out '%{http_code}\n' \
+  https://files.jonathan.quest/
+```
+
+Expect 404 for protected paths and the existing unauthenticated 401 for `/`.
+
 ## Add the Caddy routes
 
 Back up the live file, install the app fragment, and edit the existing Caddyfile:
@@ -299,7 +355,8 @@ import /etc/caddy/aiab-introspection.caddy
 
 If no apex site exists, append the site block from
 [Caddyfile.example](caddy/Caddyfile.example) to the current file. Never replace the
-current Caddyfile with that example. Preserve `files.jonathan.quest` exactly. Keep
+current Caddyfile with that example. Preserve `files.jonathan.quest`, including its
+sensitive-file guard. Keep
 existing unrelated apex routes and place any unconditional fallback
 `respond`/`rewrite`/`reverse_proxy` in a fallback `handle { ... }` block so it cannot
 preempt the app's specific handlers. Do not enable request-body/access logging for

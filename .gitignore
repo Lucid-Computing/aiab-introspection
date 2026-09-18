@@ -16,3 +16,5 @@ models/
 # Defense in depth; actual production credentials belong outside the repository.
 secrets/
 *.secret
+# Match this credential basename at every repository depth; keep *.secret.example templates.
+tinfoil.secret
