@@ -1,8 +1,8 @@
 # TEMPLATE ONLY. Substitute the organization, public inference origin and release
 # image digest, then put the reviewed file at repository-root tinfoil-config.yml.
 # No digest or policy in this repository is an approved production deployment.
-# CVM version from tinfoilsh/tinfoil-containers-template, reviewed 2026-09-17.
-cvm-version: 0.14.7
+# CVM version requested for the v0.1.1 measured release, reviewed 2026-09-19.
+cvm-version: 0.14.9
 cpus: 2
 memory: 8192
 

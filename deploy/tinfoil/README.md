@@ -12,9 +12,7 @@ not a deployed service. No public hostname, approved image digest, release diges
 or approved policy digest exists yet. Do not treat the all-zero image placeholder
 as a release. The current baseline is Python SDK 0.14.0, CLI
 [v0.18.5](https://github.com/tinfoilsh/tinfoil-cli/releases/tag/v0.18.5), and CVM
-0.14.7 from the official
-[container template](https://github.com/tinfoilsh/tinfoil-containers-template/blob/main/tinfoil-config.yml),
-reviewed 2026-09-17.
+0.14.9 as requested for the v0.1.1 measured release, reviewed 2026-09-19.
 
 ## Prepare a release
 
