@@ -12,16 +12,13 @@ handle_path /aiab-introspection/api/* {
 	request_body {
 		max_size 1MB
 	}
-	reverse_proxy https://127.0.0.1:8443 {
+	reverse_proxy 127.0.0.1:8444 {
 		# Stock Caddy overload protection: four in-flight API requests in total.
 		# No retry/queue: excess requests fail immediately with HTTP 503.
 		unhealthy_request_count 4
 		header_up -Cookie
 		header_up -Authorization
 		transport http {
-			# AIAB rotates its self-signed local certificate at each boot.
-			# This exception is ONLY for the loopback hop, never browser TLS.
-			tls_insecure_skip_verify
 			dial_timeout 3s
 			response_header_timeout 45s
 			read_timeout 45s

@@ -43,7 +43,7 @@ const submit = async (value) => {
 };
 (async () => {
   await settle();
-  assert.equal(ids.status.textContent, `AIAB: ${baseUrl} · mode: block · local`);
+  assert.equal(ids.status.textContent, `AIAB: ${baseUrl} · transport: local · mode: block · local`);
   assert.equal(ids.send.disabled, false);
   ids.benign.listeners.click();
   assert.equal(ids.prompt.value, "dinner");

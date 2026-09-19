@@ -1,14 +1,13 @@
 # Tinfoil integration evidence and open questions
 
-Reviewed on 2026-09-17 against the official documentation and Python SDK 0.14.0.
-Live API classification and container deployment remain unverified: implementation
-and tests deliberately do not read the user's secret or make a keyed API call.
+Reviewed through 2026-09-19 against the official documentation, Python SDK 0.14.0,
+and the live `v0.1.1` deployment. The production acceptance used injected secrets
+without recording their values.
 
 1. **TLS and app port.** The shim exposes configured paths and forwards to
    `shim.upstream-port` over its private `shim-net` bridge. Secure clients verify
    the enclave before sending requests. The implemented Tinfoil mode uses plain HTTP
-   on port 8080 behind that shim; the TLS termination model
-   is an inference from those routing and connection docs, not a tested deployment.
+   on port 8080 behind that shim; live acceptance confirmed this routing.
    The application port must match the configured upstream port; the docs do not
    mandate a universal port. [Networking and routing](https://docs.tinfoil.sh/containers/config-networking),
    [making requests](https://docs.tinfoil.sh/containers/connecting).
@@ -62,11 +61,13 @@ and tests deliberately do not read the user's secret or make a keyed API call.
    [Python SDK](https://docs.tinfoil.sh/sdk/python-sdk),
    [verification document source](https://github.com/tinfoilsh/tinfoil-python/blob/main/src/tinfoil/client.py).
 
-6. **Latency.** Unknown until a live run from the intended deployment. Block mode
-   adds a classifier round trip and potentially one retry; current bounds are a
-   ten-second attempt and thirty-second request deadline. The runtime owns the
-   single retry and the underlying SDK inference client's retries are disabled.
-   SDK certificate rotation may separately reverify before transmitting data.
+6. **Latency.** The 2026-09-19 acceptance observed about 13–16 seconds for an
+   allowed request and about 9–11 seconds for a blocked request. These few samples
+   are a functional check, not a performance characterization. Block mode adds a
+   classifier round trip and potentially one retry; current bounds are a ten-second
+   attempt and thirty-second request deadline. The runtime owns the single retry
+   and the underlying SDK inference client's retries are disabled. SDK certificate
+   rotation may separately reverify before transmitting data.
 
 7. **Attestation claim.** The SDK verifies hardware evidence against published
    code/config measurements and binds its transport to the verified enclave.
@@ -97,18 +98,17 @@ volume is configured. [Prompt caching](https://docs.tinfoil.sh/sdk/prompt-cachin
    status `ok`, complete measurements and matching TLS keys. Unknown record fields
    fail closed. All fetched audit artifacts use the SDK's verified transport and
    are checked against the same release, code measurement and TLS key before/after
-   each request. These paths are tested offline; real deployment acceptance remains
-   unperformed. [CLI source](https://github.com/tinfoilsh/tinfoil-cli/blob/v0.18.5/attestation.go),
+   each request. The live `v0.1.1` deployment passed this verification path on
+   2026-09-19. [CLI source](https://github.com/tinfoilsh/tinfoil-cli/blob/v0.18.5/attestation.go),
    [deployment and approval steps](../deploy/tinfoil/README.md).
 
-9. **Release/runtime acceptance.** CVM 0.14.7 and 2 CPUs/8192 MB follow the current
-   official template. Actual organization/repository, public inference origin,
-   registry digest, measured release, hostname and independently approved policy
-   remain unavailable. A temporary checksum-verified Buildx 0.37.1 setup and pinned
-   BuildKit 0.26.2 produced matching clean timestamp-normalized OCI image digests;
-   see [REPRODUCIBILITY.md](REPRODUCIBILITY.md). Tinfoil startup verification failure
-   now aborts the application lifespan, and the template has a loopback readiness
-   probe. No public image or deployment was created.
+9. **Release/runtime acceptance.** The live deployment uses CVM 0.14.9 with
+   2 CPUs/8192 MB, measured release `v0.1.1`, and the independently approved image,
+   release, and policy digests recorded in the README. A checksum-verified Buildx
+   0.37.1 setup and pinned BuildKit 0.26.2 produced matching clean normalized OCI
+   image digests; see [REPRODUCIBILITY.md](REPRODUCIBILITY.md). Startup verification
+   failure aborts the application lifespan, and live acceptance exercised readiness,
+   attestation, allowed/blocked traffic, signed reports, and wrong-pin refusal.
 
 10. **Adversarial deployment acceptance.** The staged
     [adversarial driver](../demo/ADVERSARIAL.md) exercises local startup refusal and

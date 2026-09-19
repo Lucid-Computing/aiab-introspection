@@ -112,6 +112,23 @@ def identity(record: dict, remote: dict) -> str:
     return remote["status"].lower()
 
 
+def write_new(path: Path, value: str, mode: int) -> None:
+    """Create one reviewed artifact with an exact mode, independent of umask."""
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+        mode,
+    )
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "w") as stream:
+            descriptor = -1
+            stream.write(value)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def prepare(container_id: str, repo: str, accepted_at: str, output: Path, *, now: datetime) -> dict:
     accepted = utc(accepted_at)
     if not accepted <= now <= accepted + timedelta(hours=24):
@@ -133,9 +150,9 @@ def prepare(container_id: str, repo: str, accepted_at: str, output: Path, *, now
         raise StopError("Accepted container must use production confidential compute")
     # A new directory prevents silently replacing an existing accepted schedule.
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
-    (output / "stop-target.json").write_text(json.dumps(record, indent=2) + "\n")
-    (output / "aiab-introspection-stop.service").write_text(service())
-    (output / "aiab-introspection-stop.timer").write_text(timer(record))
+    write_new(output / "stop-target.json", json.dumps(record, indent=2) + "\n", 0o600)
+    write_new(output / "aiab-introspection-stop.service", service(), 0o644)
+    write_new(output / "aiab-introspection-stop.timer", timer(record), 0o644)
     return record
 
 

@@ -4,25 +4,27 @@ Live service: **https://jonathan.quest/aiab-introspection/** on server **206.189
 Caddy provides HTTPS and Basic Auth. AIAB checks admitted conversations with the
 verified Tinfoil production classifier `gpt-oss-safeguard-120b`, blocks policy-denied
 requests, and forwards allowed conversations to Anthropic `claude-sonnet-4-6`.
-The running configuration uses the hosted base plus both provider overlays below.
+The running production configuration uses the verified host gateway and the measured
+Tinfoil CPU-enclave release described in [the gateway runbook](gateway/README.md) and
+[the enclave runbook](tinfoil/README.md).
 
-Tinfoil verification covers the classifier connection. The self-hosted AIAB has
-**no enclave attestation**; public HTTPS authenticates the website, and local audit
-verification checks signatures and manifest consistency without proving AIAB image
-or host identity. See the [live flow and its boundaries](../README.md#live-hosted-information-flow).
+The gateway pins the enclave release, TLS identity, and policy before forwarding.
+AIAB itself runs in the measured enclave; its classifier connection is separately
+verified. Caddy, the browser host, and Anthropic stay outside that enclave. See the
+[live flow and its boundaries](../README.md#live-hosted-information-flow).
 
-Only `127.0.0.1:8081` (webchat) and `127.0.0.1:8443` (AIAB local TLS) are published.
-Caddy is the only public entry point. Services restart with Docker unless explicitly
-stopped. AIAB's aggregate report state, signing keys, and local certificate are
+Only `127.0.0.1:8081` (webchat) and `127.0.0.1:8444` (verified gateway) serve the
+current Caddy route. The older AIAB local-TLS listener on `127.0.0.1:8443` remains
+running as a rollback target. Caddy is the only public entry point. Services restart
+with Docker unless explicitly stopped. Enclave report state and signing keys are
 ephemeral and reset when AIAB restarts. Browser history stays in the open page's
 memory; reload or select **New conversation** to clear it. Conversation contents
 reach the classifier and, when allowed, Anthropic; this does not make a retention
 claim about external providers.
 
-For the current live stack, use [Sonnet answer inference](#optional-sonnet-answer-inference)
-and [verified Tinfoil classification](#optional-verified-tinfoil-classification)
-together. Use all three reviewed Compose files for every live-stack operation.
-The base-only startup procedure below is for development and testing.
+The Compose overlays below document the legacy host stack and its rollback path.
+They are not the current production API route. The base-only startup procedure is
+for development and testing.
 
 ## DNS change
 
@@ -77,7 +79,7 @@ For a standalone Compose executable use, for example,
 if that stack owns ports 8081/8443. Keep Docker enabled on boot. A restart policy
 restarts exited containers; it does not automatically repair an unhealthy service.
 
-## Optional Sonnet answer inference
+## Legacy host stack: Sonnet answer inference
 
 The separate `docker-compose.hosted.anthropic.yml` overlay uses Anthropic's native
 Messages API and exposes the same text-only `/v1/chat/completions` interface to the
@@ -211,7 +213,7 @@ can consume this account's Anthropic usage. The concurrency and output limits
 bound individual requests, not total account usage. Configure an
 appropriate provider-side spending limit before enabling a paid public endpoint.
 
-## Optional verified Tinfoil classification
+## Legacy host stack: verified Tinfoil classification
 
 Layer `docker-compose.hosted.tinfoil.yml` after the hosted base and Sonnet overlay
 to classify every admitted conversation with `gpt-oss-safeguard-120b` through the
@@ -441,9 +443,9 @@ sudo systemctl reload caddy
 
 After DNS reaches this server, Caddy obtains and renews the public certificate via
 its existing ACME setup. Public TCP ports 80 and 443 must reach Caddy. There is no
-reason to expose 8081, 8443, or inference. Browser TLS must verify normally.
-`tls_insecure_skip_verify` is scoped only to Caddy's `https://127.0.0.1:8443` hop
-because AIAB generates a fresh self-signed certificate on each local-mode boot.
+reason to expose 8081, 8444, 8443, or inference. Browser TLS must verify normally.
+The current API hop is plain HTTP over loopback to the verified gateway on port
+8444; the gateway establishes the attested TLS connection to the enclave.
 
 The fragment redirects `/aiab-introspection` to the trailing-slash URL so relative
 `config.js` and `demo_prompts.json` resolve inside the app. It strips
@@ -497,11 +499,12 @@ sudo install -o root -g caddy -m 0644 "$AIAB_CADDY_BACKUP" /etc/caddy/.Caddyfile
 sudo caddy validate --config /etc/caddy/.Caddyfile.rollback --adapter caddyfile
 sudo mv /etc/caddy/.Caddyfile.rollback /etc/caddy/Caddyfile
 sudo systemctl reload caddy
-make hosted-down
 ```
 
-This leaves the model file intact. Restore the recorded apex A/AAAA records at
-the DNS provider if reversing the DNS cutover; leave `files` unchanged. DNS caches
+The 2026-09-19 pre-enclave backup routes the API back to the still-running local
+AIAB listener on port 8443. This leaves the model file intact. Restore the recorded
+apex A/AAAA records at the DNS provider if reversing the DNS cutover; leave `files`
+unchanged. DNS caches
 may retain the new address until its TTL expires. If other Caddy changes happened
 after deployment, remove only the app import/site addition instead of overwriting
 those later changes with the old backup.

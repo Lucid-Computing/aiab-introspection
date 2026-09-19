@@ -91,9 +91,12 @@ def install_secure(monkeypatch: pytest.MonkeyPatch, data: Any) -> tuple[Any, lis
 
     class FakeSecure:
         def __init__(self, **kwargs: Any) -> None:
-            assert kwargs.keys() == {"enclave", "repo", "transport", "user_cache_secret"}
+            # Custom containers reject the model-router-only user_cache_secret
+            # field that the SDK injects when this option is set.
+            assert kwargs.keys() == {"enclave", "repo", "transport"}
             assert kwargs["enclave"] == HOST and kwargs["repo"] == REPO
-            assert kwargs["transport"] == "tls" and len(kwargs["user_cache_secret"]) == 64
+            assert kwargs["transport"] == "tls"
+            self._user_cache_secret = "router-only-default"
 
         def make_secure_http_client(self) -> httpx.Client:
             return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False)
@@ -110,6 +113,13 @@ def test_exact_cli_flags_and_verified_release_digest(monkeypatch: pytest.MonkeyP
     evidence = verify_attestation(HOST, REPO, DIGEST)
     assert evidence.release_digest == DIGEST
     assert evidence.tls_public_key == KEY and evidence.code_measurement == MEASUREMENT
+
+
+def test_custom_container_disables_router_cache_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_cli(monkeypatch)
+    install_secure(monkeypatch, artifacts())
+    with AttestedClient(verify_attestation(HOST, REPO, DIGEST)) as client:
+        assert client._secure._user_cache_secret == ""
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,9 @@
 # Version 1 threat model
 
 This document states implemented controls, deployment requirements and limits.
-Offline tests are not evidence that a particular deployment meets them. The hosted
-service uses a verified Tinfoil classifier connection; enclave deployment and
-attestation of AIAB itself remain outstanding.
+Offline tests alone are not evidence that a particular deployment meets them. The
+hosted service accepted on 2026-09-19 runs AIAB in a Tinfoil CPU enclave and uses a
+separately verified Tinfoil classifier connection.
 
 ## Claim and observation boundary
 
@@ -31,8 +31,8 @@ infrastructure. Tinfoil hosts the hardware and remains a party to these assumpti
 Attestation is not a proof of source correctness or freedom from hardware bugs,
 side channels, or all information leaks.
 
-The operator's inference server and webchat are outside the trusted system. The
-inference server receives forwarded conversation contents by design. The auditor
+The answer provider and webchat are outside the trusted system. The answer provider
+receives forwarded conversation contents by design. The auditor
 must approve image and policy digests independently; trusting values supplied by
 the endpoint itself is circular. The policy manifest is derived from effective
 startup settings and fetched over the same attested channel. Image identity alone
@@ -45,8 +45,9 @@ TLS key. Audit artifacts are fetched through the SDK's verified, pinned TLS
 transport, with repo/release/code/key identity checked before and after each fetch.
 An SDK re-verification after key rotation requires a fresh audit. An expected policy
 manifest is generated offline from reviewed source/settings, never approved merely
-by fetching the running server's manifest. These integrations have offline tests;
-no enclave-attested AIAB deployment or auditor hardware-verification result exists yet.
+by fetching the running server's manifest. The live `v0.1.1` deployment passed
+hardware/release verification and independently pinned policy verification on
+2026-09-19.
 
 Classifier calls must exclusively use the reviewed Tinfoil SDK verification path.
 The requested model identifier is not an immutable weight digest. Serving-code
@@ -55,13 +56,12 @@ does not prove an independently pinned immutable weight digest; downstream provi
 verification remains part of the trust chain. Local self-signed
 TLS and the mock classifier provide development behavior, not enclave guarantees.
 
-The self-hosted Tinfoil classifier overlay preserves `AIAB_MODE=local` and block
-enforcement. Its verified remote classifier does not attest the AIAB host, Caddy,
-the application process, signing key, or reports. The host operator and Caddy can
-observe conversations; the host operator and AIAB process can access the private
-Tinfoil and Anthropic key files. The files are mounted only in AIAB, read once with
-no symlink traversal, restricted to root/process ownership and mode 0400/0600, and
-excluded from browser assets, environment values, images, logs and audit artifacts.
+The browser host, Caddy, and verified gateway remain outside the AIAB enclave and
+can observe conversations. The gateway holds only the AIAB gateway credential;
+provider credentials are injected into the enclave. The older self-hosted overlay
+remains a rollback target and does not carry the live enclave claim. Secret files
+are restricted to root/process ownership and mode 0400/0600 and excluded from
+browser assets, images, logs, and audit artifacts.
 An invalid credential file or ambiguous key sources stop startup. Failed SDK
 verification keeps readiness and admission closed without a mock fallback.
 Every admitted conversation reaches Tinfoil classification; only policy-allowed

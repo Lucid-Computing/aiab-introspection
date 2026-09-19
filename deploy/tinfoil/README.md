@@ -3,14 +3,14 @@
 For the Anthropic + authenticated gateway deployment, use the concrete
 [migration runbook](MIGRATION.md) and `prepare_release.py`. Its separate public
 candidate and pinned workflows supersede the generic OpenAI-origin template below.
-No candidate has been published or deployed. Never send direct unauthenticated
-traffic-generator requests to the new token-protected inference endpoint; use the
-authenticated host route after verified gateway acceptance.
+The production release described in the live validation record below is deployed.
+Never send direct unauthenticated traffic-generator requests to its token-protected
+inference endpoint; use the authenticated host route after verified gateway acceptance.
 
-This is a reviewed configuration template and an offline-tested auditor integration,
-not a deployed service. No public hostname, approved image digest, release digest,
-or approved policy digest exists yet. Do not treat the all-zero image placeholder
-as a release. The current baseline is Python SDK 0.14.0, CLI
+This directory also retains a generic template with all-zero placeholders; do not
+treat that template as a release. The live hosted service uses the separately
+published public configuration repository and measured `v0.1.1` release. The
+current baseline is Python SDK 0.14.0, CLI
 [v0.18.5](https://github.com/tinfoilsh/tinfoil-cli/releases/tag/v0.18.5), and CVM
 0.14.9 as requested for the v0.1.1 measured release, reviewed 2026-09-19.
 
@@ -54,8 +54,8 @@ startup, and serves **plain HTTP on internal port 8080**. The enclave shim provi
 the externally attested TLS boundary and reaches this listener over its private
 bridge. The template makes `LISTEN_PORT` and `shim.upstream-port` both 8080 and
 exposes only the supported chat/model/audit paths. Local mode retains self-signed
-TLS on port 8443. This routing follows the docs; it still needs a live deployment
-acceptance check. See [network routing](https://docs.tinfoil.sh/containers/config-networking)
+TLS on port 8443. This routing passed live deployment acceptance on 2026-09-19.
+See [network routing](https://docs.tinfoil.sh/containers/config-networking)
 and [verified connections](https://docs.tinfoil.sh/containers/connecting).
 
 If classifier verification fails at startup, Tinfoil mode aborts the application
@@ -139,8 +139,8 @@ immutable model-weight digest or classifier correctness.
 
 ## Deploy and verify
 
-Once the release and secrets exist, the operator can use these current CLI commands
-(replace the uppercase values; these commands were not executed during development):
+For a new release, the operator can use these current CLI commands (replace the
+uppercase values):
 
 ```sh
 tinfoil container create aiab-demo --repo OWNER/REPO --tag VERSION --secret TINFOIL_API_KEY
@@ -197,22 +197,15 @@ checkpoint cannot prove complete coverage or detect unseen forks. Verify → sen
 benign prompt → send the capabilities preset → wait → rollup remains an endpoint
 demonstration, with the claim boundaries in [THREAT_MODEL.md](../../docs/THREAT_MODEL.md).
 
-## Validation record and outstanding release inputs
+## Live validation record
 
-Local tests mock the CLI and SDK; they do not demonstrate live hardware attestation.
-`make image` succeeds, and `make image-reproducible` produced matching clean OCI
-manifest digests on 2026-09-17:
-`sha256:ca38ef042321b8507c790fc2d4002e594afa6fb4fd1e058dca4e7577985e1039`.
-This used checksum-verified Buildx 0.37.1, pinned BuildKit 0.26.2, two `--no-cache`
-amd64 builds and timestamp rewriting. Both OCI exports were inspected across every
-layer and contain no Python bytecode or application cache directories. The
-[reproducibility record](../../docs/REPRODUCIBILITY.md) contains the exact method,
-config digest, retained evidence and limits. This local result is **not** an
-approved registry/release digest; repeat and independently review the exact release.
-
-Still needed: the organization and public repository, reviewed release workflows,
-registry/image name and actual published digest, release tag and independently
-approved Tinfoil release digest, public HTTPS inference origin, inference secret,
-public enclave hostname (or configured custom domain), approved public policy
-settings/manifest/digest, and live classification/deployment/attestation acceptance
-results. There has been no image publication or public deployment.
+The private image is pinned at
+`sha256:e42c2af9be20bd0aac1550f216b104b88f7f73121797558818c177b786e7f0db`.
+The measured `v0.1.1` Tinfoil release digest is
+`34b158a1d180c004daa1e0fde014848726be04c0b4506da6b6ed861ee264496c`,
+and the independently approved policy digest is
+`8d03b314f111446aba77f1b944fda015919b0e0e222b0026b9057fee47cc1092`.
+On 2026-09-19 the non-debug production enclave at
+`aiab-introspection.lucid-computing.containers.tinfoil.dev` passed attestation,
+gateway, benign/blocked inference, signed-report, wrong-pin, and public-route
+acceptance. The exact accepted instance is scheduled to stop after seven days.

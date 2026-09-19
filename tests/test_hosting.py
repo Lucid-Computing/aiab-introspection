@@ -7,7 +7,6 @@ import os
 import shlex
 import shutil
 import socket
-import ssl
 import subprocess
 import threading
 import time
@@ -17,8 +16,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
-from aiab.keys import ephemeral_tls_files
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -111,17 +108,13 @@ def test_caddy_preserves_route_boundaries_and_limits_overload(tmp_path: Path) ->
 
     backend = ThreadingHTTPServer(("127.0.0.1", 0), Backend)
     ui = ThreadingHTTPServer(("127.0.0.1", 0), Backend)
-    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    with ephemeral_tls_files() as (certificate, key):
-        tls.load_cert_chain(certificate, key)
-    backend.socket = tls.wrap_socket(backend.socket, server_side=True)
     for server in (backend, ui):
         threading.Thread(target=server.serve_forever, daemon=True).start()
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     fragment = (ROOT / "deploy/caddy/aiab-introspection.caddy").read_text()
-    fragment = fragment.replace("127.0.0.1:8443", f"127.0.0.1:{backend.server_port}")
+    fragment = fragment.replace("127.0.0.1:8444", f"127.0.0.1:{backend.server_port}")
     fragment = fragment.replace("127.0.0.1:8081", f"127.0.0.1:{ui.server_port}")
     config = tmp_path / "Caddyfile"
     config.write_text(

@@ -1,8 +1,8 @@
 # Optional verified host gateway
 
-This preparation is not a live deployment. The existing Caddy Basic Auth boundary
-and hosted local-mode service remain unchanged. Do not cut over until an actual
-non-debug enclave and independently approved release and policy exist.
+This gateway is active for the hosted demo as of 2026-09-19. Caddy retains its
+Basic Auth boundary and routes the AIAB API to this gateway on loopback port 8444.
+The previous hosted local-mode service remains available only as a rollback target.
 
 The standalone `deploy/docker-compose.gateway.yml` publishes only
 `127.0.0.1:8444`. The host sees plaintext browser traffic and holds the gateway

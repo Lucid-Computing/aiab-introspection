@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -64,6 +66,20 @@ def test_prepare_writes_exact_utc_timer_and_no_mutation(monkeypatch, tmp_path):
     assert "TimeoutStartSec=240" in service
     with pytest.raises(FileExistsError):
         stop.prepare(ID, "owner/repo", stop.stamp(ACCEPTED), out, now=ACCEPTED)
+
+
+def test_prepare_modes_are_independent_of_collaborative_umask(monkeypatch, tmp_path):
+    monkeypatch.setattr(stop, "command", lambda *_: remote())
+    previous = os.umask(0o002)
+    try:
+        out = tmp_path / "prepared"
+        stop.prepare(ID, "owner/repo", stop.stamp(ACCEPTED), out, now=ACCEPTED)
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o700
+    assert stat.S_IMODE((out / "stop-target.json").stat().st_mode) == 0o600
+    assert stat.S_IMODE((out / "aiab-introspection-stop.service").stat().st_mode) == 0o644
+    assert stat.S_IMODE((out / "aiab-introspection-stop.timer").stat().st_mode) == 0o644
 
 
 @pytest.mark.parametrize(

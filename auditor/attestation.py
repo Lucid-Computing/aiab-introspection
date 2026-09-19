@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import secrets
 import subprocess
 from dataclasses import dataclass
 from typing import Any
@@ -146,6 +145,14 @@ class AttestedClient:
             from tinfoil import SecureClient
 
             class FixedIdentityClient(SecureClient):
+                def __init__(self, *args: Any, **kwargs: Any) -> None:
+                    super().__init__(*args, **kwargs)
+                    # The SDK enables model-router prompt-cache scoping by
+                    # default and injects user_cache_secret into chat JSON.
+                    # This client targets our custom container directly; its
+                    # strict API rejects router-only fields.
+                    self._user_cache_secret = ""
+
                 # SDK 0.14.0 otherwise retries after reattesting a *new* key,
                 # before our post-request approval check. Never send a secret
                 # to that newly selected identity. A fresh audit is required.
@@ -156,7 +163,6 @@ class AttestedClient:
                 enclave=evidence.host,
                 repo=evidence.repo,
                 transport="tls",
-                user_cache_secret=secrets.token_hex(32),
             )
             # This SDK factory performs attestation and disables redirects. An
             # ordinary httpx.Client would not establish the required key linkage.

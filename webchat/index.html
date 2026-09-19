@@ -33,7 +33,7 @@
     <h1>AIAB · Governed chat</h1>
     <p>AIAB checks each admitted conversation against policy before forwarding allowed requests for an answer, and signs aggregate audit reports.</p>
     <p id="status" role="status">Connecting…</p>
-    <p class="note">Hosted flow: verified Tinfoil classifier (gpt-oss-safeguard-120b) → Anthropic Sonnet (claude-sonnet-4-6). Blocked requests stop at AIAB. Tinfoil verification covers the classifier connection; the self-hosted AIAB is not enclave-attested.</p>
+    <p class="note">Hosted flow: verified gateway → AIAB in a Tinfoil CPU enclave → verified Tinfoil classifier (gpt-oss-safeguard-120b) → Anthropic Sonnet (claude-sonnet-4-6). Blocked requests stop inside AIAB. The browser host and Anthropic remain outside the AIAB enclave.</p>
     <p class="note">History stays in this page’s memory and is sent with your next message. Admitted conversations reach the classifier; allowed conversations also reach the answer provider. Audit reports contain aggregate counts, not transcripts. Use the supplied presets for a walkthrough.</p>
     <ul id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></ul>
     <div class="controls">
@@ -120,7 +120,7 @@
           card(`Connection error · HTTP ${healthResponse.status}`, errorMessage(health, "AIAB is not ready."), "error");
           return;
         }
-        byId("status").textContent = `AIAB: ${aiabUrl} · mode: ${health.enforcement_mode} · ${health.aiab_mode ?? "unknown"}`;
+        byId("status").textContent = `AIAB: ${aiabUrl} · transport: ${health.transport ?? "local"} · mode: ${health.enforcement_mode} · ${health.aiab_mode ?? "unknown"}`;
         const modelsResponse = await request(`${aiabUrl}/v1/models`);
         const models = await readBody(modelsResponse);
         const selected = models?.data?.find((item) => typeof item?.id === "string" && item.id.length > 0)?.id;

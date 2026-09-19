@@ -2,41 +2,51 @@
 
 AIAB ("AI in a box") puts a policy gate in front of model inference and produces
 signed aggregate audit reports. The [live hosted chat](https://jonathan.quest/aiab-introspection/)
-uses Tinfoil's verified production classifier (`gpt-oss-safeguard-120b`) to check
-each admitted conversation. Policy-blocked requests stop at AIAB; allowed requests
-are forwarded to Anthropic Sonnet (`claude-sonnet-4-6`) for an answer.
+routes through a release-pinned verification gateway to AIAB running in a Tinfoil
+CPU enclave. AIAB uses Tinfoil's verified production classifier
+(`gpt-oss-safeguard-120b`) to check each admitted conversation. Policy-blocked
+requests stop at AIAB; allowed requests are forwarded to Anthropic Sonnet
+(`claude-sonnet-4-6`) for an answer.
 
 ## Live hosted information flow
 
 ```mermaid
 flowchart TD
     B["Browser"] --> C["Caddy · HTTPS + Basic Auth"]
-    C --> W["Hosted webchat / API route"]
-    W --> P["AIAB · policy gate"]
-    P --> T["Verified Tinfoil production classifier<br/>gpt-oss-safeguard-120b"]
-    T --> D{"AIAB policy decision"}
-    D -->|"Blocked"| X["AIAB · HTTP 403"]
-    D -->|"Allowed forwarding"| S["Anthropic Sonnet<br/>claude-sonnet-4-6"]
-    S --> R["AIAB · answer response"]
-    X --> B
-    R --> B
-    P -. "Aggregate counts and outcomes" .-> A["Signed aggregate-only audit reports"]
-    A --> V["Auditor · signature and manifest checks"]
+    C --> G["Verified host gateway<br/>pins release, TLS identity, and policy"]
+    G -->|"Attested TLS + gateway token"| P
+    subgraph E["Tinfoil CPU enclave · AIAB v0.1.1"]
+        P["AIAB policy gate"]
+        D{"Policy decision"}
+        A["Signed aggregate-only reports"]
+    end
+    P --> T["Verified Tinfoil classifier enclave<br/>gpt-oss-safeguard-120b"]
+    T --> D
+    D -->|"Blocked"| X["HTTP 403"]
+    D -->|"Allowed"| S["Anthropic Sonnet<br/>claude-sonnet-4-6"]
+    S --> R["Answer"]
+    X --> G
+    R --> G
+    G --> C --> B
+    P -. "Counts and outcomes" .-> A
+    A --> V["Gateway / auditor verifies signatures"]
 ```
 
-Responses return through the same API route and Caddy. Caddy serves the webchat
-assets and routes API requests to AIAB; the webchat container serves static files.
-The hosted deployment combines the base, Anthropic, and Tinfoil Compose files.
-There is no automatic mock fallback: failed classifier verification closes chat
-admission, and classification errors do not forward requests to Sonnet.
-Readiness and input validation can reject requests before classification.
+Responses return through the same verified gateway and Caddy route. Caddy serves
+the webchat assets, preserves Basic Auth, and sends only API requests to the
+loopback gateway. Before every accepted request the gateway verifies the enclave's
+release, TLS identity, manifest, and independently approved policy. There is no
+automatic mock fallback: verification or classification failure closes admission.
 
-**Verification boundary:** Tinfoil SDK verification applies to the classifier
-connection. The self-hosted AIAB runs in local mode and is **not enclave-attested**.
-The local auditor checks report signatures and manifest consistency; those checks
-do not prove the AIAB image or host identity. Reports contain aggregate counts,
-not conversation transcripts. The separate [AIAB enclave deployment path](deploy/tinfoil/README.md)
-still requires deployment and independently approved release and policy digests.
+**Verification boundary:** AIAB runs in the measured Tinfoil CPU enclave. Release
+`v0.1.1` uses CVM `0.14.9`; the approved Tinfoil release digest is
+`34b158a1d180c004daa1e0fde014848726be04c0b4506da6b6ed861ee264496c`, and the
+approved policy digest is
+`8d03b314f111446aba77f1b944fda015919b0e0e222b0026b9057fee47cc1092`.
+The classifier connection is separately verified by the Tinfoil SDK. The browser,
+Caddy, and host gateway remain outside the enclave and can see plaintext. Anthropic
+receives allowed conversations over ordinary HTTPS and is not enclave-attested.
+Reports contain aggregate counts, not conversation transcripts.
 
 Caddy and the host operator can access conversations. Every admitted conversation
 reaches the Tinfoil classifier; only policy-allowed conversations reach Anthropic.
@@ -48,8 +58,9 @@ but the application has no per-user quota or billing cap. See the
 
 ## What this demonstrates
 
-The hosted service demonstrates real classification, policy enforcement, answer
-inference, and signed aggregate reporting for traffic admitted at this proxy.
+The hosted service demonstrates an attested AIAB policy gate, real classification,
+policy enforcement, answer inference, and signed aggregate reporting for traffic
+admitted at this proxy.
 It does not establish datacenter-wide coverage, absence of prohibited activity,
 or the fraction of compute spent on AI research. Other endpoints and internal
 agent activity are outside the observation boundary. A preset prompt being blocked
@@ -84,7 +95,8 @@ metrics, classification errors, synthetic request/response pairs, the policy dig
 and requested model. With `TINFOIL_API_KEY_FILE` (or the legacy `TINFOIL_API_KEY`) set,
 the classifier uses the Tinfoil SDK
 and requests `gpt-oss-safeguard-120b` by default; without a key, local mode uses the
-keyword mock. Live provider accuracy and latency remain unmeasured.
+keyword mock. The production acceptance records a few end-to-end latency samples;
+formal accuracy and performance evaluation remain unperformed.
 The auditor's `--insecure-local` mode is development-only, restricted to `localhost`
 and `127.0.0.1`, and provides no enclave-attestation claim.
 
@@ -171,11 +183,10 @@ performs two `--no-cache` builds for `linux/amd64` with timestamp rewriting and 
 compression, and compares OCI manifest digests covering the config and layers.
 It rejects Python bytecode and application cache directories in every exported
 layer, retains evidence in a unique temporary directory, and removes its own builder.
-On 2026-09-17 both clean builds matched at
-`sha256:ca38ef042321b8507c790fc2d4002e594afa6fb4fd1e058dca4e7577985e1039`.
+On 2026-09-18 two clean normalized builds matched the published enclave image at
+`sha256:e42c2af9be20bd0aac1550f216b104b88f7f73121797558818c177b786e7f0db`.
 See the [method and validation record](docs/REPRODUCIBILITY.md) for tool checksums,
-export settings and limits. This is local build evidence; no image has been published
-and no Tinfoil deployment measurement is approved.
+export settings and limits.
 
 ## Attested deployment and auditor (M3)
 
@@ -202,9 +213,12 @@ uv run --locked auditor verify --host HOSTNAME --repo OWNER/REPO \
   --expected-policy-digest APPROVED_POLICY_DIGEST
 ```
 
-There is no independently approved AIAB enclave image/release/policy digest yet.
-The hosted classifier is live, but deployment and attestation acceptance for AIAB
-itself remain outstanding.
+The live production hostname is
+`aiab-introspection.lucid-computing.containers.tinfoil.dev`. On 2026-09-19 the
+deployment passed release and policy attestation, direct-token rejection, benign
+and blocked request checks, signed-report verification, wrong-pin rejection, and
+the complete public Caddy/Basic-Auth path. A durable timer stops the exact accepted
+container UUID on 2026-09-26 at 04:12:28 UTC.
 
 ## Adversarial demonstration (M4)
 
@@ -228,7 +242,8 @@ and a generic verifier failure does not establish debug-policy causality.
 Configuration comes from environment variables and is parsed once per boot. No
 secret configuration is committed. `.env.example` lists the supported variables;
 copying it does not automatically load it into a process. Never publish API keys.
-No AIAB enclave deployment measurements are approved or published yet.
+The live deployment uses the approved `v0.1.1` release and policy digests recorded
+above; secrets are not part of either public value.
 
 | Variable | Purpose | Default |
 |---|---|---|
