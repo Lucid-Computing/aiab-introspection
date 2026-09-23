@@ -25,6 +25,11 @@
     textarea { box-sizing: border-box; width: 100%; min-height: 130px; padding: .8rem; border: 1px solid #637b89; border-radius: .35rem; }
     #send { background: #173f5f; color: white; }
     .note { font-size: .9rem; color: #435967; }
+    .loading { display: inline-flex; align-items: center; gap: .55rem; color: #315c80; font-size: .9rem; }
+    .loading[hidden] { display: none; }
+    .spinner { width: 1rem; height: 1rem; border: 3px solid #b9c9d3; border-top-color: #173f5f; border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.8s; } }
   </style>
   <script src="config.js"></script>
 </head>
@@ -45,7 +50,14 @@
       <label for="prompt">Message</label>
       <textarea id="prompt" required maxlength="20000" aria-describedby="send-help"></textarea>
       <p id="send-help" class="note">Blocked or failed turns remain visible but are excluded from future conversation history.</p>
-      <div class="controls"><button id="send" type="submit" disabled>Send</button><button id="retry" type="button">Reconnect</button></div>
+      <div class="controls">
+        <button id="send" type="submit" disabled>Send</button>
+        <button id="retry" type="button">Reconnect</button>
+        <span id="loading" class="loading" role="status" aria-live="polite" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="loading-text">Processing…</span>
+        </span>
+      </div>
     </form>
   </main>
   <script>
@@ -67,12 +79,15 @@
       byId("messages").append(item);
     }
 
-    function setBusy(value) {
+    function setBusy(value, label = "Processing…") {
       busy = value;
       byId("send").disabled = busy || !model;
       byId("retry").disabled = busy;
       byId("clear").disabled = busy;
       byId("prompt").disabled = busy;
+      byId("chat").ariaBusy = String(busy);
+      byId("loading-text").textContent = label;
+      byId("loading").hidden = !busy;
     }
 
     async function request(url, options = {}) {
@@ -110,7 +125,7 @@
     async function connect() {
       if (busy) return;
       model = null;
-      setBusy(true);
+      setBusy(true, "Connecting…");
       try {
         aiabUrl = configuredBaseUrl(window.AIAB_URL);
         byId("status").textContent = `AIAB: ${aiabUrl} · Connecting…`;
@@ -144,7 +159,7 @@
       const user = { role: "user", content };
       card("You", content, "user");
       byId("prompt").value = "";
-      setBusy(true);
+      setBusy(true, "Checking policy and generating a response…");
       try {
         const response = await request(`${aiabUrl}/v1/chat/completions`, {
           method: "POST",

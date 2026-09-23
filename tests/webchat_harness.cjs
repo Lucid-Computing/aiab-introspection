@@ -3,13 +3,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 class Element {
-  constructor() { this.children = []; this.listeners = {}; this.value = ""; this.textContent = ""; }
+  constructor() { this.children = []; this.listeners = {}; this.value = ""; this.textContent = ""; this.hidden = false; this.ariaBusy = "false"; }
   append(...items) { this.children.push(...items); }
   replaceChildren() { this.children = []; }
   addEventListener(name, callback) { this.listeners[name] = callback; }
   focus() {}
 }
-const ids = Object.fromEntries(["status", "messages", "benign", "ml_training", "clear", "chat", "prompt", "send", "retry"].map(id => [id, new Element()]));
+const ids = Object.fromEntries(["status", "messages", "benign", "ml_training", "clear", "chat", "prompt", "send", "retry", "loading", "loading-text"].map(id => [id, new Element()]));
 const requests = [];
 const configuredUrl = process.env.AIAB_TEST_URL || "https://localhost:8443";
 const baseUrl = configuredUrl.replace(/\/$/, "");
@@ -29,6 +29,10 @@ const context = {
     else if (url === `${baseUrl}/v1/models`) body = { data: [{ id: "from-model-endpoint" }] };
     else {
       assert.equal(url, `${baseUrl}/v1/chat/completions`);
+      assert.equal(ids.loading.hidden, false);
+      assert.equal(ids.loading.textContent, "");
+      assert.equal(ids["loading-text"].textContent, "Checking policy and generating a response…");
+      assert.equal(ids.chat.ariaBusy, "true");
       requests.push(JSON.parse(options.body));
       status = nextStatus; body = nextBody;
     }
@@ -45,9 +49,13 @@ const submit = async (value) => {
   await settle();
   assert.equal(ids.status.textContent, `AIAB: ${baseUrl} · transport: local · mode: block · local`);
   assert.equal(ids.send.disabled, false);
+  assert.equal(ids.loading.hidden, true);
+  assert.equal(ids.chat.ariaBusy, "false");
   ids.benign.listeners.click();
   assert.equal(ids.prompt.value, "dinner");
   await submit("Hello");
+  assert.equal(ids.loading.hidden, true);
+  assert.equal(ids.chat.ariaBusy, "false");
   assert.equal(requests[0].model, "from-model-endpoint");
   assert.equal(requests[0].stream, false);
   assert.equal(ids.messages.children[1].children[1].textContent, "<script>unsafe HTML</script>");
