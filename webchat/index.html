@@ -28,6 +28,12 @@
     .loading { display: inline-flex; align-items: center; gap: .55rem; color: #315c80; font-size: .9rem; }
     .loading[hidden] { display: none; }
     .spinner { width: 1rem; height: 1rem; border: 3px solid #b9c9d3; border-top-color: #173f5f; border-radius: 50%; animation: spin .8s linear infinite; }
+    .diagnostics { margin: 1.25rem 0; padding: .85rem 1rem; background: #eaf0f3; border-radius: .5rem; }
+    .diagnostics h2 { margin: 0 0 .25rem; font-size: 1rem; }
+    .stats { display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; margin: .6rem 0 0; }
+    .stats div { min-width: 5.5rem; }
+    .stats dt { color: #435967; font-size: .78rem; }
+    .stats dd { margin: .1rem 0 0; font-variant-numeric: tabular-nums; font-weight: 650; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.8s; } }
   </style>
@@ -38,6 +44,18 @@
     <h1>AIAB · Governed chat</h1>
     <p>AIAB checks each admitted conversation against policy before forwarding allowed requests for an answer, and signs aggregate audit reports.</p>
     <p id="status" role="status">Connecting…</p>
+    <section class="diagnostics" aria-labelledby="diagnostics-title">
+      <h2 id="diagnostics-title">Session diagnostics</h2>
+      <p class="note">Client-observed chat timings for this page load, including policy checks and answer generation.</p>
+      <dl class="stats">
+        <div><dt>Requests</dt><dd id="stat-requests">0</dd></div>
+        <div><dt>Average</dt><dd id="stat-average">—</dd></div>
+        <div><dt>Last</dt><dd id="stat-last">—</dd></div>
+        <div><dt>Allowed</dt><dd id="stat-allowed">0</dd></div>
+        <div><dt>Blocked</dt><dd id="stat-blocked">0</dd></div>
+        <div><dt>Errors</dt><dd id="stat-errors">0</dd></div>
+      </dl>
+    </section>
     <p class="note">Hosted flow: verified gateway → AIAB in a Tinfoil CPU enclave → verified Tinfoil classifier (gpt-oss-safeguard-120b) → Anthropic Sonnet (claude-sonnet-4-6). Blocked requests stop inside AIAB. The browser host and Anthropic remain outside the AIAB enclave.</p>
     <p class="note">History stays in this page’s memory and is sent with your next message. Admitted conversations reach the classifier; allowed conversations also reach the answer provider. Audit reports contain aggregate counts, not transcripts. Use the supplied presets for a walkthrough.</p>
     <ul id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></ul>
@@ -64,6 +82,7 @@
     "use strict";
     const byId = (id) => document.getElementById(id);
     const history = [];
+    const requestStats = { count: 0, totalMs: 0, allowed: 0, blocked: 0, errors: 0 };
     let model = null;
     let busy = false;
     let aiabUrl = null;
@@ -88,6 +107,23 @@
       byId("chat").ariaBusy = String(busy);
       byId("loading-text").textContent = label;
       byId("loading").hidden = !busy;
+    }
+
+    function formatDuration(milliseconds) {
+      if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
+      return `${(milliseconds / 1000).toFixed(1)} s`;
+    }
+
+    function recordRequest(milliseconds, outcome) {
+      requestStats.count += 1;
+      requestStats.totalMs += milliseconds;
+      requestStats[outcome] += 1;
+      byId("stat-requests").textContent = String(requestStats.count);
+      byId("stat-average").textContent = formatDuration(requestStats.totalMs / requestStats.count);
+      byId("stat-last").textContent = formatDuration(milliseconds);
+      byId("stat-allowed").textContent = String(requestStats.allowed);
+      byId("stat-blocked").textContent = String(requestStats.blocked);
+      byId("stat-errors").textContent = String(requestStats.errors);
     }
 
     async function request(url, options = {}) {
@@ -160,6 +196,8 @@
       card("You", content, "user");
       byId("prompt").value = "";
       setBusy(true, "Checking policy and generating a response…");
+      const startedAt = performance.now();
+      let outcome = "errors";
       try {
         const response = await request(`${aiabUrl}/v1/chat/completions`, {
           method: "POST",
@@ -168,8 +206,10 @@
         });
         const body = await readBody(response);
         if (response.status === 403 && body?.error?.code === "aiab_blocked") {
+          outcome = "blocked";
           card("Blocked by AIAB", `${errorMessage(body, "Blocked by policy.")}\nClassifier: ${body.error.classifier_id ?? "unknown"}\nConfidence: ${body.error.confidence ?? "unknown"}`, "blocked");
         } else if (response.status === 200 && typeof body?.choices?.[0]?.message?.content === "string") {
+          outcome = "allowed";
           const assistant = { role: "assistant", content: body.choices[0].message.content };
           history.push(user, assistant);
           card("Assistant", assistant.content);
@@ -179,6 +219,7 @@
       } catch {
         card("Request error · network", "The request failed or timed out. Check AIAB connectivity and reconnect if needed.", "error");
       } finally {
+        recordRequest(performance.now() - startedAt, outcome);
         setBusy(false);
         byId("prompt").focus();
       }
