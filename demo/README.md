@@ -50,6 +50,12 @@ the AI-capabilities classifier definition; it contains nothing hazardous.
    for the blocked turn. The user message remains visible. Only successful turns
    enter later conversation requests; **New conversation** clears page memory.
    Nothing is stored in browser persistent storage, console logs, or analytics.
+   The **Request path** panel traces each request through browser, gateway (hosted
+   only), AIAB, classifier, and answer model: while waiting it shows the request held
+   at the classifier, then replays the route the response implies (allowed → forwarded
+   and answered; blocked → stopped in AIAB, answer model never contacted). Node labels
+   come from `/aiab/health` and `/v1/models`. The browser sees a single round trip, so
+   the panel draws topology and outcome, not measured per-stage timings.
 6. A request admitted at the start of a fresh period can take up to **40 seconds**
    to appear in a finalized report: the ten-second demo period plus the fixed
    thirty-second processing allowance. [Reporter finalization](../aiab/reporter.py)

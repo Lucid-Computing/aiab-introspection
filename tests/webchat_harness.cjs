@@ -9,7 +9,10 @@ class Element {
   addEventListener(name, callback) { this.listeners[name] = callback; }
   focus() {}
 }
-const ids = Object.fromEntries(["status", "messages", "benign", "ml_training", "clear", "chat", "prompt", "send", "retry", "loading", "loading-text", "stat-requests", "stat-average", "stat-last", "stat-allowed", "stat-blocked", "stat-errors"].map(id => [id, new Element()]));
+const ids = Object.fromEntries(["status", "messages", "benign", "ml_training", "clear", "chat", "prompt", "send", "retry", "loading", "loading-text", "stat-requests", "stat-average", "stat-last", "stat-allowed", "stat-blocked", "stat-errors",
+  "flow", "flow-panel", "flow-timer", "flow-caption", "flow-steps", "zone-aiab", "sub-aiab", "name-classifier", "sub-classifier", "name-model", "sub-model",
+  ...["client", "gateway", "aiab", "classifier", "model"].flatMap(node => [`node-${node}`, `tag-${node}`]),
+  ...["client", "gateway", "classifier", "model"].map(edge => `e-${edge}`)].map(id => [id, new Element()]));
 const requests = [];
 let clock = 0;
 const configuredUrl = process.env.AIAB_TEST_URL || "https://localhost:8443";
@@ -19,7 +22,7 @@ let nextBody = { choices: [{ message: { content: "<script>unsafe HTML</script>" 
 const context = {
   document: { getElementById: id => ids[id], createElement: () => new Element() },
   window: { AIAB_URL: configuredUrl },
-  URL, AbortSignal, performance: { now: () => { clock += 500; return clock; } },
+  URL, AbortSignal, setInterval: () => 1, clearInterval: () => {}, performance: { now: () => { clock += 500; return clock; } },
   fetch: async (url, options) => {
     assert.equal(options.redirect, "error");
     assert.equal(options.credentials, "same-origin");
@@ -66,6 +69,14 @@ const submit = async (value) => {
   assert.equal(ids["stat-blocked"].textContent, "0");
   assert.equal(ids["stat-errors"].textContent, "0");
   assert.equal(ids.messages.children[1].children[1].textContent, "<script>unsafe HTML</script>");
+  assert.equal(ids.messages.children[1].children[2].textContent, "Route: Browser → AIAB → Classifier ✓ allow → from-model-endpoint → Browser · 500 ms");
+  assert.equal(ids["node-gateway"].hidden, true);
+  assert.match(ids.flow.className, /^flow-allowed no-gateway$/);
+  assert.match(ids["node-aiab"].className, /\bpass\b/);
+  assert.match(ids["node-model"].className, /\bpass\b/);
+  assert.match(ids["e-model"].className, /\bfwdrev\b/);
+  assert.equal(ids["name-classifier"].textContent, "Keyword mock");
+  assert.equal(ids["flow-timer"].textContent, "500 ms round trip");
   nextStatus = 403;
   nextBody = { error: { code: "aiab_blocked", message: "Policy decision", classifier_id: "ai_capabilities/v1", confidence: 0.95 } };
   await submit("pretraining");
@@ -76,6 +87,13 @@ const submit = async (value) => {
   assert.match(blocked.className, /blocked/);
   assert.equal(blocked.children[0].textContent, "Blocked by AIAB");
   assert.match(blocked.children[1].textContent, /Policy decision\nClassifier: ai_capabilities\/v1\nConfidence: 0.95/);
+  assert.match(blocked.children[2].textContent, /Classifier ✕ block → stopped in AIAB/);
+  assert.match(ids["node-aiab"].className, /\bstop\b/);
+  assert.match(ids["node-model"].className, /\bskip\b/);
+  assert.match(ids["e-model"].className, /\bcut\b/);
+  assert.equal(ids["tag-model"].textContent, "never received it");
+  assert.equal(ids["tag-classifier"].textContent, "verdict: block · ai_capabilities/v1 · 0.95");
+  assert.equal(ids["flow-steps"].children[0].textContent, "Browser sends the conversation (3 messages)");
   nextStatus = 503;
   nextBody = { error: { message: "Unavailable" } };
   await submit("Hello again");
@@ -84,12 +102,19 @@ const submit = async (value) => {
   assert.equal(requests[2].messages.some(message => message.content === "pretraining"), false);
   assert.match(ids.messages.children.at(-1).className, /error/);
   assert.match(ids.messages.children.at(-1).children[0].textContent, /HTTP 503/);
+  assert.match(ids["node-aiab"].className, /\bfault\b/);
+  nextBody = { error: { code: "classifier_unavailable", message: "Classification unavailable" } };
+  await submit("Classifier down");
+  assert.match(ids["node-classifier"].className, /\bfault\b/);
+  assert.match(ids["e-classifier"].className, /\bcut\b/);
   nextStatus = 403;
   nextBody = { error: { code: "different_error", message: "Denied" } };
   await submit("Other error");
   assert.match(ids.messages.children.at(-1).className, /error/);
   ids.clear.listeners.click();
   assert.equal(ids.messages.children.length, 0);
+  assert.equal(ids["flow-steps"].children.length, 0);
+  assert.equal(ids["flow-timer"].textContent, "idle");
   nextStatus = 200; nextBody = { choices: [{ message: { content: "Fresh" } }] };
   await submit("New conversation");
   assert.equal(requests.at(-1).messages.length, 1);

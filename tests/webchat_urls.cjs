@@ -6,6 +6,7 @@ const vm = require("node:vm");
 const { script, valid, invalid } = JSON.parse(fs.readFileSync(0, "utf8"));
 class Element {
   append() {}
+  replaceChildren() {}
   addEventListener() {}
 }
 async function run(url, accepted) {
