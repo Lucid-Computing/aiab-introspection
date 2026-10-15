@@ -13,6 +13,12 @@ instructions take precedence: input is text; one plan program produces a value
 whose schema is jointly agreed; plans register at runtime; the logger may be
 synthetic until its implementation arrives; the UI is owned separately.
 
+The `master` version of this filename is the older v0.5 proposal preserved in
+[the archive](archive/AIAB_DESIGN_SPEC_v0.5.md). Master commit `7f4de4a` adds a
+six-function plan skeleton based on that proposal; it is preserved under `plan/`
+but is not wired into the deployed runtime. See [plan/README.md](../plan/README.md)
+for the contract differences.
+
 ## 1. Three parts and their interfaces
 
 | Part | Inputs | Outputs |

@@ -110,6 +110,14 @@ provider evidence/control for erasure. Additional model endpoints must be discov
 and verified, not mocked as multiple models. These external dependencies do not
 excuse the remaining application implementation listed above.
 
+## Master integration note
+
+Master commit `7f4de4a` adds local filtering/windowing functions and typed model
+hooks in a six-function plan skeleton. Its tests use a fake model, its appeal
+function raises `NotImplementedError`, and the deployed audit runtime does not
+execute it. This is useful implementation groundwork but does not satisfy P9,
+P14, P16, B5 or B8. See [plan/README.md](../plan/README.md).
+
 ## Audit validation
 
 `make check` on the reviewed implementation: **554 passed, 7 skipped**. This is
