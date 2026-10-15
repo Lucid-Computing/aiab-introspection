@@ -1,0 +1,25 @@
+{
+  "bound": "conservative",
+  "egress_max_bits": 1,
+  "excludes": [
+    "metadata",
+    "errors",
+    "timing",
+    "repeated-runs"
+  ],
+  "report": {
+    "boot_id": "d8886edeaeaf4751860e60641dcca106",
+    "input_commitment": "sha256:9409110639672569d1dadaac66a8f1774755b6e3fa0bce9696b27a7bbbcb680f",
+    "plan_digest": "sha256:a127baf950020485256d617e7bdbe10cbe96c962088ea01eebace352a006f978",
+    "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
+    "result": {
+      "flagged": false
+    },
+    "run_id": "791b252eceea42e985bbbc090939f806",
+    "schema": "aiab-report/v2",
+    "status": "completed"
+  },
+  "scope": "result-payload-only",
+  "trust_basis": "independently-pinned-live-verified-identity",
+  "verified": true
+}

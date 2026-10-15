@@ -87,12 +87,12 @@ coordinator is local; image construction and measurement execute on GitHub runne
 
 ```sh
 PYTHONPATH=. uv run python deploy/tinfoil/audit/release.py \
-  --source-ref feat/signed-plan-audit-execution --tag v0.1.2 \
+  --source-ref feat/signed-plan-audit-execution --tag v0.1.4 \
   --key-directory /home/jon/.local/share/aiab-audit-demo \
   --output /private/release-plan
 # Executes the complete selected release; choose an unused tag/output directory.
 PYTHONPATH=. uv run python deploy/tinfoil/audit/release.py \
-  --source-ref feat/signed-plan-audit-execution --tag v0.1.2 \
+  --source-ref feat/signed-plan-audit-execution --tag v0.1.4 \
   --key-directory /home/jon/.local/share/aiab-audit-demo \
   --output /private/release-attempt --execute
 ```
@@ -117,3 +117,14 @@ The release config repository uses JSON syntax in its YAML file. The coordinator
 preserves secret-name bindings and never reads their values from Tinfoil. It does
 not automate cross-party approval, source-access grants, provider account setup, or
 independent security review.
+
+
+### Release identity and unchanged application images
+
+The coordinator writes `AIAB_RELEASE_TAG` into the measured deployment configuration.
+This makes the release measurement distinct even when the application image and
+policy are unchanged. Without it, two release tags can share a digest; the SDK's
+Sigstore lookup may retrieve the earlier tag's certificate and correctly reject it
+against the newly selected tag. We observed this on v0.1.2 and retained the failure
+rather than relaxing tag verification. Recovery publishes a fresh tagged config;
+it never edits a published tag or disables signature checks.

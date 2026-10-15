@@ -4,6 +4,8 @@ Date: October 15, 2026
 
 Status: original implementation specification; see the implementation amendments below and [implemented interface](AUDIT_SERVICE.md). Completion requires a working deployment on the Tinfoil confidential VM with real logger verification, real classification, jointly signed plans, and independently verified reports. Local mocks are development aids and do not satisfy deployment acceptance.
 
+The authoritative reconciled acceptance contract is now [AIAB_DESIGN_SPEC.md](AIAB_DESIGN_SPEC.md). Evaluation, offline verification and automated release commands are in [AUDIT_OPERATIONS.md](AUDIT_OPERATIONS.md).
+
 ## Implementation amendments (October 15, 2026)
 
 Later user instructions explicitly authorize a mock logger until the real logger is available. Consequently, real-logger acceptance in the original plan below is deferred: this demo verifies genuinely signed synthetic text exports and does not claim native WORM/checkpoint completeness. The deployed model and enclave remain real, without fallback stubs.

@@ -1,7 +1,7 @@
 # Signed audit release
 
-These files record the public, measured v0.1.1 configuration in
-https://github.com/lucid-computing-labs/aiab-signed-audit-enclave/tree/v0.1.1
+These files record the public, measured v0.1.3 configuration in
+https://github.com/lucid-computing-labs/aiab-signed-audit-enclave/tree/v0.1.3
 
 `release.json` identifies the hostname, repository and expected release/policy pins.
 `trust.json` contains public keys and model/runtime identities only. `manifest.json`
@@ -15,6 +15,8 @@ Managed secrets are selected by name; their values are not in these files. Keep
 credentials outside Git. Demo role private keys/tokens are stored locally under
 `/home/jon/.local/share/aiab-audit-demo/` with private permissions.
 
+The automated coordinator and recovery procedure are documented in [AUDIT_OPERATIONS.md](../../../../docs/AUDIT_OPERATIONS.md). It runs locally and dispatches build/measurement to GitHub Actions; the default is read-only planning.
+
 To reproduce a release: build the application from the private source repo's
 manual `build-image.yml`, independently rebuild and compare its OCI digest, update
 `trust.runtime_digest`, regenerate the manifest using `Trust(**trust).manifest()`
@@ -26,7 +28,7 @@ referencing the published image. Do not silently accept a provider's newer relea
 
 As of this deployment, the installed CLI's `container relaunch` invokes an
 unavailable `/relaunch` API. The provider's documented `POST /api/containers/:id/update`
-with `{"tag":"v0.1.1","hold":false}` worked for the running CPU instance. It preserves
+with `{"tag":"v0.1.3","hold":false}` worked for the running CPU instance. It preserves
 secret bindings. Wait for `current_tag` to match and verify attestation and health.
 See https://docs.tinfoil.sh/admin/admin-api for the current lifecycle contract.
 

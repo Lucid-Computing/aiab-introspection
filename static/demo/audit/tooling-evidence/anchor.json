@@ -1,0 +1,12 @@
+{
+  "host": "aiab-signed-audit.lucid-computing.containers.tinfoil.dev",
+  "identity": {
+    "boot_id": "d8886edeaeaf4751860e60641dcca106",
+    "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
+    "public_key": "UvoK+Veum5ub+8WXxPBeH1djQfkxTq5ZwDgOzdunXVE="
+  },
+  "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
+  "release_digest": "sha256:45604e2b43ea985620ee90b95f557a441c5a4770757424dd6c63de36c4476484",
+  "repo": "lucid-computing-labs/aiab-signed-audit-enclave",
+  "schema": "aiab-identity-anchor/v1"
+}

@@ -1,6 +1,6 @@
 # AIAB (Auditor-in-a-Box): Design Spec
 
-> Implemented API: [AUDIT_SERVICE.md](AUDIT_SERVICE.md). Signed plans are registered after image publication; the current demo uses an explicitly authorized synthetic logger with real signatures.
+> Historical proposal, retained for reference. Superseded by [the current design](../AIAB_DESIGN_SPEC.md). Relative links below preserve the original text.
 
 > Status: DRAFT v0.5 · Audience: internal team
 > Owners: Jonathan Ng (static part) · Teddy Chang (dynamic part, UI) · Reviewer: Caleb Parikh

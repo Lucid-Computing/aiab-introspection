@@ -28,7 +28,7 @@ submission is forbidden for that role. Local tests cover timeout, model failure,
 capacity, restart identity, exact context overflow, transport identity/redirects,
 malformed outputs and signature/input tampering.
 
-Re-run from `static/` with a fresh prefix and output path:
+The command below records the v0.1.1 invocation. For the **current live service**, use the release and policy pins from [release.json](../../../deploy/tinfoil/audit/release.json); an old release pin is intentionally rejected after an upgrade. Use a fresh prefix and output path:
 
 ```sh
 PYTHONPATH=. uv run python demo/audit/acceptance.py \

@@ -4,12 +4,14 @@ The service implements the October 14 meeting's minimal audit: both parties sign
 
 ## Live deployment and setup references
 
-The audit API is deployed at **https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev** (release `v0.1.1`). This is an API service, not a browser UI. Its public [health endpoint](https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev/aiab/health) reports readiness; private operations require the verified client and a role credential.
+The audit API is deployed at **https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev** (release `v0.1.3`). This is an API service, not a browser UI. Its public [health endpoint](https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev/aiab/health) reports readiness; private operations require the verified client and a role credential.
 
 - [Deployment setup](../static/deploy/tinfoil/audit/README.md): container ID/resources, credential location, release publication/update procedure and shutdown behavior.
 - [Exact deployment pins](../static/deploy/tinfoil/audit/release.json): hostname, config repository, release digest and policy digest.
 - [Repeatable live E2E command and results](../static/demo/audit/evidence/README.md).
 - [Actual signed demo plan](../plan/demo-signed-plan.json).
+
+For reusable evaluation, offline verification, result-capacity calculation and release automation, see [AUDIT_OPERATIONS.md](AUDIT_OPERATIONS.md). Explore a recorded run in the [interactive visualization](https://aiab-signed-audit-run.surge.sh).
 
 ## Architecture and trust
 

@@ -6,6 +6,8 @@ The implemented signed-plan API and verification workflow are documented in [doc
 
 Live audit API: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev ([health](https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev/aiab/health)). See [deployment setup](static/deploy/tinfoil/audit/README.md) and the [live E2E command](static/demo/audit/evidence/README.md).
 
+Explore a recorded run: [Inside an audit](https://aiab-signed-audit-run.surge.sh). Operator commands: [evaluation, offline verification and release automation](docs/AUDIT_OPERATIONS.md).
+
 The repository is split into three parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AIAB_DESIGN_SPEC.md) for the design.
 
 | Folder | Part | Owner | Changes |
