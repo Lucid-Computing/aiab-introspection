@@ -1,6 +1,13 @@
 # AIAB implemented design and acceptance contract
 
-Status: signed-plan baseline, reconciled October 15, 2026. This document replaces
+Status: implemented signed-plan baseline, reconciled October 15, 2026.
+
+**Full scope is not complete.** The user has since made every originally optional
+requirement mandatory. [REQUIREMENTS_COMPLIANCE.md](REQUIREMENTS_COMPLIANCE.md)
+records the full requirement set, current gaps and completion criteria. The
+following describes the existing baseline, not the full completion contract.
+
+Baseline history: This document replaces
 the conflicting [v0.5 proposal](archive/AIAB_DESIGN_SPEC_v0.5.md). The user's later
 instructions take precedence: input is text; one plan program produces a value
 whose schema is jointly agreed; plans register at runtime; the logger may be
@@ -117,9 +124,12 @@ Baseline acceptance requires:
 The [acceptance evidence](../static/demo/audit/evidence/README.md) distinguishes local
 negative tests from real Tinfoil runs. Tests do not constitute independent security review.
 
-Separate workstreams: UI plan maker and native logger integration. Deferred extensions:
+Separate workstreams: UI plan maker and native logger integration. Previously deferred extensions:
 full graph execution, multiple models, appeals, transparency publication, persistent
 execution ledger, sealed storage, verified wipe, durable replay/disclosure budgets,
-continuous monitoring and alerting on missing reports. These are not hidden completion
-requirements for the baseline above. Source access must be granted to reviewing parties;
+continuous monitoring and alerting on missing reports. These were excluded from
+the original baseline. Items explicitly listed in the
+full requirements (including multiple models, appeals, filtering, agent tools and
+verified wipe) are now required for overall completion; see the compliance matrix.
+Source access must be granted to reviewing parties;
 the current source repository and runtime image remain private.

@@ -6,4 +6,4 @@ It talks to GitHub (plan PRs and signature files) and to the box's read-only end
 
 The box's own chat-demo front end lives with the box at `static/webchat/`.
 
-The signed-plan baseline uses the CLI, with no agreement UI required. The future UI must submit jointly signed JSON plans through the [implemented API](../docs/AUDIT_SERVICE.md).
+The deployed baseline uses the CLI. The user now requires the agreement UI for full-system completion; the recorded run visualization does not fulfill that requirement. See [full requirements](../docs/REQUIREMENTS_COMPLIANCE.md). The future UI must submit jointly signed JSON plans through the [implemented API](../docs/AUDIT_SERVICE.md).

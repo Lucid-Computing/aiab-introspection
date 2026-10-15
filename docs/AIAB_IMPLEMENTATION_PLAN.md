@@ -4,7 +4,7 @@ Date: October 15, 2026
 
 Status: original implementation specification; see the implementation amendments below and [implemented interface](AUDIT_SERVICE.md). Completion requires a working deployment on the Tinfoil confidential VM with real logger verification, real classification, jointly signed plans, and independently verified reports. Local mocks are development aids and do not satisfy deployment acceptance.
 
-The authoritative reconciled acceptance contract is now [AIAB_DESIGN_SPEC.md](AIAB_DESIGN_SPEC.md). Evaluation, offline verification and automated release commands are in [AUDIT_OPERATIONS.md](AUDIT_OPERATIONS.md).
+The full required scope and remaining work are now in [REQUIREMENTS_COMPLIANCE.md](REQUIREMENTS_COMPLIANCE.md); all originally optional user requirements are mandatory. The implemented baseline is described in [AIAB_DESIGN_SPEC.md](AIAB_DESIGN_SPEC.md). Evaluation, offline verification and automated release commands are in [AUDIT_OPERATIONS.md](AUDIT_OPERATIONS.md).
 
 ## Implementation amendments (October 15, 2026)
 

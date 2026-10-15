@@ -2,6 +2,8 @@
 
 Privacy-preserving inference introspection inside a confidential VM. The lab and the auditor agree on an audit plan, both sign it, and the box runs exactly that plan over signed logs and returns a small signed report.
 
+**Full requirements are not yet complete.** See the [requirement-by-requirement audit and remaining work](docs/REQUIREMENTS_COMPLIANCE.md).
+
 The implemented signed-plan API and verification workflow are documented in [docs/AUDIT_SERVICE.md](docs/AUDIT_SERVICE.md).
 
 Live audit API: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev ([health](https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev/aiab/health)). See [deployment setup](static/deploy/tinfoil/audit/README.md) and the [live E2E command](static/demo/audit/evidence/README.md).
