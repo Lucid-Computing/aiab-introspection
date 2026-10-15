@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Compare two clean OCI exports; keep evidence, remove only this temporary builder.
 set -euo pipefail
+# The build context is the repository root, two levels above this script.
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 command -v docker >/dev/null
 command -v jq >/dev/null
@@ -19,7 +21,7 @@ mkdir -p "$aiab_repro_dir/docker-config/cli-plugins"
 cp "$aiab_repro_buildx" "$aiab_repro_dir/docker-config/cli-plugins/docker-buildx"
 export DOCKER_CONFIG="$aiab_repro_dir/docker-config"
 aiab_repro_builder="aiab-repro-${aiab_repro_dir##*.}"
-aiab_repro_builder=${aiab_repro_builder,,}
+aiab_repro_builder=$(printf '%s' "$aiab_repro_builder" | tr '[:upper:]' '[:lower:]')
 aiab_repro_buildkit='moby/buildkit:v0.26.2@sha256:de10faf919fc71ba4eb1dd7bd6449566d012b0c9436b1c61bfee21d621b009aa'
 printf 'Reproducibility evidence directory: %s\n' "$aiab_repro_dir"
 docker buildx version
@@ -31,10 +33,10 @@ docker buildx inspect "$aiab_repro_builder"
 for aiab_repro_run in 1 2; do
   docker buildx build --builder "$aiab_repro_builder" --no-cache \
     --platform linux/amd64 --provenance=false --sbom=false \
-    --build-arg SOURCE_DATE_EPOCH=0 -f deploy/Dockerfile \
+    --build-arg SOURCE_DATE_EPOCH=0 -f static/deploy/Dockerfile \
     --output "type=oci,dest=$aiab_repro_dir/build-$aiab_repro_run.tar,rewrite-timestamp=true,compression=gzip,compression-level=6,force-compression=true" \
     --metadata-file "$aiab_repro_dir/build-$aiab_repro_run.json" .
-  python3 deploy/inspect_oci.py "$aiab_repro_dir/build-$aiab_repro_run.tar"
+  python3 static/deploy/inspect_oci.py "$aiab_repro_dir/build-$aiab_repro_run.tar"
 done
 
 aiab_repro_first=$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' "$aiab_repro_dir/build-1.json")

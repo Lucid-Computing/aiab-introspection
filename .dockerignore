@@ -1,16 +1,19 @@
 # Only reviewed runtime sources and dependency inputs enter the build context.
+# The build context is the repository root; the static part lives under static/.
 **
-!pyproject.toml
-!uv.lock
-!aiab/
-aiab/**
-!aiab/*.py
-!classifiers/
-classifiers/**
-!classifiers/*.md
-!deploy/
-deploy/**
-!deploy/Dockerfile
+!static/
+static/**
+!static/pyproject.toml
+!static/uv.lock
+!static/aiab/
+static/aiab/**
+!static/aiab/*.py
+!static/classifiers/
+static/classifiers/**
+!static/classifiers/*.md
+!static/deploy/
+static/deploy/**
+!static/deploy/Dockerfile
 !.dockerignore
 # Keep these exclusions last: reincluding a directory also includes descendants.
 **/__pycache__

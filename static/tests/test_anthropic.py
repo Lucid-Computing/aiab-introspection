@@ -546,7 +546,7 @@ def test_overlay_only_mounts_file_secret_into_aiab(tmp_path: Path) -> None:
 
 def test_secret_paths_are_excluded_from_source_and_browser_builds() -> None:
     # The server image uses an allowlisted context, and neither image accepts a key ARG/ENV.
-    ignore = (ROOT / ".dockerignore").read_text()
+    ignore = (ROOT.parent / ".dockerignore").read_text()
     rules = [line for line in ignore.splitlines() if line and not line.startswith("#")]
     assert rules[0] == "**"
     assert not any("secret" in line or ".env" in line for line in rules if line.startswith("!"))

@@ -9,7 +9,7 @@ there. This does not make claims about swap, host root access, or local attestat
 The separate Ed25519 signing key and random boot identifier also change on restart.
 
 Configuration is frozen once per boot. The classifier definition is read once from
-the repository/image's `classifiers/` directory. The manifest records hashes of that
+the repository/image's `static/classifiers/` directory. The manifest records hashes of that
 definition and its complete system prompt, the serialization version, all processing
 limits below, and the governed inference origin with credentials removed. Mock
 keyword behavior is only a local development smoke check; it does not implement the

@@ -6,8 +6,8 @@ services:
     init: true
     image: aiab-verified-gateway:local
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile.gateway
+      context: ../..
+      dockerfile: static/deploy/Dockerfile.gateway
     restart: unless-stopped
     ports:
       - "127.0.0.1:8444:8444"

@@ -1,3 +1,4 @@
+# Run every target from this directory (static/). Image builds use the repository root as context.
 .PHONY: sync check lint format test local-up local-down traffic eval image image-reproducible demo-up demo-down hosted-up hosted-down hosted-config
 
 PYTHON_DIRS := aiab auditor traffic tests deploy
@@ -33,7 +34,7 @@ eval:
 	uv run --locked python -m traffic.evaluate
 
 image:
-	docker build -f deploy/Dockerfile -t aiab:local .
+	docker build -f deploy/Dockerfile -t aiab:local ..
 
 image-reproducible:
 	bash deploy/reproducible-build.sh

@@ -35,7 +35,7 @@ jobs:
         id: build
         with:
           context: .
-          file: deploy/Dockerfile
+          file: static/deploy/Dockerfile
           platforms: linux/amd64
           no-cache: true
           provenance: false

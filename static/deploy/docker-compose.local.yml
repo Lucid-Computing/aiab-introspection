@@ -20,7 +20,7 @@ services:
       - --log-disable
     volumes:
       - type: bind
-        source: ${INFERENCE_MODEL_PATH:-../models/qwen2.5-1.5b-instruct-q4_k_m.gguf}
+        source: ${INFERENCE_MODEL_PATH:-../../models/qwen2.5-1.5b-instruct-q4_k_m.gguf}
         target: /models/model.gguf
         read_only: true
         bind:
@@ -37,8 +37,8 @@ services:
   aiab:
     image: aiab:local
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+      context: ../..
+      dockerfile: static/deploy/Dockerfile
     environment:
       AIAB_MODE: local
       AIAB_ID: aiab-local-monitor

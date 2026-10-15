@@ -8,7 +8,7 @@ ENV UV_PYTHON_DOWNLOADS=never \
     PYTHONDONTWRITEBYTECODE=1
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
+COPY static/pyproject.toml static/uv.lock ./
 # Wheels only: no unpinned build-system dependency resolution. The application
 # runs directly from its reviewed source tree, with its bundled definitions.
 RUN uv sync --locked --no-dev --no-install-project --no-build --no-cache \
@@ -23,9 +23,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     XDG_DATA_HOME=/tmp/aiab-data
 WORKDIR /app
 COPY --from=dependencies /app/.venv /app/.venv
-COPY aiab/ /app/aiab/
-COPY classifiers/ /app/classifiers/
-COPY auditor/ /app/auditor/
+COPY static/aiab/ /app/aiab/
+COPY static/classifiers/ /app/classifiers/
 USER 65532:65532
-EXPOSE 8444
-CMD ["python", "-m", "auditor.gateway"]
+EXPOSE 8443 8080
+CMD ["python", "-m", "aiab.main"]

@@ -13,7 +13,7 @@ metadata. Retain these if you need independent review; they are not automaticall
 deleted. The image manifest covers the image config and layer digests. Comparing
 this digest avoids confusing tar packaging timestamps with image identity.
 
-Each export is inspected by `deploy/inspect_oci.py` without extracting files to
+Each export is inspected by `static/deploy/inspect_oci.py` without extracting files to
 disk. Any `.pyc`/`.pyo` file or application `__pycache__` entry in any layer fails
 the target. The pinned Python base contains 97 empty standard-library cache
 directory entries; those directories are allowed, but any contents would fail.

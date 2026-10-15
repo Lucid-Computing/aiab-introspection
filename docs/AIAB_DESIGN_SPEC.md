@@ -1,9 +1,10 @@
 # AIAB (Auditor-in-a-Box): Design Spec
 
-> Status: DRAFT v0.4 · Audience: internal team
+> Status: DRAFT v0.5 · Audience: internal team
 > Owners: Jonathan Ng (static part) · Teddy Chang (dynamic part, UI) · Reviewer: Caleb Parikh
 > Requirement IDs (F-, S-, C-, NF-, A-, OQ-) refer to *Caleb's proposal for the GDM demo* (13 Oct).
 > `TODO(TC)` / `TODO(JN)` / `TODO(CP)` = owner to fill in · `DECIDE` = group decision needed · `JN TO DEFINE` = input/output protocol boxes left empty for Jonathan.
+> v0.5 (15 Oct): repository layout and paths updated for the `static/`, `plan/`, `ui/` split.
 
 ---
 
@@ -11,9 +12,9 @@
 
 AIAB has two kinds of things: the structure of the box, which is fixed by hardware and security design, and the audit logic, which the lab and the auditor negotiate. The code is split along that line, with a UI on top.
 
-- **Static part (owner: Jonathan).** The box itself: how logs come in and are verified, how a plan is run and bounded, how encryption works, how the image is built and attested, and the contract every plan must satisfy (function signatures, `plan.json` schema, report envelope, restrictions). Does not change between agreements.
-- **Dynamic part (owner: Teddy).** The plan: one folder `plan/` with the audit logic, the prompts, the agreed settings and both parties' signatures. Changes with every agreement.
-- **UI (owner: Teddy).** Where both parties edit, review and sign the plan, trigger the build, and see the attestation result.
+- **Static part (owner: Jonathan), folder `static/`.** The box itself: how logs come in and are verified, how a plan is run and bounded, how encryption works, how the image is built and attested, and the contract every plan must satisfy (function signatures, `plan.json` schema, report envelope, restrictions). Does not change between agreements.
+- **Dynamic part (owner: Teddy), folder `plan/`.** The audit logic, the prompts, the agreed settings and both parties' signatures. Changes with every agreement.
+- **UI (owner: Teddy), folder `ui/`.** Where both parties edit, review and sign the plan, trigger the build, and see the attestation result.
 
 Merits of the split:
 
@@ -21,7 +22,20 @@ Merits of the split:
 - **Small diffs per agreement.** A new agreement touches only `plan/`. The static code, its tests and its threat model stay fixed and are reviewed once.
 - **One attestation.** Static part and plan are built into one image and attested together, so a change to either gives a new image digest (S-3). The split is a development method, not a security boundary.
 - **Clear ownership.** The static part fixes every contract; the plan only fills in function bodies and settings. Negotiation is about plan content, never about the box.
-- **UI is optional.** It is a front end over the repo and the box's read-only endpoints. The demo works without it.
+- **UI is optional.** It is a front end over the repo and the box's read-only endpoints. The demo works without it. The box's own chat-demo front end, `static/webchat/`, ships with the box and is separate from it.
+
+Repository layout:
+
+```
+aiab-introspection/
+├── static/        the box: aiab/ auditor/ classifiers/ deploy/ tests/ traffic/ demo/ webchat/; Python project root (pyproject.toml, uv.lock, Makefile)
+├── plan/          the plan (3.2)
+├── ui/            the agreement UI (4)
+├── docs/          specs
+└── .dockerignore  image build allowlist; the build context is this directory so the image can copy static/ and plan/
+```
+
+Everything under `static/` runs from `static/`: `cd static && uv sync --locked && make check`. The image is built from the repository root: `static/deploy/Dockerfile` copies `static/aiab/` and `static/classifiers/` into `/app/` and, once the first plan exists, `plan/` into `/app/plan/`. `ui/` and `static/webchat/` never enter the image.
 
 ### 1.1 How the parts meet
 
@@ -67,7 +81,7 @@ flowchart LR
 ### 2.2 Encryption
 
 - **Logger signing key.** Lives in the Logger TEE. Signs log batches; AIAB verifies them (F-1, A-2, S-6). TODO(JN): algorithm, key id, and how AIAB learns the trusted key (from config, never from the request).
-- **Enclave report key (Ed25519).** Generated per boot inside the enclave (`aiab/keys.py`). Signs every report (F-7). Public key served at `GET /aiab/pubkey` and bound to the attestation through the manifest. Exists.
+- **Enclave report key (Ed25519).** Generated per boot inside the enclave (`static/aiab/keys.py`). Signs every report (F-7). Public key served at `GET /aiab/pubkey` and bound to the attestation through the manifest. Exists.
 - **Party keys (lab and auditor, Ed25519).** Private keys stay off-box with each party; public keys are pinned in the static part. They sign the plan digest (3.2); CI and the box verify both signatures. In the demo.
 - **Transport.** Tinfoil's attested TLS terminates inside the enclave for every client connection. Exists for the classifier path; TODO(JN) for ingestion.
 - **At rest.** Nothing. Run input is held in memory and dropped after the report is signed; the F-2 storage key is post-demo.
@@ -154,7 +168,7 @@ The envelope is fixed; only `result` is governed by the plan's `output_schema`. 
 4. Sign with the enclave key; freeze. Fetching never re-runs the model.
 5. Invalid output becomes `FAILED` with `invalid_output`; the value never leaves through reports, errors or logs.
 
-Verification (`auditor/verify.py`, dispatch by `schema`, v1 untouched): key bound to the attested manifest, signature, `plan_digest` and `image_digest` equal the release, `input_commitment` equals the submitter's, `result` fits the auditor's own copy of `output_schema`. One offline command.
+Verification (`static/auditor/verify.py`, dispatch by `schema`, v1 untouched): key bound to the attested manifest, signature, `plan_digest` and `image_digest` equal the release, `input_commitment` equals the submitter's, `result` fits the auditor's own copy of `output_schema`. One offline command.
 
 ```
 JN TO DEFINE: egress protocol
@@ -208,7 +222,8 @@ TODO(JN): real values. `artifact_digest` is a blocker: the current Tinfoil class
 
 ### 2.9 Build and attestation (C-3, F-11, A-4)
 
-- `deploy/Dockerfile` pins base images and dependencies; `deploy/reproducible-build.sh` gives the same image digest from the same commit. Add `COPY plan/ /app/plan/`.
+- `static/deploy/Dockerfile` pins base images and dependencies; `static/deploy/reproducible-build.sh` gives the same image digest from the same commit. Add `COPY plan/ /app/plan/` with the first real plan.
+- The build context is the repository root and the root `.dockerignore` is an allowlist: only `static/pyproject.toml`, `static/uv.lock`, `static/aiab/*.py`, `static/classifiers/*.md` and, once added, `plan/` enter the build. A new source folder needs new allowlist lines or it is silently left out. BuildKit records each instruction's text in the image config, so any Dockerfile edit changes the image digest even when every layer is identical.
 - CI before build: recompute `plan_digest`, verify both signatures against the pinned public keys, check `plan.json` against 2.7. The release publishes the image digest and the plan digest.
 - Digests, one meaning each: Tinfoil release/config digest (launches the image; checked by the attestation verifier), image digest (static + plan; attestation measurement vs. release), plan digest (`plan/` only; manifest, reports, the auditor's copy), policy digest (effective manifest; reports).
 - Both parties rebuild from the commit and compare against their own pin, not the box's claim (A-4).
@@ -298,7 +313,7 @@ Numbers are proposals, not measured capacity. Strings are kept byte for byte. Ev
 
 How a plan becomes the running plan:
 
-1. **Digest.** `plan_digest` = sha256 over the sorted paths and contents of `plan/`, excluding `tests/` and `signatures/`.
+1. **Digest.** `plan_digest` = sha256 over the sorted paths and contents of `plan/`, excluding `static/tests/` and `signatures/`.
 2. **Sign.** Each party runs `aiab plan sign` on its own machine with its own private key and gets `signatures/<party>.sig`. Private keys never touch the repo, CI or the box.
 3. **PR.** The UI or CLI opens the pull request carrying `plan/` and both signature files. GitHub approvals are not the trust mechanism; the PR is transport and history.
 4. **CI.** Recomputes the digest, verifies both signatures against the public keys pinned in the static part, checks `plan.json` against the restrictions (2.7), merges automatically.
@@ -322,7 +337,7 @@ flowchart LR
 
 ### 3.4 Library API
 
-Types are fixed by the static part in `aiab/plan_api.py` (frozen dataclasses). The plan imports them and defines none of its own.
+Types are fixed by the static part in `static/aiab/plan_api.py` (frozen dataclasses). The plan imports them and defines none of its own.
 
 ```python
 LogRecord(stream, batch, offset, agent_id, session_id, ts, kind, content)      # 2.3
@@ -381,12 +396,14 @@ def appeal(flag_id: str, *, kind: Literal["data_correction", "secondary_query"])
 
 **Dry run** (F-14)
 
-- `python -m aiab.dryrun plan/` runs the plan on `plan/tests/` with the local runtime and prints confusion counts with denominators, FPR and FNR; its record's digest goes into `plan.json.classification.evaluation`. Iterate with `MockClassifier`; re-run with the real verified classifier before signing, with model settings frozen.
+- From `static/`, `python -m aiab.dryrun ../plan` runs the plan on `plan/tests/` with the local runtime and prints confusion counts with denominators, FPR and FNR; its record's digest goes into `plan.json.classification.evaluation`. Iterate with `MockClassifier`; re-run with the real verified classifier before signing, with model settings frozen.
 - TODO(TC): synthetic transcript set. TODO(CP): whether a coup-example dataset from Tyler / Redwood can feed it.
 
 ---
 
 ## 4. UI (owner: Teddy)
+
+Lives in `ui/`, outside the image. The box's chat-demo front end in `static/webchat/` visualizes the `/v1` proxy path and is not part of this UI.
 
 ### 4.1 Style
 
