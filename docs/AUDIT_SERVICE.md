@@ -2,6 +2,15 @@
 
 The service implements the October 14 meeting's minimal audit: both parties sign one plan, the box considers complete text spanning multiple prompts, and the plan program returns a bounded, schema-validated report. It does not measure general RSI capability. The original chat proxy remains a separate service.
 
+## Live deployment and setup references
+
+The audit API is deployed at **https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev** (release `v0.1.1`). This is an API service, not a browser UI. Its public [health endpoint](https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev/aiab/health) reports readiness; private operations require the verified client and a role credential.
+
+- [Deployment setup](../static/deploy/tinfoil/audit/README.md): container ID/resources, credential location, release publication/update procedure and shutdown behavior.
+- [Exact deployment pins](../static/deploy/tinfoil/audit/release.json): hostname, config repository, release digest and policy digest.
+- [Repeatable live E2E command and results](../static/demo/audit/evidence/README.md).
+- [Actual signed demo plan](../plan/demo-signed-plan.json).
+
 ## Architecture and trust
 
 A CPU Tinfoil confidential VM runs the executor. It connects directly to a separately attested Tinfoil inference enclave using verified TLS. This architecture avoids provisioning a dedicated GPU. Both endpoints must be verified; ordinary HTTPS or a model name alone is insufficient. The executor checks the serving repository, exact release measurement, enclave host, verification steps and TLS key before transmitting text. Identity changes fail closed, with no retry or unverified fallback.

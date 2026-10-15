@@ -4,6 +4,8 @@ Privacy-preserving inference introspection inside a confidential VM. The lab and
 
 The implemented signed-plan API and verification workflow are documented in [docs/AUDIT_SERVICE.md](docs/AUDIT_SERVICE.md).
 
+Live audit API: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev ([health](https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev/aiab/health)). See [deployment setup](static/deploy/tinfoil/audit/README.md) and the [live E2E command](static/demo/audit/evidence/README.md).
+
 The repository is split into three parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AIAB_DESIGN_SPEC.md) for the design.
 
 | Folder | Part | Owner | Changes |
