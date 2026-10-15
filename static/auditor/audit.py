@@ -31,6 +31,7 @@ class AuditClient:
         self.policy_digest = policy_digest
         self.token = token
         self.identity = None
+        self.manifest = None
 
     async def start(self):
         await self.connection.start()
@@ -41,6 +42,7 @@ class AuditClient:
         if status != 200 or identity.get("policy_digest") != self.policy_digest:
             raise AuditError("identity_mismatch")
         self.identity = identity
+        self.manifest = manifest
 
     async def request(self, method: str, path: str, value: dict | None = None):
         if self.identity is None:
@@ -108,14 +110,25 @@ def main(argv=None):
     assemble.add_argument("--output", type=Path, required=True)
     digest_parser = commands.add_parser("digest")
     digest_parser.add_argument("file", type=Path)
-    for name in ("register", "submit", "report"):
+    offline = commands.add_parser("verify-offline")
+    for option in ("bundle", "anchor"):
+        offline.add_argument("--" + option, type=Path, required=True)
+    offline.add_argument("--plan-digest", required=True)
+    offline.add_argument("--run-id", required=True)
+    offline.add_argument("--input-commitment", required=True)
+    prepare = commands.add_parser("prepare-plan")
+    for option in ("plan", "evaluation", "output"):
+        prepare.add_argument("--" + option, type=Path, required=True)
+    info = commands.add_parser("schema-info")
+    info.add_argument("--plan", type=Path, required=True)
+    for name in ("register", "submit", "report", "pin-identity", "export-bundle"):
         cmd = commands.add_parser(name)
         for option in ("host", "repo", "release-digest", "policy-digest", "token-file"):
             cmd.add_argument("--" + option, required=True)
         cmd.add_argument("--output", type=Path, required=True)
-        if name != "report":
+        if name in ("register", "submit"):
             cmd.add_argument("--input", type=Path, required=True)
-        else:
+        elif name in ("report", "export-bundle"):
             cmd.add_argument("--run-id", required=True)
             cmd.add_argument("--plan", type=Path, required=True)
             cmd.add_argument("--input-commitment", required=True)
@@ -149,6 +162,46 @@ def main(argv=None):
             write_new(
                 args.output, canonical({"plan": plan, "signatures": signatures}) + b"\n", 0o644
             )
+        elif args.command == "verify-offline":
+            from auditor.offline import verify_bundle
+
+            result = verify_bundle(
+                decode(args.bundle.read_bytes()),
+                decode(args.anchor.read_bytes()),
+                args.run_id,
+                args.input_commitment,
+                args.plan_digest,
+            )
+            print(canonical(result).decode())
+        elif args.command == "prepare-plan":
+            from auditor.evaluate import decision_digest
+
+            plan = decode(args.plan.read_bytes())
+            plan = plan.get("plan", plan)
+            evaluation = decode(args.evaluation.read_bytes())
+            if (
+                evaluation.get("schema") != "aiab-evaluation/v1"
+                or evaluation.get("status") != "completed"
+                or evaluation.get("decision_digest") != decision_digest(plan)
+                or evaluation.get("counts", {}).get("errors") != 0
+                or not evaluation.get("cases")
+            ):
+                raise AuditError("incompatible_evaluation")
+            plan["classification"]["evaluation"] = {
+                "test_set_digest": evaluation["dataset_digest"],
+                "results_digest": digest(evaluation),
+            }
+            write_new(args.output, canonical(plan) + b"\n")
+        elif args.command == "schema-info":
+            from auditor.schema_info import capacity
+
+            plan = decode(args.plan.read_bytes())
+            plan = plan.get("plan", plan)
+            print(
+                canonical(
+                    capacity(plan["output_schema"], plan["limits"]["max_result_bytes"])
+                ).decode()
+            )
         elif args.command == "digest":
             print(digest(decode(args.file.read_bytes())))
         else:
@@ -163,10 +216,29 @@ async def remote(args):
     client = AuditClient(args.host, args.repo, args.release_digest, args.policy_digest, token)
     try:
         await client.start()
-        if args.command == "report":
+        if args.command == "pin-identity":
+            result = {
+                "schema": "aiab-identity-anchor/v1",
+                "host": args.host,
+                "repo": args.repo,
+                "release_digest": args.release_digest,
+                "policy_digest": args.policy_digest,
+                "identity": client.identity,
+            }
+        elif args.command in ("report", "export-bundle"):
             document = decode(args.plan.read_bytes())
             plan = document.get("plan", document)
             result = await client.poll(args.run_id, plan, args.input_commitment)
+            if args.command == "export-bundle":
+                if set(document) != {"plan", "signatures"}:
+                    raise AuditError("signed_plan_required")
+                result = {
+                    "schema": "aiab-offline-bundle/v1",
+                    "signed_plan": document,
+                    "manifest": client.manifest,
+                    "identity": client.identity,
+                    "envelope": result,
+                }
         else:
             path = "/aiab/plans" if args.command == "register" else "/aiab/runs"
             status, result = await client.request("POST", path, decode(args.input.read_bytes()))
