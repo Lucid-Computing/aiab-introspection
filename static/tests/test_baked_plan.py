@@ -11,7 +11,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.api import create_app
-from aiab.audit.protocol import AuditError, clone, decode, sign_bytes
+from aiab.audit.protocol import AuditError, canonical, clone, decode, sign_bytes
 from aiab.baked.bundle import load_bundle
 from aiab.baked.executor import execute
 from aiab.baked.output import capacity, check_schema
@@ -231,3 +231,50 @@ def test_bounded_strings_and_arrays_have_finite_schema_capacity():
     assert capacity({"output_schema": schema, "limits": {"max_result_bytes": 4}}) == 32
     with pytest.raises(AuditError):
         check_schema({"type": "array", "items": {"type": "boolean"}})
+
+
+def test_ci_plan_check_uses_base_keys_and_rejects_mixed_changes(setup, tmp_path, monkeypatch):
+    import subprocess
+
+    from deploy.check_plan_pr import check
+
+    folder, trust, keys, _, _ = setup
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    shutil.copytree(folder, repo / "plan")
+    fixed = repo / "static/aiab/baked/trust.json"
+    fixed.parent.mkdir(parents=True)
+    fixed.write_bytes(canonical(trust))
+    monkeypatch.chdir(repo)
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL).decode().strip()
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "test")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    prompt = repo / "plan/prompts/bio_research_v1.txt"
+    prompt.write_text(prompt.read_text() + "\nReviewed change.\n")
+    updated = load_bundle(repo / "plan", trust, signed=False)
+    for role in ("lab", "auditor"):
+        (repo / "plan/signatures" / f"{role}.sig").write_text(
+            base64.b64encode(
+                keys[role].sign(sign_bytes("plan-bundle", {"plan_digest": updated.digest}))
+            ).decode()
+        )
+    git("add", "plan")
+    git("commit", "-qm", "signed plan")
+    assert check(base, git("rev-parse", "HEAD")) == updated.digest
+    (repo / "plan/plan.py").write_text((repo / "plan/plan.py").read_text() + "\n")
+    git("add", "plan")
+    git("commit", "-qm", "tamper")
+    with pytest.raises(AuditError, match="invalid_signature"):
+        check(base, git("rev-parse", "HEAD"))
+    fixed.write_bytes(canonical({**trust, "lab_key": trust["auditor_key"]}))
+    git("add", "static")
+    git("commit", "-qm", "change verifier trust")
+    with pytest.raises(ValueError, match="plan-only"):
+        check(base, git("rev-parse", "HEAD"))

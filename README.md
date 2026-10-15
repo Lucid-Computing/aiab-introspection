@@ -4,7 +4,7 @@ Privacy-preserving inference introspection inside a confidential VM. The lab and
 
 **Full requirements are not yet complete.** See the [requirement-by-requirement audit and remaining work](docs/REQUIREMENTS_COMPLIANCE.md).
 
-The implemented signed-plan API and verification workflow are documented in [docs/AUDIT_SERVICE.md](docs/AUDIT_SERVICE.md).
+The current implementation targets the folder-based v0.5 spec. See [baked-plan operations](docs/BAKED_PLAN_OPERATIONS.md) for signing, build/deployment, submission and report verification. [AUDIT_SERVICE.md](docs/AUDIT_SERVICE.md) documents the prior registered-JSON API.
 
 Live audit API: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev ([health](https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev/aiab/health)). See [deployment setup](static/deploy/tinfoil/audit/README.md) and the [live E2E command](static/demo/audit/evidence/README.md).
 

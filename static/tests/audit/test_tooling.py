@@ -16,7 +16,7 @@ STATIC = Path(__file__).resolve().parents[2]
 
 def bundle():
     evidence = json.loads((STATIC / "demo/audit/evidence/acceptance.json").read_text())
-    manifest = json.loads((STATIC / "deploy/tinfoil/audit/manifest.json").read_text())
+    manifest = json.loads((STATIC / "demo/audit/evidence/manifest.json").read_text())
     anchor = {
         "schema": "aiab-identity-anchor/v1",
         "identity": evidence["identity"],

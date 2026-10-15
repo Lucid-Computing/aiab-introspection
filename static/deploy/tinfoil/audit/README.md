@@ -1,3 +1,5 @@
+> The v0.5 migration uses baked folder plans. See [current operations](../../../../docs/BAKED_PLAN_OPERATIONS.md) and `release.json` for current live pins. Historical v0.1.x notes below do not enable runtime registration on the baked service.
+
 # Signed audit release
 
 These files record the public, measured v0.1.3 configuration in

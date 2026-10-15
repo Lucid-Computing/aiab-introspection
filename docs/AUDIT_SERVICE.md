@@ -1,4 +1,8 @@
-# Signed audit service
+# Registered-JSON audit service (historical)
+
+The v0.5 migration replaces runtime registration with a baked folder agreement.
+See [current operations](BAKED_PLAN_OPERATIONS.md). The endpoints and example pins
+below describe the earlier v0.1.x deployment; use current release.json for live pins.
 
 The service implements the October 14 meeting's minimal audit: both parties sign one plan, the box considers complete text spanning multiple prompts, and the plan program returns a bounded, schema-validated report. It does not measure general RSI capability. The original chat proxy remains a separate service.
 

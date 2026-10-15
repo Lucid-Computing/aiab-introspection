@@ -14,7 +14,21 @@ Status meanings: **Implemented** means code and relevant tests/evidence exist;
 **Partial** means only part of the stated requirement is implemented; **Missing**
 means it is not implemented. None of these constitutes independent security review.
 
-## Signed plan requirements
+## v0.5 implementation update
+
+The user selected v0.5 as the first milestone while retaining the full requirement
+set. The tables below are the original v0.1.3 audit snapshot. The new baked runtime
+implements signed folder loading, real filtering/grouping, model-call budgets,
+bounded strings/arrays, isolated Python workers, build/boot signature checks,
+folder signing, dry runs and expanded signed reports. The candidate v0.2.0 passed
+real confidential inference on the synthetic fixtures (TP=2, TN=1, FP=0, FN=0).
+These changes address P9/B5 and the folder execution workflow; they do not implement
+an agent, appeals, multiple-model selection or verified wipe. See
+[operations](BAKED_PLAN_OPERATIONS.md) and `static/demo/audit/baked-evidence/` for
+current evidence. Native logger acceptance, portable hardware endorsement of the
+report key, public-source licensing and UI integration remain outstanding.
+
+## Signed plan requirements (v0.1.3 snapshot)
 
 | ID | Required behavior | Current status and evidence | Remaining acceptance |
 |---|---|---|---|

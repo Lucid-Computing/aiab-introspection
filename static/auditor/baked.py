@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from aiab.audit.protocol import AuditError, canonical, decode, digest, sign_bytes
 from aiab.baked.bundle import file_digest, load_bundle
 from aiab.baked.records import export_statement
+from aiab.baked.records import verify as verify_input
 from aiab.baked.runtime import verify_report
 from aiab.config import read_private_key
 from aiab.dryrun import dataset, decision_digest
@@ -61,11 +62,14 @@ async def remote(args, bundle):
                 "identity": client.identity,
             }
         elif args.command == "submit":
-            status, value = await client.request(
-                "POST", "/aiab/runs", decode(args.input.read_bytes())
+            submission = decode(args.input.read_bytes())
+            commitment = verify_input(
+                submission, bundle.config, decode(args.trust.read_bytes())["logger_key"]
             )
+            status, value = await client.request("POST", "/aiab/runs", submission)
             if status != 202:
                 raise AuditError(value.get("error", "submission_failed"))
+            value["input_commitment"] = commitment
         else:
             async with asyncio.timeout(bundle.config["limits"]["max_runtime_seconds_per_run"] + 30):
                 while True:
