@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from contextlib import asynccontextmanager
 
@@ -25,6 +26,7 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.router.redirect_slashes = False
+    admissions = asyncio.Semaphore(8)
 
     @app.middleware("http")
     async def boundary(request: Request, call_next):
@@ -43,7 +45,14 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
                 if role is None:
                     raise AuditError("unauthorized", 401)
                 request.state.role = role
-            response = await call_next(request)
+            if request.method == "POST":
+                if admissions.locked():
+                    raise AuditError("capacity_exceeded", 429)
+                async with admissions:
+                    async with asyncio.timeout(15):
+                        response = await call_next(request)
+            else:
+                response = await call_next(request)
         except AuditError as exc:
             response = JSONResponse({"error": exc.code}, status_code=exc.status)
         except Exception:

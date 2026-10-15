@@ -53,6 +53,8 @@ class PinnedConnection:
                 self.failed
                 or doc.security_verified is not True
                 or doc.config_repo != self.repo
+                or doc.enclave_host != self.host
+                or self.secure.enclave != self.host
                 or "sha256:" + doc.release_digest != self.release_digest
             ):
                 raise ValueError

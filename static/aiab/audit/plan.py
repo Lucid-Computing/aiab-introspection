@@ -42,6 +42,15 @@ class Trust:
             "max_retained_runs": 128,
             "max_active_runs": 4,
             "retention": "bounded-per-boot-no-eviction",
+            "logger_evidence": "aiab-logger-export/v1",
+            "logger_completeness": "trusted-exporter-signed-assertion",
+            "output_schema_subset": "closed-objects-booleans-bounded-integers-string-enums/v1",
+            "report_schema": "aiab-report/v2",
+            "max_http_body_bytes": 2097152,
+            "max_admission_requests": 8,
+            "max_admission_seconds": 15,
+            "classifier_retry_count": 0,
+            "model_binding": "reviewed-serving-release-modelwrap/v1",
         }
 
 
