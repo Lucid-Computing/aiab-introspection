@@ -11,7 +11,7 @@
 
 AIAB has two kinds of things: the structure of the box, which is fixed by hardware and security design, and the audit logic, which the lab and the auditor negotiate. The code is split along that line, with a UI on top.
 
-- **Static part (owner: Jonathan).** The box itself: how logs come in and are verified, how a plan is run and bounded, which keys exist, how the image is built and attested, and the contract every plan must satisfy (function signatures, `plan.json` schema, report envelope, restrictions). Does not change between agreements.
+- **Static part (owner: Jonathan).** The box itself: how logs come in and are verified, how a plan is run and bounded, how encryption works, how the image is built and attested, and the contract every plan must satisfy (function signatures, `plan.json` schema, report envelope, restrictions). Does not change between agreements.
 - **Dynamic part (owner: Teddy).** The plan: one folder `plan/` with the audit logic, the prompts, the agreed settings and both parties' signatures. Changes with every agreement.
 - **UI (owner: Teddy).** Where both parties edit, review and sign the plan, trigger the build, and see the attestation result.
 
@@ -64,17 +64,14 @@ flowchart LR
 - Every client connection terminates inside the enclave on Tinfoil's attested TLS, as the classifier path already does. The host gateway sees plaintext and must not be on the ingestion path.
 - Platform: Tinfoil CVM for the demo. TODO(JN): confirm the ingestion path and where TLS terminates on each link.
 
-### 2.2 Keys
+### 2.2 Encryption
 
-| Key | Lives | Does | Status |
-| --- | --- | --- | --- |
-| Logger signing key | Logger TEE | Signs log batches; AIAB verifies (F-1, A-2, S-6) | TODO(JN): algorithm, key id, how AIAB learns the trusted key (config, never the request) |
-| Enclave report key (Ed25519) | Generated per boot inside the enclave (`aiab/keys.py`) | Signs every report (F-7); served at `GET /aiab/pubkey`; bound to the attestation through the manifest | Exists |
-| Party keys (lab, auditor; Ed25519) | Private keys off-box; public keys pinned in the static part | Sign the plan digest (3.2); verified in CI and at boot | Demo |
-| Attested TLS certificate | Tinfoil | All client connections | Exists for the classifier path; TODO(JN) for ingestion |
-| Storage key (F-2) | none | Run input is in memory only | Post-demo |
-
-Report key and `boot_id` rotate together on restart; in-memory runs and reports are lost and clients resubmit. TODO(JN): key lifetime, F-13 wipe.
+- **Logger signing key.** Lives in the Logger TEE. Signs log batches; AIAB verifies them (F-1, A-2, S-6). TODO(JN): algorithm, key id, and how AIAB learns the trusted key (from config, never from the request).
+- **Enclave report key (Ed25519).** Generated per boot inside the enclave (`aiab/keys.py`). Signs every report (F-7). Public key served at `GET /aiab/pubkey` and bound to the attestation through the manifest. Exists.
+- **Party keys (lab and auditor, Ed25519).** Private keys stay off-box with each party; public keys are pinned in the static part. They sign the plan digest (3.2); CI and the box verify both signatures. In the demo.
+- **Transport.** Tinfoil's attested TLS terminates inside the enclave for every client connection. Exists for the classifier path; TODO(JN) for ingestion.
+- **At rest.** Nothing. Run input is held in memory and dropped after the report is signed; the F-2 storage key is post-demo.
+- **Boot identity.** Report key and `boot_id` rotate together on restart; in-memory runs and reports are lost and clients resubmit. TODO(JN): key lifetime, F-13 wipe.
 
 ### 2.3 Ingress (F-1, C-4, S-6)
 
@@ -451,3 +448,71 @@ For this first version the plan can be baked in by hand, signed with locally gen
 - S-2 as an enforced lifetime bit budget; only the per-report maximum is computed and shown.
 - Branching plans, model ensembles, trusted randomness over models, GPU confidential computing inside the AIAB VM.
 - Runtime plan registration and the restricted interpreter; continuous ingestion; durable cross-restart state.
+
+## 8. Requirement coverage (Caleb's proposal, 13 Oct)
+
+Status: **C** covered in the demo design · **P** partly covered · **B** blocked on a dependency · **O** out of the demo (section 7).
+
+| ID | Requirement, short | Where | Status |
+| --- | --- | --- | --- |
+| A-1 | TDX isolation and attestation hold | 2.1, 2.9 | C |
+| A-2 | Logger TEE key is honest | 2.2, 2.3 | C |
+| A-3 | Auditing model not jailbroken while useful | 3.4 (S-8 framing) | C, assumption kept |
+| A-4 | Both parties rebuild and verify against their own pin | 2.9, 3.2 step 7 | C |
+| A-5 | Plan negotiation is off-box; AIAB only enforces a signed plan | 3.2, 4.3 | C |
+| A-6 | Public transparency log available | 2.5 | DECIDE |
+| A-7 | Delivered logs are complete; completeness is the Logger's job | 2.3 | C, DECIDE on coverage evidence |
+| A-8 | Tool results may be false; AIAB checks consistency only | not addressed | O (OQ-9) |
+| F-1 | Ingest signed batches, verify signature and chain, record rejections and chain head | 2.3, 2.10 | P: one-shot export, no live feed, no ledger; format JN |
+| F-2 | Sealed storage under a per-inspection key | 2.2 | O |
+| F-3 | Exactly one co-signed plan; LLM steps pin model and prompt; Python signed verbatim; output contract fixed | 3.2, 3.3, 3.4, 2.8 | C; model hash B (C-2) |
+| F-4 | Auditor queries checked against scope before running; rejections logged with a reason | 2.4, 2.3 step 4, 2.10 | C by construction; no ledger |
+| F-5 | Deterministic programs over N agents' sessions; LLM only where the plan says; "cannot answer" with fixed reason | 3.1, 3.4, 2.10 | C |
+| F-6 | Typed answers only | 2.5, 3.4 | C |
+| F-7 | Egress gate: contract check, max bits before the run, enclave signature, digest to transparency log | 2.5 | C except transparency log (DECIDE) |
+| F-8 | Developer release review | 2.5 | O (OQ-8) |
+| F-9 | Appeals | 3.4 | O |
+| F-10 | Hash-chained signed ledger | 2.5 JN box | O |
+| F-11 | Fresh attestation on every connection, checked against the verifier's pin | 2.6, 2.9 | P: TODO(JN) on Tinfoil fetch and fields |
+| F-12 | Live-vs-archive check | struck by Caleb | O |
+| F-13 | Retention and wipe | 2.2 | O (nothing at rest) |
+| F-14 | Plan builder with dry run and FP/FN | 4.2, 3.4 | P: dry run in demo, builder after |
+| S-1 | Confidentiality: nothing outside the enclave reads raw logs, intermediates or model outputs | 2.1, 2.8, 2.5 | C; ingestion TLS TODO(JN); classifier inside Tinfoil's attested serving |
+| S-2 | Bounded egress per run | 2.5 | P: per-report maximum computed and shown, not enforced over time |
+| S-3 | Neither party alone can change plan, step, model or prompt | 3.2, 2.9 | C |
+| S-4 | Signed report cannot be altered; withholding is visible | 2.5 | P: signed and failures signed; visibility needs the transparency log |
+| S-5 | Out-of-scope query never runs | 2.4 | C |
+| S-6 | Unsigned, re-signed or chain-broken logs rejected | 2.3 | C, format JN |
+| S-7 | Appeals cannot widen scope | 3.4 | O with F-9 |
+| S-8 | Log content cannot change plan, scope or contract | 3.4, 2.5, 2.8 | P: structural part covered; ensembles and per-party filters out |
+| S-9 | Nothing readable after wipe | 2.2 | C trivially: nothing persists |
+| S-10 | Every party action is a signed ledger entry | 3.2 signatures, 2.3 auth | P: plan actions attributed by signature; run submission auth JN; no ledger |
+| C-1 | Intel TDX CVM for all software | 2.1 (Tinfoil CVM) | C |
+| C-2 | Open-weight auditor model pinned by hash | 2.7 | B: Tinfoil alias is not a weight digest |
+| C-3 | Open source, reproducible build, no admin login, no debug interface | 2.9, 4.4 | P: TODO(JN) confirm no SSH or shell in the deployed CVM |
+| C-4 | Inputs in the Logger/WORM signed batch format | 2.3 JN box | JN |
+| C-5 | Plan as run_llm / run_python steps across stages | 3.3 | C |
+| C-6 | Report digests to a public transparency log | 2.5 | DECIDE |
+| NF-1 | 3 agents demo, 100 target | 2.3 input_scope, 2.7 limits | P: demo scale only |
+| NF-2 | One report per run or day; appeal window; latency bound | one-shot runs | P: no cadence; TODO latency figure |
+| NF-3 | Retention until the challenge window closes | 2.2 | O |
+| NF-4 | Report a few thousand bits at most | 2.5 | C |
+| NF-5 | A stopped box is visible as a missing report | none | O: needs a cadence |
+| NF-6 | One TDX server; model fits compute | 2.8 | C via Tinfoil's attested inference (OQ-7) |
+| NF-7 | Plan builder usable without crypto expertise | 4.2, 4.3 | P: CLI signing in the demo, UI wraps it later |
+
+Caleb's ten demo steps against section 5:
+
+| Step | Caleb's demo | Here |
+| --- | --- | --- |
+| 1 | Draft and sign in the UI after a dry run | Sign with the CLI; dry run yes; UI later |
+| 2 | Attendee verifies the attestation on their phone | Manifest + attestation vs. release (TODO(JN) on the quote) |
+| 3 | Logs stream in; ledger shows chain heads advancing | One export, one run; no ledger |
+| 4 | Q1 band, Q2 logging tampered, Q3 live vs archive | Q1 as `flagged`; band TODO(TC); Q2, Q3 out |
+| 5 | Out-of-scope auditor query rejected and logged | No query endpoint; rejected by construction |
+| 6 | Gate passes; byte counter; digest on transparency log | `egress_max_bits` shown; transparency log DECIDE |
+| 7 | Prover releases or withholds the report | Out (OQ-8) |
+| 8 | Swapped binary turns attestation red; agent C's tampering surfaces | Attestation red yes; tampering detection out (Q2, Q3) |
+| 9 | Appeal clears a wrong flag | Out |
+| 10 | Signed wipe, attested destruction event | Out |
+

@@ -18,3 +18,6 @@ secrets/
 *.secret
 # Match this credential basename at every repository depth; keep *.secret.example templates.
 tinfoil.secret
+
+# Local working context; not tracked.
+context/
