@@ -1,38 +1,36 @@
-> The v0.5 migration uses baked folder plans. See [current operations](../../../../docs/BAKED_PLAN_OPERATIONS.md) and `release.json` for current live pins. Historical v0.1.x notes below do not enable runtime registration on the baked service.
+# Live baked-plan audit service
 
-# Signed audit release
+Current release: **v0.2.2**. The exact image, plan, release and policy digests are
+in [release.json](release.json). The measured config, trust and manifest alongside
+it match that release in the public
+[config repository](https://github.com/lucid-computing-labs/aiab-signed-audit-enclave/tree/v0.2.2).
 
-These files record the public, measured v0.1.3 configuration in
-https://github.com/lucid-computing-labs/aiab-signed-audit-enclave/tree/v0.1.3
+- Endpoint: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev
+- Health: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev/aiab/health
+- Instance: `28c10708-7f8b-4981-8280-dca928a2654b`, name `aiab-signed-audit`.
+- Resources: two CPU cores, 8 GiB VM memory, no local GPU; separate attested
+  `gpt-oss-safeguard-120b` inference. CPU host uses AMD SEV-SNP.
+- Measured application: `python -m aiab.baked.main`; no SSH/debug interface.
+  Root filesystem read-only, tmpfs scratch. Plan subprocesses have a syscall
+  allowlist, resource limits and no credentials or service sockets.
+- The original chat/proxy container remains separate.
 
-`release.json` identifies the hostname, repository and expected release/policy pins.
-`trust.json` contains public keys and model/runtime identities only. `manifest.json`
-and `policy-digest.txt` are independently calculated from that trust configuration.
-`tinfoil-config.yml` pins the published image and exposes the audit API, including
-`/aiab/runs/*` for reports. The existing chat deployment is separate.
+Run submission and report retrieval require role tokens over a verified connection.
+On the development machine, test-role keys/tokens are protected files in
+`/home/jon/.local/share/aiab-audit-demo/`. Private signing keys stay outside the VM.
+Only public keys enter measured trust. Provider credentials remain in the operator's
+existing Tinfoil credential store and the configured enclave secrets.
 
-The container is `28c10708-7f8b-4981-8280-dca928a2654b`, 2 CPU / 8 GiB / zero GPUs,
-CC enabled, debug disabled. Inference runs at the separately attested model endpoint.
-Managed secrets are selected by name; their values are not in these files. Keep
-credentials outside Git. Demo role private keys/tokens are stored locally under
-`/home/jon/.local/share/aiab-audit-demo/` with private permissions.
+See [full operations and commands](../../../../docs/BAKED_PLAN_OPERATIONS.md),
+[the v0.5 design](../../../../docs/AIAB_DESIGN_SPEC.md) and
+[live evidence](../../../demo/audit/baked-evidence/README.md).
+`release.py` automates build, measurement, supported Tinfoil update, independent
+verification and synthetic acceptance once invoked. The supported update is
+`POST /api/containers/:id/update` with `tag` and `hold:false`; CLI `relaunch` was
+not supported by the existing provider route. Tags are immutable and each measured
+config includes its release tag to prevent cross-tag provenance ambiguity.
 
-The automated coordinator and recovery procedure are documented in [AUDIT_OPERATIONS.md](../../../../docs/AUDIT_OPERATIONS.md). It runs locally and dispatches build/measurement to GitHub Actions; the default is read-only planning.
-
-To reproduce a release: build the application from the private source repo's
-manual `build-image.yml`, independently rebuild and compare its OCI digest, update
-`trust.runtime_digest`, regenerate the manifest using `Trust(**trust).manifest()`
-and its RFC8785 SHA-256 digest, copy the trust JSON and image into the measured
-config, commit/tag in the public config repo, then manually dispatch
-`measure-release.yml` against that tag. Deploy only after measurement succeeds.
-Finally approve the resulting release/policy pins in the client and sign plans
-referencing the published image. Do not silently accept a provider's newer release.
-
-As of this deployment, the installed CLI's `container relaunch` invokes an
-unavailable `/relaunch` API. The provider's documented `POST /api/containers/:id/update`
-with `{"tag":"v0.1.3","hold":false}` worked for the running CPU instance. It preserves
-secret bindings. Wait for `current_tag` to match and verify attestation and health.
-See https://docs.tinfoil.sh/admin/admin-api for the current lifecycle contract.
-
-The new instance remains running. The original chat instance's scheduled shutdown
-configuration does not automatically apply to this separate audit instance.
+Restart changes the boot/report key and loses in-memory runs/reports. Archive
+reports and a trusted identity anchor first. A different plan requires rebuilding
+and redeploying; runtime plan registration is disabled. Native logger completeness,
+verified memory wipe, UI, agents and appeals are not claimed by this deployment.

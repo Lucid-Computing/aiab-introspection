@@ -29,3 +29,8 @@ source commit recorded in each release artifact.
 A successful demo with signed synthetic exports is not acceptance of native logger
 proofs/checkpoints. The UI, verified wipe, agents, appeals and multiple-model policy
 remain part of the broader requirements, not claims of these artifacts.
+
+`final-v022-*` is the current hardened runtime release: named API imports only,
+fresh attestation and repeated successful live acceptance. CI passed 589 tests
+with one skipped, and the two clean image builds produced identical digests.
+The final plan and its evaluation commitments are unchanged from v0.2.1.

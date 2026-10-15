@@ -11,6 +11,9 @@
 > synthetic record exports remain the authorized logger substitute; native logger
 > acceptance is incomplete. Offline verification uses an independently pinned
 > live identity anchor, not a portable hardware endorsement of the report key.
+> Tokenizer preflight checks all assembled queries before inference, asynchronously
+> after admission; overflow is a signed failure. Idempotency is per authenticated
+> role and boot.
 > No persistence is not proof of memory erasure. The current build repository is
 > private, so public-source compliance remains outstanding.
 

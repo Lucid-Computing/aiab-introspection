@@ -1,11 +1,15 @@
 # Folder-based audit operations
 
+Current deployed release: **v0.2.2**. [Deployment pins](../static/deploy/tinfoil/audit/release.json) and [live acceptance evidence](../static/demo/audit/baked-evidence/README.md).
+
 The v0.5 runtime runs one jointly signed `plan/` bundle per image. The six functions
 in `plan/plan.py` now run through the static runtime, in order: filter, group into
 queries, classify each query, aggregate scores, emit result. Appeals remain an
 explicitly uncalled post-demo function. The UI and native logger are separate
 workstreams. The broader mandatory requirements are tracked in
 [REQUIREMENTS_COMPLIANCE.md](REQUIREMENTS_COMPLIANCE.md).
+
+Machine-readable [plan](../schemas/baked-plan-v1.schema.json), [submission](../schemas/record-submission-v1.schema.json), [logger evidence](../schemas/record-export-evidence-v1.schema.json) and [report](../schemas/report-v3.schema.json) schemas are checked in. Semantic restrictions are enforced by the static runtime.
 
 ## Contract and security decisions
 
@@ -131,7 +135,7 @@ a newly signed bundle and image.
 `static/aiab/baked/records.py`. The source signature covers the ordered canonical
 record bytes, sequence/hash chain and scope. Record timestamps/agents are checked
 against the submitted and agreed windows; duplicate source positions are rejected.
-Integrity is checked before filtering. This **synthetic export protocol is not
+Integrity is checked before filtering. Admission rejects bad scope, byte limits and record counts synchronously. Tokenizer checks run in the worker preflight after the 202 response but before any inference; an oversized assembled query produces a signed `input_too_large` failure. Submission idempotency is scoped to the authenticated role and current boot. This **synthetic export protocol is not
 native WORM verification**; real logger fixtures and its transformation are still needed.
 
 Prepare an explicitly synthetic, genuinely signed request:

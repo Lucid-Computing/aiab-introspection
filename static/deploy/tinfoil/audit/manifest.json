@@ -1,11 +1,40 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:c0d7363fcaa51df124a8c70afa3717b2c31e0827daddc9b9467c024b560d2088",
+  "image_digest": "sha256:023dbd88e98d6912e6c3b9d640636b29bfe3687744920b45d227a65858bc4554",
   "plan_digest": "sha256:2dc44607f318a696c0ddb1f3f300eaa41e37f6e4d14f5ef27f2c62e07906d1f5",
   "plan_id": "bio-demo-001",
   "restrictions": {
     "version": "0.1.0",
+    "plan_imports": {
+      "__future__": [
+        "annotations"
+      ],
+      "typing": [
+        "Any",
+        "Literal",
+        "Mapping",
+        "Sequence",
+        "Iterable",
+        "Optional",
+        "Union"
+      ],
+      "dataclasses": [
+        "asdict",
+        "astuple",
+        "dataclass",
+        "field",
+        "replace"
+      ],
+      "aiab.plan_api": [
+        "LogRecord",
+        "QueryInput",
+        "ClassifierResult",
+        "Verdict",
+        "FilterRules",
+        "run_llm"
+      ]
+    },
     "hardware": {
       "tee": "Tinfoil confidential VM",
       "gpu": "separately attested inference"
