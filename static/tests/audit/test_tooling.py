@@ -124,10 +124,11 @@ def test_release_render_preserves_secret_names_and_requires_reproducibility():
         "digest": "sha256:" + "a" * 64,
         "reproduced_digest": "sha256:" + "a" * 64,
     }
-    new_config, new_trust, manifest = module.render(config, trust, build)
+    new_config, new_trust, manifest = module.render(config, trust, build, "v0.1.3")
     assert new_config["containers"][0]["secrets"] == config["containers"][0]["secrets"]
     assert new_trust["runtime_digest"] == build["digest"]
+    assert {"AIAB_RELEASE_TAG": "v0.1.3"} in new_config["containers"][0]["env"]
     assert digest(manifest) != digest(json.loads((folder / "manifest.json").read_text()))
     build["reproduced_digest"] = "sha256:" + "b" * 64
     with pytest.raises(ValueError):
-        module.render(config, trust, build)
+        module.render(config, trust, build, "v0.1.3")

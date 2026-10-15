@@ -1,10 +1,10 @@
 {
-  "schema": "aiab-deployment/v1",
+  "application_source_commit": "93ca36c297e319c57dda0f0b718c280812ea8aa9",
   "host": "aiab-signed-audit.lucid-computing.containers.tinfoil.dev",
-  "repo": "lucid-computing-labs/aiab-signed-audit-enclave",
-  "tag": "v0.1.1",
-  "release_digest": "sha256:45604e2b43ea985620ee90b95f557a441c5a4770757424dd6c63de36c4476484",
+  "logger": "synthetic signed export; native logger not ready",
   "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
-  "application_source_commit": "c687463",
-  "logger": "synthetic signed export; native logger not ready"
+  "release_digest": "sha256:45604e2b43ea985620ee90b95f557a441c5a4770757424dd6c63de36c4476484",
+  "repo": "lucid-computing-labs/aiab-signed-audit-enclave",
+  "schema": "aiab-deployment/v1",
+  "tag": "v0.1.2"
 }

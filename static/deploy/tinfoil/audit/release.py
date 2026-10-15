@@ -55,7 +55,9 @@ def workflow(repo, name, ref, output, *inputs):
     raise RuntimeError("Workflow timeout; inspect run " + run_id)
 
 
-def render(config, trust, build):
+def render(config, trust, build, release_tag):
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", release_tag):
+        raise ValueError("Invalid release tag")
     if (
         build.get("schema") != "aiab-build/v1"
         or build.get("digest") != build.get("reproduced_digest")
@@ -70,6 +72,10 @@ def render(config, trust, build):
         raise ValueError("Expected one audit container")
     container = containers[0]
     container["image"] = build["image"] + "@" + build["digest"]
+    # Distinct tags need distinct measurements: the SDK binds Sigstore evidence
+    # to the selected tag, while evidence lookup is by measurement digest.
+    container["env"] = [e for e in container["env"] if "AIAB_RELEASE_TAG" not in e]
+    container["env"].append({"AIAB_RELEASE_TAG": release_tag})
     entries = [e for e in container["env"] if "AIAB_AUDIT_TRUST_JSON" in e]
     if len(entries) != 1:
         raise ValueError("Expected one measured trust source")
@@ -221,6 +227,7 @@ def main():
             json.loads((checkout / "tinfoil-config.yml").read_text()),
             json.loads((baseline / "trust.json").read_text()),
             build,
+            args.tag,
         )
         for name, value in (
             ("tinfoil-config.yml", config),
