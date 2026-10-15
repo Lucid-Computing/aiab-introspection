@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}AIAB agreement{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/swiss.css">
+<link rel="stylesheet" href="/assets/aiab.css">
+</head>
+<body>
+<nav class="navbar">
+  <a class="nav-brand" href="/how"><span class="nav-wordmark">AIAB · Agreement</span></a>
+  <div class="nav-links">
+    {% for href, label in [("/how", "How it works"), ("/agreements", "Agreements"), ("/plan", "Plan"), ("/dryrun", "Dry run"), ("/sign", "Sign"), ("/attest", "Attest")] %}
+    <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
+    {% endfor %}
+    {% if user %}
+    <span class="chip">{{ user.display_name }} <span class="badge badge--ink">{{ user.party }}</span></span>
+    <form method="post" action="/logout" class="inline"><button class="btn btn--ghost btn--sm">Log out</button></form>
+    {% endif %}
+  </div>
+</nav>
+<main class="container page">
+  {% if msg %}<p class="form-message success">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="form-message error">{{ err }}</p>{% endif %}
+  {% if error %}<p class="form-message error">The plan folder does not load: {{ error }}</p>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

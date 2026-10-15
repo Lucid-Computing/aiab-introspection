@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Plan · AIAB agreement{% endblock %}
+{% block content %}
+<p class="label label--accent">02 — Plan</p>
+<h1>{% if view %}{{ view.bundle.plan_id }}{% else %}Plan{% endif %}</h1>
+<p class="explain">Step 2 of the flow. The box calls these functions in this order (spec 3.1). Open a step to change its settings in <span class="mono">plan.json</span> or its function body in <span class="mono">plan.py</span>. Every save changes the plan digest.</p>
+{% if view %}
+<div class="row" style="margin-bottom: var(--space-6)">
+  <span class="badge {{ view.state_badge }}">{{ view.state }}</span>
+  <span class="digest">{{ view.bundle.digest }}</span>
+  {% if view.frozen %}<span class="badge badge--ink">frozen</span>{% endif %}
+</div>
+
+<div class="pipeline">
+  {% for s in view.steps if s.step.called %}
+  <div class="card {% if s.errors %}has-error{% endif %} {% if s.step.kind == 'run_llm' %}is-llm{% endif %}">
+    <div class="card-header"><span>{{ s.step.name }}</span><span class="badge {% if s.step.kind == 'run_llm' %}badge--ok{% endif %}">{{ s.step.kind }}</span></div>
+    <div class="card-body">
+      <p>{{ s.step.summary }}</p>
+      <p class="sig">{{ s.function.signature if s.function else "function missing" }}</p>
+      <p class="mono text-muted">{{ s.step.input_type }} → {{ s.step.output_type }}</p>
+      {% for v in s.settings %}<p><span class="mono text-muted">{{ v.path }}</span> = <span class="mono">{{ v.value_json if not v.multiline else "…" }}</span></p>{% endfor %}
+      {% if s.prompt_id %}<p><span class="mono text-muted">prompt</span> <span class="mono">prompts/{{ s.prompt_id }}.txt</span></p>{% endif %}
+      {% if s.errors %}<p><span class="badge badge--danger">{{ s.errors }} error{{ "s" if s.errors != 1 }}</span></p>{% endif %}
+      <p style="margin-top: var(--space-3)"><a class="btn btn--ghost btn--sm" href="/plan/step/{{ s.step.name }}">Open</a></p>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="grid-2" style="margin-top: var(--space-10)">
+  <div class="card">
+    <div class="card-header">Validation against the restrictions <span class="badge {% if view.errors %}badge--danger{% else %}badge--ok{% endif %}">{{ view.errors | length }} errors · {{ view.warnings | length }} warnings</span></div>
+    <div class="card-body">
+      {% if view.issues %}
+      <ul class="issues">{% for i in view.issues %}<li><span class="badge {% if i.level == 'error' %}badge--danger{% endif %}">{{ i.level }}</span> <span class="mono">{{ i.where }}</span> — {{ i.message }}</li>{% endfor %}</ul>
+      {% else %}<p class="text-muted">No issues. This is the same check CI runs before merge.</p>{% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">Files in the digest</div>
+    <div class="card-body">
+      <ul class="issues">{% for f in view.bundle.files %}<li><span class="mono">{{ f }}</span></li>{% endfor %}</ul>
+      <p class="text-muted" style="margin-top: var(--space-3)">Restrictions version {{ view.restrictions.version }}. <span class="mono">tests/</span> and <span class="mono">signatures/</span> are outside the digest.</p>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

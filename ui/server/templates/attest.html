@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Attest · AIAB agreement{% endblock %}
+{% block content %}
+<p class="label label--accent">11 — Attest</p>
+<h1>Build and attest</h1>
+<p class="explain">Steps 7 to 11 of the flow. After both signatures, CI merges, tags, builds the image and publishes the image digest and the plan digest. The box's manifest reports what it is running. VERIFIED means release, manifest and attestation agree. This first version reads the manifest only; the attestation verifier and the GitHub release are not wired yet.</p>
+{% if view %}
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">This checkout</div>
+    <div class="card-body">
+      <table class="kv">
+        <tr><th>Plan</th><td>{{ view.bundle.plan_id }}</td></tr>
+        <tr><th>Plan digest</th><td class="digest">{{ view.bundle.digest }}</td></tr>
+        <tr><th>Signatures</th><td>{% for party, s in view.signatures.items() %}<span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{{ party }}: {{ s.status }}</span> {% endfor %}</td></tr>
+        <tr><th>State</th><td><span class="badge {{ view.state_badge }}">{{ view.state }}</span></td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">The box {% if box.plan_matches is true %}<span class="badge badge--ok">VERIFIED plan digest</span>{% elif box.plan_matches is false %}<span class="badge badge--danger">different plan</span>{% endif %}</div>
+    <div class="card-body">
+      {% if not box.configured %}
+      <p class="text-muted">No box configured. Start the server with <span class="mono">AIAB_BOX_URL=https://…</span> to read <span class="mono">/aiab/manifest</span> and <span class="mono">/aiab/health</span>.</p>
+      {% else %}
+      <table class="kv">
+        <tr><th>URL</th><td class="mono">{{ box.url }}</td></tr>
+        <tr><th>Health</th><td class="mono">{{ box.health.status if box.health else (box.health_error or "unavailable") }}</td></tr>
+        <tr><th>Image digest</th><td class="digest">{{ box.image_digest or "not in manifest yet (spec 2.6)" }}</td></tr>
+        <tr><th>Plan digest</th><td class="digest">{{ box.plan_digest or (box.manifest_error or "not in manifest yet (spec 2.6)") }}</td></tr>
+        {% if box.manifest %}<tr><th>Policy digest</th><td class="digest">{{ box.manifest.policy_digest or "—" }}</td></tr>{% endif %}
+      </table>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<h3 style="margin-top: var(--space-12)">Independent verification</h3>
+<p class="explain">The auditor's own check of the running box, from the static part. Replace the uppercase values with the ones you approved independently, never with values read from the box.</p>
+<pre class="cmd">cd static &amp;&amp; uv run --locked auditor verify --host HOSTNAME --repo OWNER/REPO \
+    --expected-digest APPROVED_TINFOIL_RELEASE_DIGEST --expected-policy-digest APPROVED_POLICY_DIGEST</pre>
+{% endif %}
+{% endblock %}

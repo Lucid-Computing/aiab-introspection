@@ -1,0 +1,44 @@
+/* AIAB additions on top of swiss.css: same tokens, no radius, hairlines only. */
+.page { padding-top: var(--space-10); padding-bottom: var(--space-24); }
+.page h1 { margin-bottom: var(--space-4); }
+.page > p.lead { max-width: 720px; margin-bottom: var(--space-8); }
+.inline { display: inline; }
+.btn--sm { padding: var(--space-1) var(--space-3); font-size: var(--text-xs); }
+.nav-links { display: flex; align-items: center; gap: var(--space-4); }
+.nav-link { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-2); text-decoration: none; }
+.nav-link.active { color: var(--ink-1); box-shadow: inset 0 -2px 0 0 var(--amber); }
+.stack > * + * { margin-top: var(--space-6); }
+.row { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); align-items: start; }
+@media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+.pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-3); }
+@media (max-width: 1100px) { .pipeline { grid-template-columns: repeat(2, 1fr); } }
+.pipeline .card-body { padding: var(--space-4); font-size: var(--text-sm); color: var(--ink-2); }
+.pipeline .card.has-error { border-color: var(--destructive); }
+.pipeline .card.is-llm .card-header { box-shadow: inset 0 2px 0 0 var(--amber); }
+.sig { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-1); word-break: break-all; margin: var(--space-2) 0; }
+.kv { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.kv th { text-align: left; font-family: var(--font-mono); font-weight: 500; font-size: var(--text-xs); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--ink-3); padding: var(--space-2) var(--space-4) var(--space-2) 0; vertical-align: top; width: 220px; }
+.kv td { padding: var(--space-2) 0; border-bottom: var(--border-hairline); color: var(--ink-2); vertical-align: top; }
+.kv tr:last-child td { border-bottom: none; }
+.digest { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-1); word-break: break-all; }
+pre.cmd { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-1); background: var(--paper-2); border: var(--border-hairline); padding: var(--space-3) var(--space-4); overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+textarea.code, textarea.prose { width: 100%; font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.5; color: var(--ink-1); background: var(--paper-1); border: var(--border-strong); padding: var(--space-3) var(--space-4); resize: vertical; }
+textarea.code { min-height: 260px; white-space: pre; }
+textarea.prose { min-height: 160px; font-family: var(--font-sans); }
+textarea:disabled, input:disabled { background: var(--paper-2); color: var(--ink-3); }
+.field + .field { margin-top: var(--space-4); }
+.field input.json { font-family: var(--font-mono); font-size: var(--text-sm); }
+.issues { list-style: none; padding: 0; margin: 0; }
+.issues li { padding: var(--space-2) 0; border-bottom: var(--border-hairline); font-size: var(--text-sm); color: var(--ink-2); }
+.issues li .mono { color: var(--ink-1); }
+.flow { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+.flow li { display: grid; grid-template-columns: 32px 200px 1fr; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: var(--border-hairline); font-size: var(--text-sm); color: var(--ink-2); }
+.flow li::before { counter-increment: step; content: counter(step, decimal-leading-zero); font-family: var(--font-mono); color: var(--ink-3); }
+.flow li strong { color: var(--ink-1); font-weight: 500; }
+.flow li.here { background: var(--paper-2); box-shadow: inset 2px 0 0 0 var(--amber); padding-left: var(--space-3); }
+.flow li.done::before { color: var(--amber-ink); }
+.login { max-width: 420px; margin: var(--space-24) auto; }
+.explain { font-size: var(--text-sm); color: var(--ink-2); max-width: 760px; margin-bottom: var(--space-6); }
+.three { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); }
+@media (max-width: 900px) { .three { grid-template-columns: 1fr; } }

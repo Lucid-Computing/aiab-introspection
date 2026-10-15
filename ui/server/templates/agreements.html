@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Agreements · AIAB agreement{% endblock %}
+{% block content %}
+<p class="label label--accent">01 — Agreements</p>
+<h1>Agreements</h1>
+<p class="explain">Step 1 of the flow. In this first version there is one draft: the <span class="mono">plan/</span> folder of this checkout. Branch-per-agreement arrives with the GitHub integration.</p>
+<table class="table">
+  <thead><tr><th>Plan</th><th>Where</th><th>Plan digest</th><th>State</th><th>Signatures</th><th></th></tr></thead>
+  <tbody>
+  {% if view %}
+  <tr>
+    <td>{{ view.bundle.plan_id }}</td>
+    <td>working tree <span class="mono">{{ view.bundle.path }}</span></td>
+    <td><span class="digest">{{ view.bundle.digest[:23] }}…</span></td>
+    <td><span class="badge {{ view.state_badge }}">{{ view.state }}</span></td>
+    <td>{% for party, s in view.signatures.items() %}<span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{{ party }}: {{ s.status }}</span> {% endfor %}</td>
+    <td><a class="btn btn--ghost btn--sm" href="/plan">Open</a></td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td>running on the box</td>
+    <td>{% if box.configured %}<span class="mono">{{ box.url }}</span>{% else %}<span class="text-muted">no box configured (set AIAB_BOX_URL)</span>{% endif %}</td>
+    <td>{% if box.plan_digest %}<span class="digest">{{ box.plan_digest[:23] }}…</span>{% elif box.configured %}<span class="text-muted">{{ box.manifest_error or "manifest has no plan_digest yet" }}</span>{% else %}—{% endif %}</td>
+    <td>{% if box.plan_matches is true %}<span class="badge badge--ok">running this plan</span>{% elif box.plan_matches is false %}<span class="badge badge--danger">different plan</span>{% else %}—{% endif %}</td>
+    <td>—</td>
+    <td><a class="btn btn--ghost btn--sm" href="/attest">Attest</a></td>
+  </tr>
+  </tbody>
+</table>
+{% endblock %}

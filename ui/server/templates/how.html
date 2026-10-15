@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}How it works · AIAB agreement{% endblock %}
+{% block content %}
+<p class="label label--accent">00 — How this works</p>
+<h1>One plan, two signatures, one attested image.</h1>
+<p class="lead">The lab and the auditor negotiate an audit plan here. Both sign its digest. The plan is built into the box's image, and the running box proves it is executing exactly that plan.</p>
+
+<div class="three">
+  <div class="card"><div class="card-header">static/ · the box</div><div class="card-body">How logs come in and are verified, how a plan is run and bounded, how the image is built and attested. Fixed between agreements. Owner: Jonathan.</div></div>
+  <div class="card"><div class="card-header">plan/ · the agreement</div><div class="card-body">Six Python functions, one prompt, agreed settings and both signatures. Changes with every agreement. This UI edits only this folder.</div></div>
+  <div class="card"><div class="card-header">ui/ · this app</div><div class="card-body">A front end over the plan folder and the box's read-only endpoints. Not trusted: every digest comes with the command that reproduces it.</div></div>
+</div>
+
+<h3 style="margin-top: var(--space-12)">The flow</h3>
+<p class="explain">Where this agreement is right now is marked. Steps 1 to 3 and 7 to 10 run through GitHub and CI and are not wired in this first version; the UI reads the local plan folder directly.</p>
+<ol class="flow">
+  {% for title, blurb in flow %}
+  <li class="{% if loop.index0 == current %}here{% elif loop.index0 < current %}done{% endif %}"><strong>{{ title }}</strong><span>{{ blurb }}</span></li>
+  {% endfor %}
+</ol>
+
+<h3 style="margin-top: var(--space-12)">Check the UI without trusting it</h3>
+<p class="explain">Everything shown here is computed by the same code the box and CI run, and you can run it yourself from the repository root:</p>
+<pre class="cmd">cd ui &amp;&amp; uv run python -m aiab.plan_bundle digest ../plan      # the plan digest shown on the Sign screen
+cd ui &amp;&amp; uv run python -m aiab.plan_bundle check  ../plan      # the validation issues shown on the Plan screen
+cd ui &amp;&amp; uv run python -m aiab.plan_bundle verify ../plan      # the signature status shown on the Sign screen</pre>
+
+<h3 style="margin-top: var(--space-12)">Four digests, one meaning each</h3>
+<table class="kv">
+  <tr><th>Plan digest</th><td>Hash of <span class="mono">plan/</span> without <span class="mono">tests/</span> and <span class="mono">signatures/</span>. This is what both parties sign. Shown on every screen.</td></tr>
+  <tr><th>Image digest</th><td>The container image, static part plus plan. Produced by the reproducible build; compared with the attestation measurement.</td></tr>
+  <tr><th>Release digest</th><td>Tinfoil's measurement of the release that launches the image. What the attestation verifier pins.</td></tr>
+  <tr><th>Policy digest</th><td>The box's effective settings manifest. Carried in every report.</td></tr>
+</table>
+{% endblock %}

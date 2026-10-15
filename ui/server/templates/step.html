@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set active = "plan" %}
+{% block title %}{{ step.step.name if step else "Step" }} · AIAB agreement{% endblock %}
+{% block content %}
+{% if step %}
+<p class="label label--accent"><a href="/plan" class="link">02 — Plan</a> / {{ step.step.name }}</p>
+<h1>{{ step.step.name }} <span class="badge {% if step.step.kind == 'run_llm' %}badge--ok{% endif %}">{{ step.step.kind }}</span></h1>
+<p class="explain">{{ step.step.summary }} Takes <span class="mono">{{ step.step.input_type }}</span>, returns <span class="mono">{{ step.step.output_type }}</span>.
+{% if view.frozen %}<strong>The plan is frozen</strong>: a signature exists, so edits are disabled. Unfreeze on the Sign screen.{% endif %}</p>
+{% if step.issues %}<ul class="issues" style="margin-bottom: var(--space-6)">{% for i in step.issues %}<li><span class="badge {% if i.level == 'error' %}badge--danger{% endif %}">{{ i.level }}</span> <span class="mono">{{ i.where }}</span> — {{ i.message }}</li>{% endfor %}</ul>{% endif %}
+
+<div class="grid-2">
+  <div class="stack">
+    <div class="card">
+      <div class="card-header">Settings · plan.json</div>
+      <div class="card-body">
+        {% if step.settings %}
+        <form method="post" action="/plan/step/{{ step.step.name }}/settings">
+          {% for v in step.settings %}
+          <div class="field">
+            <label for="s-{{ loop.index }}">{{ v.path }} <span class="text-muted">({{ v.kind }}, JSON)</span></label>
+            {% if v.multiline %}<textarea id="s-{{ loop.index }}" name="{{ v.path }}" class="code" style="min-height: 120px" {% if view.frozen %}disabled{% endif %}>{{ v.value_json }}</textarea>
+            {% else %}<input id="s-{{ loop.index }}" name="{{ v.path }}" class="json" value="{{ v.value_json }}" {% if view.frozen %}disabled{% endif %}>{% endif %}
+          </div>
+          {% endfor %}
+          <p style="margin-top: var(--space-4)"><button class="btn btn--primary" {% if view.frozen %}disabled{% endif %}>Save settings</button></p>
+        </form>
+        {% else %}<p class="text-muted">This step has no settings in plan.json.</p>{% endif %}
+      </div>
+    </div>
+    {% if step.prompt_id %}
+    <div class="card">
+      <div class="card-header">Prompt · prompts/{{ step.prompt_id }}.txt <span class="badge">{{ (step.prompt_text or "") | wordcount }} words</span></div>
+      <div class="card-body">
+        <form method="post" action="/plan/prompt/{{ step.prompt_id }}">
+          <input type="hidden" name="step" value="{{ step.step.name }}">
+          <textarea name="text" class="prose" {% if view.frozen %}disabled{% endif %}>{{ step.prompt_text or "" }}</textarea>
+          <p style="margin-top: var(--space-4)"><button class="btn btn--primary" {% if view.frozen %}disabled{% endif %}>Save prompt</button></p>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="card-header">Code · plan.py {% if step.function %}<span class="badge">lines {{ step.function.lineno }}–{{ step.function.end_lineno }}</span>{% endif %}</div>
+    <div class="card-body">
+      {% if step.function %}
+      <p class="explain">The signature is fixed by the static part; change only the body. The file must still parse, import only <span class="mono">dataclasses</span>, <span class="mono">typing</span> and <span class="mono">aiab.plan_api</span>, and call nothing but <span class="mono">run_llm</span>.</p>
+      <form method="post" action="/plan/step/{{ step.step.name }}/code">
+        <textarea name="source" class="code" spellcheck="false" {% if view.frozen %}disabled{% endif %}>{{ step.function.source }}</textarea>
+        <p style="margin-top: var(--space-4)"><button class="btn btn--primary" {% if view.frozen %}disabled{% endif %}>Save function</button></p>
+      </form>
+      {% else %}<p class="form-message error">plan.py has no function named {{ step.step.name }}.</p>{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
