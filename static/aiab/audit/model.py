@@ -49,9 +49,8 @@ class PinnedModel:
     async def start(self):
         await self.connection.start()
 
-    async def classify(self, text: str, policy: dict, model: dict) -> float:
-        if model != self.model:
-            raise AuditError("model_unavailable")
+    async def check_context(self, text: str, policy: dict):
+        model = self.model
         content = messages(text, policy)
         # Ask the exact attested serving tokenizer to count the assembled prompt.
         # This is not an inference call; no truncation or fallback estimate is used.
@@ -65,6 +64,12 @@ class PinnedModel:
             raise AuditError("model_unavailable")
         if count["count"] + model["max_output_tokens"] > model["context_tokens"]:
             raise AuditError("input_too_large", 413)
+        return content
+
+    async def classify(self, text: str, policy: dict, model: dict) -> float:
+        if model != self.model:
+            raise AuditError("model_unavailable")
+        content = await self.check_context(text, policy)
         request = {
             "model": model["id"],
             "messages": content,

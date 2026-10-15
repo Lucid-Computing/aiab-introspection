@@ -80,7 +80,18 @@ def render(config, trust, build, release_tag):
     if len(entries) != 1:
         raise ValueError("Expected one measured trust source")
     entries[0]["AIAB_AUDIT_TRUST_JSON"] = canonical(trust).decode()
-    manifest = Trust(**trust).manifest()
+    if "plan_digest" in build:
+        from aiab.baked.bundle import load_bundle
+        from aiab.baked.runtime import Runtime
+
+        bundle = load_bundle(Path(__file__).resolve().parents[4] / "plan", trust)
+        if bundle.digest != build["plan_digest"]:
+            raise ValueError("Built plan differs from signed source bundle")
+        container["command"] = ["python", "-m", "aiab.baked.main"]
+        # Keep the route to return a clear authenticated 405 rather than shim HTML.
+        manifest = Runtime(bundle, trust, None).manifest
+    else:
+        manifest = Trust(**trust).manifest()
     return config, trust, manifest
 
 
@@ -276,6 +287,11 @@ def main():
             "release_digest": "sha256:" + release_hash,
             "policy_digest": digest(manifest),
             "application_source_commit": sha,
+            **(
+                {"image_digest": build["digest"], "plan_digest": build["plan_digest"]}
+                if "plan_digest" in build
+                else {}
+            ),
         }
         (args.output / "release.json").write_bytes(canonical(release) + b"\n")
         record("deploying", target_release=release)
@@ -304,7 +320,10 @@ def main():
                 time.sleep(10)
         # This runs only synthetic fixtures; no downloaded private transcripts.
         sys.path.insert(0, str(root / "static/demo/audit"))
-        from acceptance import run
+        if "plan_digest" in build:
+            from baked_acceptance import run
+        else:
+            from acceptance import run
 
         await_args = argparse.Namespace(
             host=release["host"],

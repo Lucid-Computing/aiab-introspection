@@ -80,6 +80,8 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
     async def plans(request: Request):
         if request.state.role not in {"lab", "auditor"}:
             raise AuditError("forbidden", 403)
+        if not hasattr(runtime, "registry"):
+            raise AuditError("baked_plan_only", 405)
         accepted, created = runtime.registry.register(await body(request))
         return JSONResponse(
             {"plan_digest": accepted.digest, "status": "accepted"},
@@ -94,7 +96,9 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
         return JSONResponse(
             {
                 "run_id": run.run_id,
-                "plan_digest": run.plan_digest,
+                "plan_digest": run.plan_digest
+                if hasattr(run, "plan_digest")
+                else runtime.bundle.digest,
                 "boot_id": runtime.boot_id,
                 "status": "running" if run.envelope is None else "finished",
             },

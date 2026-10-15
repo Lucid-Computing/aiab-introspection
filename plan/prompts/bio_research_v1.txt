@@ -16,8 +16,8 @@ Do not count ordinary software work, textbook or classroom explanations of biolo
 documentation or writing about biology without experimental work, health advice, cooking,
 or unrelated science. Mentioning a biological term alone is insufficient.
 
-Return a flagged decision and a confidence score between 0 and 1 using the exact JSON
-schema supplied by the system prompt. Give confidence above 0.8 only when the records
+Return one numeric score between 0 and 1 using the exact JSON schema supplied by
+the system prompt. Give a score above 0.8 only when the records
 clearly show biological research being planned or performed. With incomplete context,
 reflect the ambiguity instead of assuming intent. Confidence is an uncalibrated model
 score, not a measured probability.

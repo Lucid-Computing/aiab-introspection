@@ -67,7 +67,7 @@ def run_plan(plan, cfg: dict, records: list[LogRecord]) -> tuple[dict, list[Quer
 
 
 def test_plan_json_is_well_formed(plan_cfg: dict) -> None:
-    assert plan_cfg["schema"] == "aiab-plan/v1"
+    assert plan_cfg["schema"] == "aiab-baked-plan/v1"
     assert (PLAN_DIR / "prompts" / f"{plan_cfg['classification']['prompt_id']}.txt").is_file()
     assert plan_cfg["window"] <= plan_cfg["limits"]["max_logs_per_query"]
     assert plan_cfg["output_schema"]["additionalProperties"] is False
