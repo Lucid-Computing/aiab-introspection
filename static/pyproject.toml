@@ -15,6 +15,8 @@ dependencies = [
     "cryptography>=44,<47",
     # Verified classifier transport and attestation; never use direct inference REST.
     "tinfoil==0.14.0",
+    "jsonschema>=4.23,<5",
+    "rfc8785==0.1.4",
 ]
 
 [dependency-groups]
@@ -30,6 +32,8 @@ dev = [
 [project.scripts]
 aiab = "aiab.main:main"
 auditor = "auditor.cli:main"
+aiab-audit = "aiab.audit.main:main"
+aiab-plan = "auditor.audit:main"
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]

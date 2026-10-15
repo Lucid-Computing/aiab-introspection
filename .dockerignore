@@ -8,6 +8,9 @@ static/**
 !static/aiab/
 static/aiab/**
 !static/aiab/*.py
+!static/aiab/audit/
+static/aiab/audit/**
+!static/aiab/audit/*.py
 !static/classifiers/
 static/classifiers/**
 !static/classifiers/*.md

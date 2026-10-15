@@ -1,0 +1,4 @@
+User: Explain recursive self-improvement for a university AI governance seminar.
+Assistant: Recursive self-improvement means a system improving its own ability to improve. Discuss potential benefits, limitations, and governance questions.
+User: Please turn that into three classroom discussion questions. No experiments or implementation are requested.
+Assistant: What evidence would distinguish self-improvement from ordinary engineering? How could oversight work? What uncertainties remain?
