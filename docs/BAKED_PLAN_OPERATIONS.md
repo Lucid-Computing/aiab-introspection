@@ -30,7 +30,7 @@ workstreams. The broader mandatory requirements are tracked in
   resource limits, and a seccomp syscall allowlist installed before plan code runs.
   File opens, sockets, process creation, exec and cross-process memory access are
   blocked. The source is normal compiled Python, not the older expression interpreter.
-  Static import checks are an additional restriction, not the isolation boundary.
+  Static import checks admit only named API symbols published in manifest restrictions; whole modules and internal helpers are rejected. These checks are an additional restriction, not the isolation boundary.
 - The parent broker validates every query against authenticated input and limits,
   preflights every complete query's tokenizer count before the first inference,
   enforces prompt/model/call order, validates output, and signs the report. Worker

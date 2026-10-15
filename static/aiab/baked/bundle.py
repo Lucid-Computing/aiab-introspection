@@ -98,6 +98,19 @@ PLAN = closed(
     }
 )
 FUNCTIONS = {"filter_logs", "build_query", "classify", "metric", "emit_report", "appeal"}
+IMPORTS = {
+    "__future__": ["annotations"],
+    "typing": ["Any", "Literal", "Mapping", "Sequence", "Iterable", "Optional", "Union"],
+    "dataclasses": ["asdict", "astuple", "dataclass", "field", "replace"],
+    "aiab.plan_api": [
+        "LogRecord",
+        "QueryInput",
+        "ClassifierResult",
+        "Verdict",
+        "FilterRules",
+        "run_llm",
+    ],
+}
 
 
 def check_source(source: str):
@@ -117,19 +130,13 @@ def check_source(source: str):
                 raise ValueError
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                if any(n.name not in {"typing", "dataclasses"} for n in node.names):
-                    raise ValueError
+                # Whole modules expose unrelated internals (e.g. typing.sys).
+                raise ValueError
             if isinstance(node, ast.ImportFrom):
-                if node.level or node.module not in {
-                    "typing",
-                    "dataclasses",
-                    "aiab.plan_api",
-                    "__future__",
-                }:
-                    raise ValueError
-                if any(
-                    n.name.startswith("_") or n.name == "*" or n.name == "install_run_llm"
-                    for n in node.names
+                if (
+                    node.level
+                    or node.module not in IMPORTS
+                    or any(n.name not in IMPORTS[node.module] for n in node.names)
                 ):
                     raise ValueError
             if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
@@ -249,6 +256,7 @@ def load_bundle(folder: Path, trust: dict, *, signed: bool = True) -> Bundle:
 def restrictions(trust):
     return {
         "version": "0.1.0",
+        "plan_imports": IMPORTS,
         "hardware": {"tee": "Tinfoil confidential VM", "gpu": "separately attested inference"},
         "models": [trust["model"]],
         "limits": LIMITS,

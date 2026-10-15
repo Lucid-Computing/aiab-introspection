@@ -1,0 +1,20 @@
+{
+  "report": {
+    "aiab_id": "aiab-baked-audit",
+    "boot_id": "e4bf8c5127944db79db32647f9591698",
+    "egress_max_bits": 1,
+    "image_digest": "sha256:c0d7363fcaa51df124a8c70afa3717b2c31e0827daddc9b9467c024b560d2088",
+    "input_commitment": "sha256:31ea223c88b27e293eb4cd4e8142145030548f8de5d7ed41da19b95d878b0231",
+    "plan_digest": "sha256:2dc44607f318a696c0ddb1f3f300eaa41e37f6e4d14f5ef27f2c62e07906d1f5",
+    "policy_digest": "sha256:e6769ac3b3e30ebfd96b22568aaf34995af9d230ddeb266e24904e65e799081d",
+    "result": {
+      "flagged": false
+    },
+    "run_id": "8e15ff36799d46fcaf34c356f08d1b75",
+    "schema": "aiab-report/v3",
+    "status": "completed"
+  },
+  "trust_basis": "independently-pinned-live-identity",
+  "verified": true,
+  "test_network_disabled": true
+}

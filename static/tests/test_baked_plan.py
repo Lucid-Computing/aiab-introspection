@@ -278,3 +278,22 @@ def test_ci_plan_check_uses_base_keys_and_rejects_mixed_changes(setup, tmp_path,
     git("commit", "-qm", "change verifier trust")
     with pytest.raises(ValueError, match="plan-only"):
         check(base, git("rev-parse", "HEAD"))
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "import dataclasses\n",
+        "from typing import sys\n",
+        "from dataclasses import inspect\n",
+        "from aiab.plan_api import install_run_llm\n",
+    ],
+)
+def test_only_named_plan_api_imports_are_admitted(setup, prefix):
+    from aiab.baked.bundle import check_source
+
+    source = setup[3].files["plan.py"].decode()
+    # Place after the future import, so rejection is not a syntax error.
+    source = source.replace("from typing import Literal", prefix + "from typing import Literal")
+    with pytest.raises(AuditError, match="invalid_plan_source"):
+        check_source(source)
