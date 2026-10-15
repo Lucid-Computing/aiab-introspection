@@ -208,6 +208,15 @@ def main():
             raise RuntimeError("Build identity mismatch")
         checkout = args.output / "config"
         command("git", "clone", "https://github.com/" + repo + ".git", str(checkout))
+        previous_config_commit = command(
+            "git", "rev-parse", prior["tag"] + "^{commit}", cwd=checkout
+        )
+        if command("git", "rev-parse", "HEAD", cwd=checkout) != previous_config_commit:
+            raise RuntimeError("Config repository has unreviewed changes since the baseline tag")
+        if json.loads((checkout / "tinfoil-config.yml").read_text()) != json.loads(
+            (baseline / "tinfoil-config.yml").read_text()
+        ):
+            raise RuntimeError("Published baseline config differs from approved local config")
         config, trust, manifest = render(
             json.loads((checkout / "tinfoil-config.yml").read_text()),
             json.loads((baseline / "trust.json").read_text()),
@@ -312,6 +321,7 @@ def main():
             failed_stage=journal.get("stage"),
             status="failed",
             error=type(exc).__name__,
+            reason=str(exc),
             recovery="Inspect stage/provider state; no automatic rollback or resubmission",
         )
         raise SystemExit(

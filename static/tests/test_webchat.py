@@ -199,5 +199,8 @@ def test_demo_compose_boundaries() -> None:
     assert services["webchat"]["ports"][0]["published"] == "8081"
     assert services["webchat"]["build"]["context"] == str(WEBCHAT)
     assert "ports" not in services["inference"]
-    assert services["inference"]["volumes"][0]["bind"]["create_host_path"] is False
+    # Some Compose releases omit false-valued bind options in resolved JSON.
+    # Retain the explicit source requirement and reject an enabled resolved option.
+    assert "create_host_path: false" in (ROOT / "deploy/docker-compose.local.yml").read_text()
+    assert services["inference"]["volumes"][0]["bind"].get("create_host_path", False) is False
     assert services["inference"]["logging"]["driver"] == "none"
