@@ -1,30 +1,34 @@
 {% extends "base.html" %}
 {% block title %}Agreements · AIAB agreement{% endblock %}
 {% block content %}
-<p class="label label--accent">01 — Agreements</p>
-<h1>Agreements</h1>
-<p class="explain">Step 1 of the flow. In this first version there is one draft: the <span class="mono">plan/</span> folder of this checkout. Branch-per-agreement arrives with the GitHub integration.</p>
+<div class="row" style="justify-content: space-between; margin-bottom: var(--space-6)"><h1 style="margin: 0">Agreements</h1><a class="btn btn--primary" href="/agreements/new">New agreement</a></div>
 <table class="table">
-  <thead><tr><th>Plan</th><th>Where</th><th>Plan digest</th><th>State</th><th>Signatures</th><th></th></tr></thead>
+  <thead><tr><th>Agreement</th><th>Version</th><th>State</th><th></th></tr></thead>
   <tbody>
-  {% if view %}
+  {% for r in rows %}
   <tr>
-    <td>{{ view.bundle.plan_id }}</td>
-    <td>working tree <span class="mono">{{ view.bundle.path }}</span></td>
-    <td><span class="digest">{{ view.bundle.digest[:23] }}…</span></td>
-    <td><span class="badge {{ view.state_badge }}">{{ view.state }}</span></td>
-    <td>{% for party, s in view.signatures.items() %}<span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{{ party }}: {{ s.status }}</span> {% endfor %}</td>
-    <td><a class="btn btn--ghost btn--sm" href="/plan">Open</a></td>
+    <td><strong>{{ r.plan_id }}</strong>{% if r.selected %}<br><span class="badge badge--ok">selected for deployment</span>{% elif r.id != "plan" %}<br><span class="text-muted">agreements/{{ r.id }}</span>{% endif %}</td>
+    <td>{% if r.digest %}<span class="digest">{{ r.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
+    <td>{{ r.state }}</td>
+    <td class="actions">
+      <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/plan">Open</a>
+      <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm">Edit</button></form>
+      <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/sign">Sign</a>
+      {% if r.id != "plan" and not r.selected %}
+      <form method="post" action="/a/{{ r.id }}/deploy" class="inline" data-confirm="This selects {{ r.plan_id }} for deployment: its files replace the contents of plan/, the folder the image is built from. Continue?"><button class="btn btn--primary btn--sm" {% if not r.signed %}title="not signed by both parties yet: the build would reject it"{% endif %}>Deploy</button></form>
+      {% endif %}
+    </td>
   </tr>
-  {% endif %}
-  <tr>
-    <td>running on the box</td>
-    <td>{% if box.configured %}<span class="mono">{{ box.url }}</span>{% else %}<span class="text-muted">no box configured (set AIAB_BOX_URL)</span>{% endif %}</td>
-    <td>{% if box.plan_digest %}<span class="digest">{{ box.plan_digest[:23] }}…</span>{% elif box.configured %}<span class="text-muted">{{ box.manifest_error or "manifest has no plan_digest yet" }}</span>{% else %}—{% endif %}</td>
-    <td>{% if box.plan_matches is true %}<span class="badge badge--ok">running this plan</span>{% elif box.plan_matches is false %}<span class="badge badge--danger">different plan</span>{% else %}—{% endif %}</td>
-    <td>—</td>
-    <td><a class="btn btn--ghost btn--sm" href="/attest">Attest</a></td>
-  </tr>
+  {% endfor %}
   </tbody>
 </table>
+<div class="notice" style="margin-top: var(--space-8)">
+  {% if box.configured %}
+  <p><strong>The box</strong> ({{ box.url }}) is running
+    {% if box.plan_digest %}version <span class="digest">{{ box.plan_digest[7:19] }}…</span>{% if box.plan_matches %}, the one selected for deployment{% else %}, which is not the one selected for deployment{% endif %}{% else %}an unknown version ({{ box.manifest_error or "not reported yet" }}){% endif %}.</p>
+  {% else %}
+  <p><strong>The box</strong> is not connected, so nothing is running yet. Start the UI with <span class="mono">AIAB_BOX_URL</span> set to show which version it runs.</p>
+  {% endif %}
+  <a class="btn btn--ghost btn--sm" href="/attest">What is running</a>
+</div>
 {% endblock %}

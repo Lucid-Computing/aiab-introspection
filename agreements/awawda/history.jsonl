@@ -1,0 +1,1 @@
+{"at": "2026-10-15T16:00:07Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "filter_logs: filter", "detail": "{\"keywords\": [], \"kinds\": [\"request\", \"response\", \"tool_call\", \"tool_result\"]} → {\"keywords\": [], \"kinds\": [\"request\", \"response\", \"tool_call\"]}"}

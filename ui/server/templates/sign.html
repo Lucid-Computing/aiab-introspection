@@ -1,53 +1,59 @@
 {% extends "base.html" %}
+{% set active = "agreements" %}
 {% block title %}Sign · AIAB agreement{% endblock %}
 {% block content %}
-<p class="label label--accent">05 — Sign</p>
+<p class="crumb"><a href="/agreements" class="link">← Agreements</a>{% if view %} · {{ view.plan_id }}{% endif %}</p>
 <h1>Sign</h1>
-<p class="explain">Steps 5 and 6 of the flow. The UI never holds a private key. Each party signs the plan digest on its own machine and uploads the resulting file; the UI verifies it against the pinned public key and stores it in <span class="mono">plan/signatures/</span>. The first uploaded signature freezes the plan. Any edit after that would make the signature stale, which is what CI checks.</p>
+<p class="lead">Each party signs this version's digest with its own private key and pastes the signature here. The box already knows both public keys.</p>
 {% if view %}
-<div class="panel panel--offset" style="margin-bottom: var(--space-8)">
-  <p class="label">Plan digest · {{ view.bundle.plan_id }}</p>
-  <p class="digest" style="font-size: var(--text-lg); margin: var(--space-3) 0">{{ view.bundle.digest }}</p>
-  <p class="explain" style="margin-bottom: var(--space-3)">Reproduce it, then sign it with your own key, on your own machine:</p>
-<pre class="cmd">cd ui &amp;&amp; uv run python -m aiab.plan_bundle digest ../plan
-cd ui &amp;&amp; uv run python -m aiab.plan_bundle sign --digest {{ view.bundle.digest }} \
-    --key ~/.aiab-dev/{{ user.party }}.key --plan-id {{ view.bundle.plan_id }} --out {{ user.party }}.sig</pre>
-  {% if not view.trusted_pinned %}<p class="form-message error" style="margin-top: var(--space-4)">No party public keys are pinned, so no signature can verify. For development run <span class="mono">make dev-keys</span> in <span class="mono">ui/</span> and start the server with <span class="mono">AIAB_TRUSTED_PARTIES</span> set.</p>{% endif %}
-  {% if view.errors %}<p class="form-message error" style="margin-top: var(--space-4)">The plan has {{ view.errors | length }} validation error(s). CI would reject it even with two signatures.</p>{% endif %}
-  {% if not view.evaluation_current %}<p class="form-message error" style="margin-top: var(--space-4)">No current dry-run record. Record one on the Dry run screen before signing.</p>{% endif %}
-</div>
+{% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
 
-<div class="grid-2">
+<div class="stack">
+  <div class="card">
+    <div class="card-header">This version</div>
+    <div class="card-body">
+      <p class="digest" style="font-size: var(--text-lg)">{{ view.digest }}</p>
+      <ol class="steps">
+        <li>Download <a class="link" href="/assets/sign_digest.py" download>sign_digest.py</a> once (Python 3 with the <span class="mono">cryptography</span> package).</li>
+        <li>On your own machine, sign the digest above with your private key:
+<pre class="cmd">python3 sign_digest.py sign --digest {{ view.digest }} --key /path/to/{{ user.party }}.key</pre></li>
+        <li>Paste the line it prints into your box below.</li>
+      </ol>
+      <details class="info">
+        <summary>Check the digest yourself before signing</summary>
+  <div class="info-body">
+        <p class="explain">Download <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>, the exact files the digest covers, and run <span class="mono">python3 sign_digest.py digest plan.zip</span>. It must print the digest above. Then you have signed what you read, not what the website claims.</p>
+  </div>
+</details>
+    </div>
+  </div>
+
   {% for party in parties %}{% set s = view.signatures[party] %}
   <div class="card">
-    <div class="card-header">{{ party }} <span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{{ s.status }}</span></div>
+    <div class="card-header">{{ party }}
+      <span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{% if s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span>
+    </div>
     <div class="card-body">
-      <p class="explain">{{ s.detail }}</p>
-      {% if s.sig %}
-      <table class="kv">
-        <tr><th>Signed digest</th><td class="digest">{{ s.sig.plan_digest }}</td></tr>
-        <tr><th>Key id</th><td class="mono">{{ s.sig.key_id }}</td></tr>
-        <tr><th>Signed at</th><td class="mono">{{ s.sig.signed_at }}</td></tr>
-      </table>
-      {% endif %}
+      <p class="explain"><span class="text-muted">Pinned public key</span> <span class="mono">{{ view.public_keys[party] }}</span></p>
+      {% if s.status == 'invalid' %}<p class="explain">The stored signature was made for a different version of the plan, or with a different key, so it no longer counts. The {{ party }} needs to sign this version.</p>{% endif %}
+      {% if s.signature and s.status == 'ok' %}<p class="sig">{{ s.signature }}</p>{% endif %}
       {% if user.party == party %}
-      <form method="post" action="/sign/upload" enctype="multipart/form-data" style="margin-top: var(--space-4)">
+      <form method="post" action="{{ base }}/sign/upload">
         <input type="hidden" name="party" value="{{ party }}">
-        <div class="field"><label for="sig-{{ party }}">Upload {{ party }}.sig</label><input id="sig-{{ party }}" type="file" name="file" accept=".sig,application/json" required></div>
-        <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Upload and verify</button></p>
+        <div class="field"><label for="sig-{{ party }}">Your signature</label><textarea id="sig-{{ party }}" name="signature" class="code" style="min-height: 72px" placeholder="paste the one line from {{ party }}.sig" required></textarea></div>
+        <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Verify and store</button></p>
       </form>
-      {% else %}<p class="text-muted" style="margin-top: var(--space-4)">Only the {{ party }} can upload this signature.</p>{% endif %}
+      {% else %}<p class="text-muted">Only the {{ party }} can sign here.</p>{% endif %}
     </div>
   </div>
   {% endfor %}
-</div>
 
-{% if view.frozen %}
-<form method="post" action="/sign/unfreeze" style="margin-top: var(--space-8)">
-  <p class="explain">Need to change the plan after a signature? Unfreezing deletes every signature file. Both parties sign again afterwards.</p>
-  <button class="btn btn--ghost">Unfreeze and delete signatures</button>
-</form>
-{% endif %}
-<p class="explain" style="margin-top: var(--space-8)">Verify from the terminal: <span class="mono">cd ui &amp;&amp; uv run python -m aiab.plan_bundle verify ../plan</span></p>
+  {% if view.frozen or view.stale %}
+  <form method="post" action="{{ base }}/sign/unfreeze" class="notice" data-confirm="This removes every stored signature. Both parties will need to sign again.">
+    <p>{% if view.frozen %}To change the plan after signing, remove the signatures first.{% else %}Remove the signatures that no longer count.{% endif %}</p>
+    <button class="btn btn--ghost btn--sm">Remove signatures</button>
+  </form>
+  {% endif %}
+</div>
 {% endif %}
 {% endblock %}

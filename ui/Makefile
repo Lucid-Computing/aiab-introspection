@@ -14,12 +14,10 @@ dev:
 account:
 	uv run python -m server.auth add $(NAME) $(PARTY)
 
-# Development party keys outside the repository, plus the trusted-parties file the UI reads.
+# Development party keys outside the repository, in the box's key format, plus a trust
+# file that pins them. Start the server with AIAB_TRUST_FILE=$(KEYS)/trust.json.
 dev-keys:
-	uv run python -m aiab.plan_bundle keygen --party lab --out $(KEYS)/lab.key
-	uv run python -m aiab.plan_bundle keygen --party auditor --out $(KEYS)/auditor.key
-	uv run python -m aiab.plan_bundle trusted $(KEYS)/lab.key $(KEYS)/auditor.key --out $(KEYS)/trusted_parties.json
-	@echo "set AIAB_TRUSTED_PARTIES=$(KEYS)/trusted_parties.json before 'make dev'"
+	uv run python -m server.devkeys $(KEYS)
 
 lint:
 	uv run ruff check .

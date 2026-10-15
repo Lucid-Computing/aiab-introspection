@@ -1,49 +1,67 @@
 {% extends "base.html" %}
 {% block title %}Plan · AIAB agreement{% endblock %}
 {% block content %}
-<p class="label label--accent">02 — Plan</p>
-<h1>{% if view %}{{ view.bundle.plan_id }}{% else %}Plan{% endif %}</h1>
-<p class="explain">Step 2 of the flow. The box calls these functions in this order (spec 3.1). Open a step to change its settings in <span class="mono">plan.json</span> or its function body in <span class="mono">plan.py</span>. Every save changes the plan digest.</p>
+<p class="crumb"><a href="/agreements" class="link">← Agreements</a></p>
+<h1>{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
+<p class="lead">The box runs these five functions in this order.</p>
 {% if view %}
-<div class="row" style="margin-bottom: var(--space-6)">
-  <span class="badge {{ view.state_badge }}">{{ view.state }}</span>
-  <span class="digest">{{ view.bundle.digest }}</span>
-  {% if view.frozen %}<span class="badge badge--ink">frozen</span>{% endif %}
+{% if edit %}
+<div class="notice">
+  <p><strong>Editing.</strong> Every save makes a new version that both parties must sign again.</p>
+  <a class="btn btn--ghost btn--sm" href="{{ base }}/plan">Finish editing</a>
 </div>
+{% endif %}
 
-<div class="pipeline">
+<ol class="vflow">
   {% for s in view.steps if s.step.called %}
-  <div class="card {% if s.errors %}has-error{% endif %} {% if s.step.kind == 'run_llm' %}is-llm{% endif %}">
-    <div class="card-header"><span>{{ s.step.name }}</span><span class="badge {% if s.step.kind == 'run_llm' %}badge--ok{% endif %}">{{ s.step.kind }}</span></div>
-    <div class="card-body">
+  <li class="{% if s.issue %}has-error{% endif %} {% if s.step.kind == 'run_llm' %}is-llm{% endif %}">
+    <div class="vflow-node"></div>
+    <div class="vflow-body">
+      <div class="vflow-head">
+        <h3>{{ s.step.name }}</h3>
+        <span class="badge">{{ "model call" if s.step.kind == 'run_llm' else "python" }}</span>
+        {% if s.issue %}<span class="badge badge--danger">{{ s.issue }}</span>{% endif %}
+        <a class="btn btn--ghost btn--sm" href="{{ base }}/plan/step/{{ s.step.name }}{% if edit %}?edit=1{% endif %}">{{ "Edit" if edit else "Open" }}</a>
+      </div>
       <p>{{ s.step.summary }}</p>
-      <p class="sig">{{ s.function.signature if s.function else "function missing" }}</p>
-      <p class="mono text-muted">{{ s.step.input_type }} → {{ s.step.output_type }}</p>
-      {% for v in s.settings %}<p><span class="mono text-muted">{{ v.path }}</span> = <span class="mono">{{ v.value_json if not v.multiline else "…" }}</span></p>{% endfor %}
-      {% if s.prompt_id %}<p><span class="mono text-muted">prompt</span> <span class="mono">prompts/{{ s.prompt_id }}.txt</span></p>{% endif %}
-      {% if s.errors %}<p><span class="badge badge--danger">{{ s.errors }} error{{ "s" if s.errors != 1 }}</span></p>{% endif %}
-      <p style="margin-top: var(--space-3)"><a class="btn btn--ghost btn--sm" href="/plan/step/{{ s.step.name }}">Open</a></p>
+      <p class="vflow-settings">
+        {% for v in s.settings %}<span><span class="text-muted">{{ v.path }}</span> = <span class="mono">{{ v.value_json if not v.multiline else "…" }}</span></span>{% endfor %}
+        {% if s.prompt_id %}<span><span class="text-muted">prompt</span> = <span class="mono">{{ s.prompt_id }}</span></span>{% endif %}
+        {% if not s.function %}<span class="badge badge--danger">function missing in plan.py</span>{% endif %}
+      </p>
     </div>
-  </div>
+  </li>
   {% endfor %}
-</div>
+</ol>
 
-<div class="grid-2" style="margin-top: var(--space-10)">
-  <div class="card">
-    <div class="card-header">Validation against the restrictions <span class="badge {% if view.errors %}badge--danger{% else %}badge--ok{% endif %}">{{ view.errors | length }} errors · {{ view.warnings | length }} warnings</span></div>
-    <div class="card-body">
-      {% if view.issues %}
-      <ul class="issues">{% for i in view.issues %}<li><span class="badge {% if i.level == 'error' %}badge--danger{% endif %}">{{ i.level }}</span> <span class="mono">{{ i.where }}</span> — {{ i.message }}</li>{% endfor %}</ul>
-      {% else %}<p class="text-muted">No issues. This is the same check CI runs before merge.</p>{% endif %}
-    </div>
+{% if not edit %}
+<form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--primary">Edit this plan</button></form>
+{% endif %}
+
+<details class="info" style="margin-top: var(--space-10)" {% if view.history %}open{% endif %}>
+  <summary>Changes · who did what</summary>
+  <div class="info-body">
+  {% if view.history %}
+  <ul class="changes">
+    {% for e in view.history[:40] %}
+    <li><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong>{% if e.kind in ['code', 'prompt'] %}<pre class="cmd">{{ e.detail }}</pre>{% else %} <span class="mono">{{ e.detail }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="text-muted">No changes recorded yet. Saves made through this UI are listed here with the party that made them.</p>{% endif %}
   </div>
-  <div class="card">
-    <div class="card-header">Files in the digest</div>
-    <div class="card-body">
-      <ul class="issues">{% for f in view.bundle.files %}<li><span class="mono">{{ f }}</span></li>{% endfor %}</ul>
-      <p class="text-muted" style="margin-top: var(--space-3)">Restrictions version {{ view.restrictions.version }}. <span class="mono">tests/</span> and <span class="mono">signatures/</span> are outside the digest.</p>
-    </div>
+</details>
+
+<details class="info">
+  <summary>What is in the version, and the box's limits</summary>
+  <div class="info-body">
+  <table class="kv">
+    <tr><th>Files</th><td class="mono">{{ view.files | join(" · ") }}</td></tr>
+    <tr><th>Outside the digest</th><td><span class="mono">tests/</span> and <span class="mono">signatures/</span></td></tr>
+    <tr><th>Pinned model</th><td class="mono">{{ view.restrictions.models[0].id }}</td></tr>
+    <tr><th>Box limits</th><td class="mono">{% for k, v in view.restrictions.limits.items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>
+    {% if view.issue %}<tr><th>Loader says</th><td><span class="badge badge--danger">{{ view.issue }}</span> {{ view.issue_where }}.</td></tr>{% endif %}
+  </table>
   </div>
-</div>
+</details>
 {% endif %}
 {% endblock %}
