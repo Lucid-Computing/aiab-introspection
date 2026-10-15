@@ -2,12 +2,14 @@
 
 Privacy-preserving inference introspection inside a confidential VM. The lab and the auditor agree on an audit plan, both sign it, and the box runs exactly that plan over signed logs and returns a small signed report.
 
+The implemented signed-plan API and verification workflow are documented in [docs/AUDIT_SERVICE.md](docs/AUDIT_SERVICE.md).
+
 The repository is split into three parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AIAB_DESIGN_SPEC.md) for the design.
 
 | Folder | Part | Owner | Changes |
 | --- | --- | --- | --- |
 | [`static/`](static/) | The box: runtime, auditor tooling, deployment, tests, and its own chat-demo front end (`static/webchat/`). Python project root. | Jonathan | With development |
-| [`plan/`](plan/) | The audit plan: code, prompts, settings, both parties' signatures. Baked into the image at build time. | Teddy | With every agreement |
+| [`plan/`](plan/) | The audit plan: code, prompts, settings, both parties' signatures. Registered as jointly signed data against a pinned executor image. | Teddy | With every agreement |
 | [`ui/`](ui/) | The agreement UI: edit, review, sign and track the plan; show attestation and runs. Never part of the image. | Teddy | Independently |
 
 Shared material lives at the root: `docs/` (specs), `.github/` (workflows), `.dockerignore` (the image build allowlist; the build context is this directory).

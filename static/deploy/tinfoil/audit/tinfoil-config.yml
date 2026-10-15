@@ -1,0 +1,65 @@
+{
+  "cvm-version": "0.14.9",
+  "cpus": 2,
+  "memory": 8192,
+  "networks": {
+    "public": {
+      "egress": "open"
+    }
+  },
+  "containers": [
+    {
+      "name": "aiab",
+      "image": "ghcr.io/lucid-computing-labs/aiab-introspection-enclave@sha256:2b28e0ca3e531af8b188105f274c4dfb878f80750fd7c9fc88d6c9a1e38e537b",
+      "command": [
+        "python",
+        "-m",
+        "aiab.audit.main"
+      ],
+      "user": "65532:65532",
+      "read_only": true,
+      "tmpfs": {
+        "/tmp": "size=256m,mode=1777,nosuid,nodev,noexec"
+      },
+      "networks": [
+        "public"
+      ],
+      "pids_limit": 256,
+      "memory": "2g",
+      "cpus": 2.0,
+      "env": [
+        {
+          "LISTEN_PORT": "8080"
+        },
+        {
+          "AIAB_AUDIT_TRUST_JSON": "{\"auditor_key\":\"W+pEfqYhX6UU5+03rL7DbRm7pqsHdiTqXina5NBhEHQ=\",\"lab_key\":\"Hsl+EjlxPEl+1LCwK5jf0wtkoXH0hEr0griYb4z0T+M=\",\"logger_key\":\"HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg=\",\"model\":{\"artifact_digest\":\"sha256:7a279c6d7739f7ded0cf859f1bf83893543a94a455e9b27e5cbcb1abe5d893a6\",\"context_tokens\":131072,\"host\":\"gpt-oss-safeguard-120b-inf12.tinfoil.containers.tinfoil.dev\",\"id\":\"gpt-oss-safeguard-120b\",\"max_output_tokens\":512,\"release_digest\":\"sha256:a7a8ffa64fed85d1a8800f3de01b37f1429abb650962dc41773f365d98369c34\",\"repo\":\"tinfoilsh/confidential-gpt-oss-safeguard-120b\",\"temperature\":0},\"runtime_digest\":\"sha256:2b28e0ca3e531af8b188105f274c4dfb878f80750fd7c9fc88d6c9a1e38e537b\"}"
+        },
+        {
+          "XDG_CACHE_HOME": "/tmp/aiab-cache"
+        },
+        {
+          "XDG_DATA_HOME": "/tmp/aiab-data"
+        }
+      ],
+      "secrets": [
+        "TINFOIL_API_KEY",
+        "AIAB_LAB_TOKEN",
+        "AIAB_AUDITOR_TOKEN",
+        "AIAB_LOGGER_TOKEN"
+      ],
+      "restart": "on-failure"
+    }
+  ],
+  "shim": {
+    "upstream-container": "aiab",
+    "upstream-port": 8080,
+    "paths": [
+      "/aiab/health",
+      "/aiab/manifest",
+      "/aiab/pubkey",
+      "/aiab/plans",
+      "/aiab/runs",
+      "/aiab/runs/*"
+    ]
+  }
+}

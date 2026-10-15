@@ -104,3 +104,20 @@ BuildKit's timestamp normalization and OCI exporter behavior follow the official
 and [OCI exporter reference](https://docs.docker.com/build/exporters/oci-docker/).
 The pinned BuildKit image digest was checked against the
 [Docker Hub tag](https://hub.docker.com/v2/repositories/moby/buildkit/tags/v0.26.2).
+
+## Signed audit executor (2026-10-15)
+
+Source commit `c687463` was built with the same pinned toolchain above. Two clean
+local OCI exports reproduced the CI-published digest exactly:
+`sha256:2b28e0ca3e531af8b188105f274c4dfb878f80750fd7c9fc88d6c9a1e38e537b`.
+Each passed inspection of 10,104 entries with no application bytecode/caches.
+CI: https://github.com/lucid-computing-labs/aiab-introspection/actions/runs/38702007153
+Local transcript: `/tmp/aiab-audit-repro-final.log`.
+
+File modes affect COPY layer digests: this workstation's default modes were 0664
+for files and 0775 for directories, whereas CI checks out files as 0644 and
+creates directories as 0755. Initial clean local builds agreed with each other
+but differed from CI. Matching source modes (0644 for the included Python and
+Markdown files, 0755 for their directories) reproduced CI. Independent builders
+must use that checkout mode convention; timestamps alone do not normalize file
+permissions. No runtime source change was needed.

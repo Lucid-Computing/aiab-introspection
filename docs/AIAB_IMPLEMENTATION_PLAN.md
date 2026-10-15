@@ -2,7 +2,13 @@
 
 Date: October 15, 2026
 
-Status: implementation specification. Completion requires a working deployment on the Tinfoil confidential VM with real logger verification, real classification, jointly signed plans, and independently verified reports. Local mocks are development aids and do not satisfy deployment acceptance.
+Status: original implementation specification; see the implementation amendments below and [implemented interface](AUDIT_SERVICE.md). Completion requires a working deployment on the Tinfoil confidential VM with real logger verification, real classification, jointly signed plans, and independently verified reports. Local mocks are development aids and do not satisfy deployment acceptance.
+
+## Implementation amendments (October 15, 2026)
+
+Later user instructions explicitly authorize a mock logger until the real logger is available. Consequently, real-logger acceptance in the original plan below is deferred: this demo verifies genuinely signed synthetic text exports and does not claim native WORM/checkpoint completeness. The deployed model and enclave remain real, without fallback stubs.
+
+The implemented route prefix is `/aiab/`; modules live under `static/aiab/audit/`, and the signing/verifying CLI is `static/auditor/audit.py`. Plans are registered as signed data after the executor image is built, avoiding a circular image/plan hash. A CPU Tinfoil enclave calls a separately attested, release-and-weight-pinned Tinfoil inference enclave. Supported report schemas are closed objects, booleans, bounded integers and string enums. See [AUDIT_SERVICE.md](AUDIT_SERVICE.md) for exact interfaces, trust assumptions, setup and limitations. The remainder records the original proposal, not a claim that native logger integration is complete.
 
 ## Objective and context
 

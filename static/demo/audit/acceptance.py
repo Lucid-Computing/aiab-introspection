@@ -116,7 +116,19 @@ async def run(args):
         }
         for name in ("benign", "flagged", "distributed")
     }
-    evaluation = {"status": "pending-live-evaluation", "dataset": digest(dataset)}
+    evaluation = (
+        json.loads(args.evaluation.read_text())["evaluation"]
+        if args.evaluation
+        else {"status": "pending-live-evaluation", "dataset": digest(dataset)}
+    )
+    if evaluation["dataset"] != digest(dataset):
+        raise RuntimeError("Evaluation dataset differs")
+    if args.evaluation and (
+        evaluation["model"] != settings["model"]
+        or evaluation["program"] != PROGRAM
+        or evaluation["threshold"] != 0.7
+    ):
+        raise RuntimeError("Evaluation configuration differs")
     plan = example_plan(settings, dataset, evaluation)
     client = AuditClient(args.host, args.repo, args.release_digest, args.policy_digest, token)
     evidence = {
@@ -125,6 +137,8 @@ async def run(args):
         "release_digest": args.release_digest,
         "policy_digest": args.policy_digest,
         "logger": "synthetic demo source with real Ed25519 signatures and hash chain",
+        "signed_plan": signed(plan, keys),
+        "dataset": dataset,
         "checks": {},
         "reports": [],
     }
@@ -134,6 +148,16 @@ async def run(args):
         status, registered = await client.request("POST", "/aiab/plans", signed(plan, keys))
         assert status in (200, 201)
         evidence["checks"]["jointly_signed_plan"] = True
+        unauthorized = await client.connection.request("POST", "/aiab/runs", b"{}", "wrong-token")
+        assert unauthorized[0] == 401
+        evidence["checks"]["unauthorized_rejected"] = True
+        forbidden = clone(plan)
+        forbidden["program"] = (
+            'def run(text, model, policy):\n    import os\n    return {"flagged": False}\n'
+        )
+        status, _ = await client.request("POST", "/aiab/plans", signed(forbidden, keys))
+        assert status == 400
+        evidence["checks"]["unsafe_program_rejected"] = True
         tampered = signed(clone(plan), keys)
         tampered["plan"]["classification"]["threshold"] = 0.99
         status, _ = await client.request("POST", "/aiab/plans", tampered)
@@ -156,6 +180,22 @@ async def run(args):
             evidence["reports"].append({"fixture": name, "envelope": envelope})
             assert envelope["report"]["status"] == "completed", envelope["report"].get("error")
             evidence["checks"][name] = envelope["report"]["result"]["flagged"] == example["flagged"]
+        counts = {"tp": 0, "tn": 0, "fp": 0, "fn": 0}
+        for entry in evidence["reports"]:
+            expected = dataset[entry["fixture"]]["flagged"]
+            actual = entry["envelope"]["report"]["result"]["flagged"]
+            counts[("t" if actual == expected else "f") + ("p" if actual else "n")] += 1
+        evidence["evaluation"] = {
+            "dataset": digest(dataset),
+            "model": settings["model"],
+            "program": PROGRAM,
+            "threshold": 0.7,
+            "counts": counts,
+            "errors": 0,
+            "fpr": {"numerator": counts["fp"], "denominator": counts["fp"] + counts["tn"]},
+            "fnr": {"numerator": counts["fn"], "denominator": counts["fn"] + counts["tp"]},
+            "qualification": "Three synthetic smoke cases; not a robustness estimate",
+        }
         evidence["checks"]["tampered_logs_rejected"] = True
         evidence["checks"]["idempotent_submission"] = True
         invalid = clone(plan)
@@ -177,6 +217,33 @@ async def run(args):
         assert result["report"].get("error") == "invalid_output"
         evidence["checks"]["schema_invalid_output_rejected"] = True
         evidence["reports"].append({"fixture": "invalid-output", "envelope": result})
+        variant = clone(plan)
+        variant["plan_id"] = "enum-output-demo"
+        variant["program"] = PROGRAM.replace(
+            '{"flagged": result.score >= policy.threshold}',
+            '{"decision": "flag" if result.score >= policy.threshold else "clear"}',
+        )
+        variant["output_schema"] = {
+            "type": "object",
+            "properties": {"decision": {"type": "string", "enum": ["flag", "clear"]}},
+            "required": ["decision"],
+            "additionalProperties": False,
+        }
+        status, _ = await client.request("POST", "/aiab/plans", signed(variant, keys))
+        assert status in (200, 201)
+        item = submission(
+            variant, dataset["benign"]["text"], keys["logger"], args.run_prefix + "enum"
+        )
+        status, admitted = await client.request("POST", "/aiab/runs", item)
+        assert status == 202
+        commitment = SignedTextVerifier().verify(
+            item["text"], item["logger_evidence"], variant["input_scope"]
+        )
+        result = await client.poll(admitted["run_id"], variant, commitment)
+        assert result["report"].get("result") == {"decision": "clear"}
+        evidence["checks"]["negotiated_report_schema"] = True
+        evidence["reports"].append({"fixture": "enum-output", "envelope": result})
+        evidence["variant_plans"] = [signed(invalid, keys), signed(variant, keys)]
         evidence["status"] = (
             "passed" if all(evidence["checks"].values()) else "classification_failure"
         )
@@ -190,6 +257,9 @@ def main():
     import asyncio
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--evaluation", type=Path, help="Prior acceptance evidence to commit before signing"
+    )
     for name in ("host", "repo", "release-digest", "policy-digest", "run-prefix"):
         parser.add_argument("--" + name, required=True)
     for name in ("trust", "key-directory", "output"):

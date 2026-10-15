@@ -225,3 +225,73 @@ async def test_invalid_output_is_signed_failure_without_raw_data(setup):
     assert envelope["report"]["error"] == "invalid_output"
     assert b"sentinel-private" not in run.envelope
     await runtime.close()
+
+
+@pytest.mark.parametrize("failure", ["timeout", "unavailable", "malformed"])
+async def test_execution_failures_are_explicit_and_signed(setup, failure):
+    trust, plan, signed = setup
+
+    class FailingModel:
+        async def classify(self, text, policy, model):
+            if failure == "timeout":
+                await asyncio.sleep(10)
+            if failure == "unavailable":
+                raise AuditError("model_unavailable")
+            return float("nan")
+
+    runtime = AuditRuntime(trust, EvidenceDouble(), FailingModel())
+    accepted, _ = runtime.registry.register(signed(plan))
+    item = {
+        "submission_id": "failure",
+        "plan_digest": accepted.digest,
+        "text": "sentinel-private",
+        "logger_evidence": {"test_proof": "accepted"},
+    }
+    run = runtime.submit(item, "lab")
+    await run.task
+    report = decode(run.envelope)
+    assert report["report"]["status"] == "failed"
+    assert "result" not in report["report"]
+    verify_signature(
+        runtime.identity["public_key"], report["signature"], "report", report["report"]
+    )
+    assert b"sentinel-private" not in run.envelope
+    if failure == "unavailable":
+        assert not runtime.healthy
+        item["submission_id"] = "new"
+        with pytest.raises(AuditError, match="model_unavailable"):
+            runtime.submit(item, "lab")
+    await runtime.close()
+
+
+async def test_capacity_rejects_before_work_and_restart_changes_identity(setup):
+    trust, plan, signed = setup
+    gate = asyncio.Event()
+
+    class WaitingModel:
+        async def classify(self, text, policy, model):
+            await gate.wait()
+            return 0.9
+
+    runtime = AuditRuntime(trust, EvidenceDouble(), WaitingModel())
+    accepted, _ = runtime.registry.register(signed(plan))
+    item = {
+        "submission_id": "one",
+        "plan_digest": accepted.digest,
+        "text": "private",
+        "logger_evidence": {"test_proof": "accepted"},
+    }
+    for index in range(4):
+        item["submission_id"] = str(index)
+        runtime.submit(item, "lab")
+    item["submission_id"] = "excess"
+    with pytest.raises(AuditError, match="capacity_exceeded"):
+        runtime.submit(item, "lab")
+    assert len(runtime.runs) == 4
+    gate.set()
+    await asyncio.gather(*(run.task for run in runtime.runs.values()))
+    restarted = AuditRuntime(trust, EvidenceDouble(), ModelDouble())
+    assert restarted.identity != runtime.identity
+    assert not restarted.runs
+    await runtime.close()
+    await restarted.close()

@@ -1,0 +1,10 @@
+{
+  "release_digest": {
+    "rejected": true,
+    "code": "model_unavailable"
+  },
+  "policy_digest": {
+    "rejected": true,
+    "code": "policy_mismatch"
+  }
+}

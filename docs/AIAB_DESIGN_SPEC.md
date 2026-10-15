@@ -1,5 +1,7 @@
 # AIAB (Auditor-in-a-Box): Design Spec
 
+> Implemented API: [AUDIT_SERVICE.md](AUDIT_SERVICE.md). Signed plans are registered after image publication; the current demo uses an explicitly authorized synthetic logger with real signatures.
+
 > Status: DRAFT v0.5 · Audience: internal team
 > Owners: Jonathan Ng (static part) · Teddy Chang (dynamic part, UI) · Reviewer: Caleb Parikh
 > Requirement IDs (F-, S-, C-, NF-, A-, OQ-) refer to *Caleb's proposal for the GDM demo* (13 Oct).
