@@ -1,5 +1,22 @@
 # AIAB (Auditor-in-a-Box): Design Spec
 
+> Current implementation target, selected by the user after merging master. v0.5 is
+> the first milestone; the [full requirements](REQUIREMENTS_COMPLIANCE.md) remain
+> required afterward. See [BAKED_PLAN_OPERATIONS.md](BAKED_PLAN_OPERATIONS.md) for
+> implemented contracts, commands, evidence and remaining dependencies.
+>
+> Implementation clarifications: folder bundles use `aiab-baked-plan/v1`, and
+> expanded reports use `aiab-report/v3`, to avoid reusing deployed incompatible
+> schemas. CPU hardware is the existing AMD SEV-SNP Tinfoil CVM. Signed exact-byte
+> synthetic record exports remain the authorized logger substitute; native logger
+> acceptance is incomplete. Offline verification uses an independently pinned
+> live identity anchor, not a portable hardware endorsement of the report key.
+> Tokenizer preflight checks all assembled queries before inference, asynchronously
+> after admission; overflow is a signed failure. Idempotency is per authenticated
+> role and boot.
+> No persistence is not proof of memory erasure. The current build repository is
+> private, so public-source compliance remains outstanding.
+
 > Status: DRAFT v0.5 · Audience: internal team
 > Owners: Jonathan Ng (static part) · Teddy Chang (dynamic part, UI) · Reviewer: Caleb Parikh
 > Requirement IDs (F-, S-, C-, NF-, A-, OQ-) refer to *Caleb's proposal for the GDM demo* (13 Oct).
@@ -532,4 +549,3 @@ Caleb's ten demo steps against section 5:
 | 8 | Swapped binary turns attestation red; agent C's tampering surfaces | Attestation red yes; tampering detection out (Q2, Q3) |
 | 9 | Appeal clears a wrong flag | Out |
 | 10 | Signed wipe, attested destruction event | Out |
-

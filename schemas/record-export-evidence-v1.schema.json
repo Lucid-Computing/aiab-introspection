@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "statement": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "aiab-record-export/v1"
+        },
+        "serialization": {
+          "const": "aiab-records/v1"
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "logger_key_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "window_start": {
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 32
+            },
+            "window_end": {
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 32
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "minItems": 1,
+              "maxItems": 100,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "logger_key_id",
+            "window_start",
+            "window_end",
+            "agents"
+          ],
+          "additionalProperties": false
+        },
+        "records_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "previous_head": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "first_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "schema",
+        "serialization",
+        "scope",
+        "records_digest",
+        "record_count",
+        "previous_head",
+        "head",
+        "first_sequence"
+      ],
+      "additionalProperties": false
+    },
+    "signature": {
+      "type": "string",
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "statement",
+    "signature"
+  ],
+  "additionalProperties": false
+}

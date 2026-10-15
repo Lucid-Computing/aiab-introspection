@@ -1,0 +1,7 @@
+{
+  "verified": true,
+  "network_disabled": true,
+  "report_boot": "d8886edeaeaf4751860e60641dcca106",
+  "new_boot_observed": "a4e590dca86e45cbb40da46937cbde39",
+  "trust_basis": "independently-pinned-live-verified-identity"
+}

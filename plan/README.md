@@ -1,26 +1,24 @@
-# plan/
+# The baked audit agreement
 
-The dynamic part of AIAB: the audit logic both parties negotiate and sign. See section 3 of [docs/AIAB_DESIGN_SPEC.md](../docs/AIAB_DESIGN_SPEC.md).
+This folder is the dynamic part of [v0.5](../docs/AIAB_DESIGN_SPEC.md). The runtime
+imports the signed `plan.py` in an isolated worker and calls `filter_logs`,
+`build_query`, `classify`, `metric` and `emit_report`; `appeal` is not called in the
+demo. The runtime, not the plan, owns inference credentials, query limits, output
+validation and report signing.
 
-Status: skeleton. Every file exists in its final shape, with the bio-research demo defaults; values marked `TODO` are placeholders to be agreed.
+The measured bundle consists of `__init__.py`, `plan.py`, `plan.json` and every
+`prompts/*.txt` file. `signatures/lab.sig` and `auditor.sig` approve that exact
+byte-and-path digest against static public keys. Tests and evaluation artifacts
+are excluded from the executable digest; their hashes are committed in plan.json.
+Docker bakes only executable inputs and signatures, not fixtures or private keys.
 
-```
-plan/
-├── __init__.py
-├── plan.py                 # the six functions: filter_logs, build_query, classify, metric, emit_report, appeal
-├── plan.json               # agreed settings: scope, filter, model, classification, limits, output_schema
-├── prompts/
-│   └── bio_research_v1.txt # the classifier definition, pinned verbatim, referenced by prompt_id
-├── tests/
-│   ├── transcripts/*.jsonl # synthetic LogRecord files, one run per file; not part of the digest
-│   └── expected.json       # expected verdict per file (and per session, for a later band answer)
-└── signatures/             # lab.sig and auditor.sig, produced offline; not part of the digest
-```
+`plan.json` now uses **aiab-baked-plan/v1**. It is not a runtime registration request.
+A changed agreement needs two signatures, a reproducible image build and an
+attested redeployment. [Operations and exact commands](../docs/BAKED_PLAN_OPERATIONS.md).
 
-What the plan may do: `plan.py` imports only `dataclasses`, `typing` and `aiab.plan_api` (types fixed by the static part), has no network, file, clock or randomness access, and calls the model only through `run_llm`.
+`tests/evaluation.json` records the actual candidate deployment's synthetic
+FP/FN evaluation. Demo signatures use locally controlled role keys. Both production
+parties must independently review the source, metrics, prompts and static trust.
 
-How a plan becomes the running plan: compute the plan digest, each party signs it offline, the PR carries the folder and both signatures, CI verifies the signatures and checks `plan.json` against the box's restrictions and merges, the build copies this folder into the image, the box re-verifies the signatures at boot. A plan is never edited in place; a new agreement is a new digest, two new signatures and a new image. This folder is copied into the image by `static/deploy/Dockerfile` and is therefore covered by the attestation; it is never mounted at runtime.
-
-For the UI: the plan editor's blocks map to `plan.json` keys (`filter`, `window`, `model`, `classification`, `limits`, `output_schema`) and to the function bodies in `plan.py`; the dry-run screen reads the evaluation record produced from `tests/`; the sign screen collects the two files in `signatures/`.
-
-Not yet available: the dry runner (`static/aiab/dryrun.py`), the digest and sign commands, and the runtime that executes the plan inside the box.
+`demo-signed-plan.json` is preserved historical evidence for the older registered
+JSON API; it is neither included in the image nor interpreted by this loader.

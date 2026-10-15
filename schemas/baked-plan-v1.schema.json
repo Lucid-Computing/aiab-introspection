@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "aiab-baked-plan/v1"
+    },
+    "plan_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "restrictions_version": {
+      "const": "0.1.0"
+    },
+    "parties": {
+      "type": "object",
+      "properties": {
+        "lab": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "auditor": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        }
+      },
+      "required": [
+        "lab",
+        "auditor"
+      ],
+      "additionalProperties": false
+    },
+    "input_scope": {
+      "type": "object",
+      "properties": {
+        "logger_key_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "window_start": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 32
+        },
+        "window_end": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 32
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "logger_key_id",
+        "window_start",
+        "window_end",
+        "agents"
+      ],
+      "additionalProperties": false
+    },
+    "filter": {
+      "type": "object",
+      "properties": {
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "maxItems": 32
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "request",
+              "response",
+              "tool_call",
+              "tool_result"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "keywords",
+        "kinds"
+      ],
+      "additionalProperties": false
+    },
+    "window": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "artifact_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "temperature": {
+          "const": 0
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 2048
+        }
+      },
+      "required": [
+        "id",
+        "artifact_digest",
+        "temperature",
+        "max_output_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "classification": {
+      "type": "object",
+      "properties": {
+        "problem": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "positive_examples": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "negative_examples": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "prompt_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evaluation": {
+          "type": "object",
+          "properties": {
+            "test_set_digest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "results_digest": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "test_set_digest",
+            "results_digest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "problem",
+        "positive_examples",
+        "negative_examples",
+        "prompt_id",
+        "threshold",
+        "evaluation"
+      ],
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_input_utf8_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "max_records_per_run": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "max_logs_per_query": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "max_model_calls_per_run": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "max_runtime_seconds_per_run": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "max_result_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        }
+      },
+      "required": [
+        "max_input_utf8_bytes",
+        "max_records_per_run",
+        "max_logs_per_query",
+        "max_model_calls_per_run",
+        "max_runtime_seconds_per_run",
+        "max_result_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "plan_id",
+    "restrictions_version",
+    "parties",
+    "input_scope",
+    "filter",
+    "window",
+    "model",
+    "classification",
+    "limits",
+    "output_schema"
+  ],
+  "additionalProperties": false
+}

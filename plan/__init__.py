@@ -1,1 +1,1 @@
-"""The audit plan: the dynamic part of AIAB. See docs/AIAB_DESIGN_SPEC.md, section 3."""
+"""The dynamic, jointly signed audit plan."""

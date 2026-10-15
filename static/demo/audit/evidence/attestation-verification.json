@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-10-15T08:05:35Z",
+  "enclave": "aiab-signed-audit.lucid-computing.containers.tinfoil.dev",
+  "repo": "lucid-computing-labs/aiab-signed-audit-enclave",
+  "digest": "45604e2b43ea985620ee90b95f557a441c5a4770757424dd6c63de36c4476484",
+  "measurements": {
+    "sigstore": {
+      "type": "https://tinfoil.sh/predicate/snp-tdx-multiplatform/v1",
+      "registers": [
+        "696989fe59d50c6bfdbc0c14f55dbd712ebfbc3d744801e736419a2586a06a6202345d8dbf4e8443bc894afa23865c16",
+        "1d24ed393a65d7904860874e517c44242dd984ea9c8094ab346f70e996f79a87c3048cea0af5d7a2641d2a93f5b8f613",
+        "c967601c22ac4ca3a629d1235e956cf3430bd41912f52526ffb7f25c0e87890dd54cef0449138dd9689df8dd3b6bd4c7"
+      ]
+    },
+    "enclave": {
+      "type": "https://tinfoil.sh/predicate/sev-snp-guest/v2",
+      "registers": [
+        "696989fe59d50c6bfdbc0c14f55dbd712ebfbc3d744801e736419a2586a06a6202345d8dbf4e8443bc894afa23865c16"
+      ]
+    }
+  },
+  "keys": {
+    "enclave": "091023b6318ffb025dd860ca38482b991c0558e961b1adf037b09dd068c11ce4",
+    "connection": "091023b6318ffb025dd860ca38482b991c0558e961b1adf037b09dd068c11ce4"
+  },
+  "status": "ok"
+}

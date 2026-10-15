@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "aiab-report/v3"
+        },
+        "aiab_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "image_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "plan_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "policy_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "input_commitment": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "egress_max_bits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "status": {
+          "const": "completed"
+        },
+        "result": {}
+      },
+      "required": [
+        "schema",
+        "aiab_id",
+        "boot_id",
+        "run_id",
+        "image_digest",
+        "plan_digest",
+        "policy_digest",
+        "input_commitment",
+        "egress_max_bits",
+        "status",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "aiab-report/v3"
+        },
+        "aiab_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "image_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "plan_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "policy_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "input_commitment": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "egress_max_bits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32768
+        },
+        "status": {
+          "const": "failed"
+        },
+        "error": {
+          "enum": [
+            "execution_failed",
+            "model_unavailable",
+            "invalid_output",
+            "input_too_large"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "aiab_id",
+        "boot_id",
+        "run_id",
+        "image_digest",
+        "plan_digest",
+        "policy_digest",
+        "input_commitment",
+        "egress_max_bits",
+        "status",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

@@ -8,6 +8,9 @@ static/**
 !static/aiab/
 static/aiab/**
 !static/aiab/*.py
+!static/aiab/audit/
+static/aiab/audit/**
+!static/aiab/audit/*.py
 !static/classifiers/
 static/classifiers/**
 !static/classifiers/*.md
@@ -15,6 +18,22 @@ static/classifiers/**
 static/deploy/**
 !static/deploy/Dockerfile
 !.dockerignore
+!static/aiab/baked/
+static/aiab/baked/**
+!static/aiab/baked/*.py
+!static/aiab/baked/trust.json
+!plan/
+plan/**
+!plan/__init__.py
+!plan/plan.py
+!plan/plan.json
+!plan/prompts/
+plan/prompts/**
+!plan/prompts/*.txt
+!plan/signatures/
+plan/signatures/**
+!plan/signatures/lab.sig
+!plan/signatures/auditor.sig
 # Keep these exclusions last: reincluding a directory also includes descendants.
 **/__pycache__
 **/*.pyc

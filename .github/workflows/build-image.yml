@@ -1,12 +1,18 @@
 # Manual publication only; keep this workflow in the PRIVATE source repository.
 name: Build reviewed enclave image
 on:
+  push:
+    branches: [master]
+    paths: ['plan/**', 'static/**', '.dockerignore', '.github/workflows/build-image.yml']
   workflow_dispatch:
     inputs:
       image:
         description: 'Reviewed lowercase ghcr.io/owner/image name'
         required: true
         type: string
+concurrency:
+  group: audit-image-${{ github.ref }}
+  cancel-in-progress: false
 permissions:
   contents: read
   packages: write
@@ -17,9 +23,17 @@ jobs:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.6"
+      - name: Validate source
+        working-directory: static
+        run: |
+          make check
+          uv run --locked python -m aiab.baked.check ../plan > ../plan-build.json
       - name: Validate publication destination
         env:
-          IMAGE: ${{ inputs.image }}
+          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing-labs/aiab-introspection-enclave' }}
         run: |
           [[ "$IMAGE" =~ ^ghcr.io/[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$ ]]
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
@@ -32,6 +46,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        id: reproduce
+        with:
+          context: .
+          file: static/deploy/Dockerfile
+          platforms: linux/amd64
+          no-cache: true
+          provenance: false
+          sbom: false
+          build-args: SOURCE_DATE_EPOCH=0
+          outputs: type=oci,dest=/tmp/audit-reproduce.tar,rewrite-timestamp=true,compression=gzip,compression-level=6,force-compression=true
+      - name: Inspect reproduced image
+        run: python3 static/deploy/inspect_oci.py /tmp/audit-reproduce.tar
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         id: build
         with:
           context: .
@@ -41,9 +68,30 @@ jobs:
           provenance: false
           sbom: false
           build-args: SOURCE_DATE_EPOCH=0
-          outputs: type=image,name=${{ inputs.image }}:${{ github.sha }},push=true,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=6,force-compression=true
+          outputs: type=image,name=${{ inputs.image || 'ghcr.io/lucid-computing-labs/aiab-introspection-enclave' }}:${{ github.sha }},push=true,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=6,force-compression=true
       - name: Record the registry digest
         env:
-          IMAGE: ${{ inputs.image }}
+          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing-labs/aiab-introspection-enclave' }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: printf '%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+      - name: Require reproducibility and write release evidence
+        env:
+          FIRST: ${{ steps.reproduce.outputs.digest }}
+          SECOND: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing-labs/aiab-introspection-enclave' }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          assert os.environ['FIRST'] == os.environ['SECOND'], 'Image reproduction mismatch'
+          with open('audit-build.json', 'w') as f:
+              json.dump({'schema':'aiab-build/v1', 'source_commit':os.environ['GITHUB_SHA'],
+                         'image':os.environ['IMAGE'], 'digest':os.environ['SECOND'],
+                         'reproduced_digest':os.environ['FIRST'],
+                         'workflow_run_id':os.environ['GITHUB_RUN_ID'],
+                         'plan_digest':json.load(open('plan-build.json'))['plan_digest']}, f)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: audit-build
+          path: audit-build.json
+          if-no-files-found: error

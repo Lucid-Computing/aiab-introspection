@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "submission_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "plan_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "input_scope": {
+      "type": "object",
+      "properties": {
+        "logger_key_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "window_start": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 32
+        },
+        "window_end": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 32
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "logger_key_id",
+        "window_start",
+        "window_end",
+        "agents"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "stream": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "batch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "agent_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 32
+          },
+          "kind": {
+            "enum": [
+              "request",
+              "response",
+              "tool_call",
+              "tool_result"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 1000000
+          }
+        },
+        "required": [
+          "stream",
+          "batch",
+          "offset",
+          "agent_id",
+          "session_id",
+          "ts",
+          "kind",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 2000
+    },
+    "logger_evidence": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "submission_id",
+    "plan_digest",
+    "input_scope",
+    "records",
+    "logger_evidence"
+  ],
+  "additionalProperties": false
+}

@@ -25,6 +25,8 @@ WORKDIR /app
 COPY --from=dependencies /app/.venv /app/.venv
 COPY static/aiab/ /app/aiab/
 COPY static/classifiers/ /app/classifiers/
+COPY plan/ /app/plan/
+RUN python -B -m aiab.baked.check /app/plan
 USER 65532:65532
 EXPOSE 8443 8080
 CMD ["python", "-m", "aiab.main"]

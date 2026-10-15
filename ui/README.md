@@ -22,9 +22,9 @@ To try the signing flow: on the Sign screen copy the `sign` command, run it in a
 
 | File | What it is | Lines |
 | --- | --- | --- |
-| [`../static/aiab/plan_api.py`](../static/aiab/plan_api.py) | The contract: the types a plan uses, the pipeline (step order, kinds, settings), and `run_llm`. | ~130 |
-| [`../static/aiab/plan_bundle.py`](../static/aiab/plan_bundle.py) | Plan digest, validation against `restrictions.json`, party keys, Ed25519 sign and verify, and the `python -m aiab.plan_bundle` commands. Used by the box, CI and this UI. | ~400 |
-| [`../static/aiab/dryrun.py`](../static/aiab/dryrun.py) | Runs a plan over `plan/tests/` in the spec's call order with the mock classifier; prints FP/FN; `--record` writes the evaluation into the plan. | ~200 |
+| [`../static/aiab/plan_api.py`](../static/aiab/plan_api.py) | The contract: the types a plan uses and `run_llm`. The pipeline table the UI draws (`PIPELINE`) is not on master; define it inside `ui/` or agree it with Jon. | ~90 |
+| `aiab.baked.bundle`, `auditor.baked` (master) | Plan digest (`AIAB/folder/v1`), restrictions, Ed25519 sign and verify against `static/aiab/baked/trust.json`. **The UI still imports the older `aiab.plan_bundle`; re-pointing is the next task.** | |
+| [`../static/aiab/dryrun.py`](../static/aiab/dryrun.py) | Jon's dry runner: `python -m aiab.dryrun ../plan --mock --output FILE`; the evaluation is committed with `auditor.baked commit-evaluation`. The UI's `--record` call must change accordingly. | |
 | [`../plan/`](../plan/) | The sample agreement: `plan.py`, `plan.json`, one prompt, three test transcripts. | |
 | [`server/config.py`](server/config.py) | Environment variables → settings. | ~60 |
 | [`server/auth.py`](server/auth.py) | Local accounts with hashed passwords, signed session cookie, `python -m server.auth add`. | ~170 |
@@ -45,3 +45,23 @@ Does not yet: GitHub (branches, pull requests, comments, CI, auto-merge, tags), 
 The server is one container (see [`Dockerfile`](Dockerfile), built from the repository root) with the checkout's `plan/` mounted at `/data/plan` and the accounts file at `/data/accounts.json`. On the existing demo host it is one more Caddy route and compose service next to the webchat. On the Lucid tailnet, `tailscale serve` in front of port 8090 gives HTTPS without any DNS work.
 
 Environment: `AIAB_PLAN_DIR` (default `../plan`), `AIAB_TRUSTED_PARTIES` (default: the placeholder file in `static/aiab/`), `AIAB_BOX_URL` (optional), `UI_ACCOUNTS_FILE` (default `ui/accounts.json`), `UI_SESSION_SECRET` (random per start if unset), `UI_DRY_RUN_TIMEOUT` (seconds, default 120). No private signing key, deploy credential or box admin credential is ever configured here.
+
+## Integration contract with the box (from master, Jon)
+
+The UI owns drafting, review, preview, offline signature collection and run/report
+presentation. It remains outside the enclave image. The active target is section 4
+of [v0.5](../docs/AIAB_DESIGN_SPEC.md); see [operations](../docs/BAKED_PLAN_OPERATIONS.md)
+for the actual schemas and commands.
+
+The plan editor changes `plan/plan.json`, `plan/plan.py` and prompt files. Both
+parties sign the exact folder digest offline using `python -m auditor.baked`;
+private keys never go to the UI, CI or box. The PR contains the bundle and both
+signature files. The static verifier checks signatures and restrictions, then the
+release builds the bundle into the image. Do not call `POST /aiab/plans`: runtime
+registration is disabled in the baked service.
+
+Read `GET /aiab/manifest` for restrictions, plan/image commitments, model binding
+and output capacity; verify these through the attested client against the approved
+release. Submission is `POST /aiab/runs` with complete records, scope and authenticated
+source evidence. Poll `GET /aiab/runs/{run_id}/report` and verify the v3 signed
+envelope. A display of a server-supplied hash alone is not attestation verification.

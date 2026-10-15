@@ -1,0 +1,115 @@
+{
+  "cases": [
+    {
+      "case_digest": "sha256:a1d12328e617b7396bbaeb85c3761fc5b259d11b01f5c9825b740774153d39bd",
+      "elapsed_seconds": 2.053,
+      "envelope": {
+        "report": {
+          "boot_id": "d8886edeaeaf4751860e60641dcca106",
+          "input_commitment": "sha256:9409110639672569d1dadaac66a8f1774755b6e3fa0bce9696b27a7bbbcb680f",
+          "plan_digest": "sha256:a127baf950020485256d617e7bdbe10cbe96c962088ea01eebace352a006f978",
+          "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
+          "result": {
+            "flagged": false
+          },
+          "run_id": "8e6bb8bb567b4c698c6b097aa5ce2600",
+          "schema": "aiab-report/v2",
+          "status": "completed"
+        },
+        "signature": "LusXSM9d+tfCxxlv2zVmxH2bzMcGYIRoDmH4EI34YSf11QI0J9d+Gpuc0qXkcYj9gE7Jyd4JnST/ZIsWU6xfAg=="
+      },
+      "expected": {
+        "flagged": false
+      },
+      "input_commitment": "sha256:9409110639672569d1dadaac66a8f1774755b6e3fa0bce9696b27a7bbbcb680f",
+      "outcome": "tn"
+    },
+    {
+      "case_digest": "sha256:5684a20ea52d93271123f97ede0f57625a9983d9c69daf3f239a6bb658d554ee",
+      "elapsed_seconds": 2.054,
+      "envelope": {
+        "report": {
+          "boot_id": "d8886edeaeaf4751860e60641dcca106",
+          "input_commitment": "sha256:a47fa2a8592da97a39c133dae6b4a6056948bdc4a1aebf3dcd82b953476c5058",
+          "plan_digest": "sha256:a127baf950020485256d617e7bdbe10cbe96c962088ea01eebace352a006f978",
+          "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
+          "result": {
+            "flagged": true
+          },
+          "run_id": "c3830a8bf16f4dac98a48cce06ed3022",
+          "schema": "aiab-report/v2",
+          "status": "completed"
+        },
+        "signature": "0GmoVAZTaVrsLNfVC0WSZ60LBXGhwEm4M8Q5k7ryyNeO18YpG3s/gmvAr5EvVQezIyqF3+/GcyWWpOXClDhrCg=="
+      },
+      "expected": {
+        "flagged": true
+      },
+      "input_commitment": "sha256:a47fa2a8592da97a39c133dae6b4a6056948bdc4a1aebf3dcd82b953476c5058",
+      "outcome": "tp"
+    },
+    {
+      "case_digest": "sha256:ac4ace8e587241b1c8647e778e98d5babd07d4774029ad69319f28a330e9019b",
+      "elapsed_seconds": 2.059,
+      "envelope": {
+        "report": {
+          "boot_id": "d8886edeaeaf4751860e60641dcca106",
+          "input_commitment": "sha256:d4df6bbdea3d5befc5ea641d0ef101a55319488bd23818afd2926c2a4a2537bb",
+          "plan_digest": "sha256:a127baf950020485256d617e7bdbe10cbe96c962088ea01eebace352a006f978",
+          "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
+          "result": {
+            "flagged": true
+          },
+          "run_id": "55b76c2d190f453a97ee03b2fe7d9467",
+          "schema": "aiab-report/v2",
+          "status": "completed"
+        },
+        "signature": "sxUoFuexJv1K/o13WY6EEx+k8blnj3uyDh4V4DdIYIy6BsUWvhQLniW/CWBfTUPIXs+33W7xBe0jvH73WYO5AA=="
+      },
+      "expected": {
+        "flagged": true
+      },
+      "input_commitment": "sha256:d4df6bbdea3d5befc5ea641d0ef101a55319488bd23818afd2926c2a4a2537bb",
+      "outcome": "tp"
+    }
+  ],
+  "counts": {
+    "errors": 0,
+    "fn": 0,
+    "fp": 0,
+    "tn": 1,
+    "tp": 2
+  },
+  "dataset_digest": "sha256:8379f26c08ae36d7eb3a0f92d317c131e09215fb7402c96078e872a4ccf49557",
+  "decision_digest": "sha256:aa3c63b0b4dd934e85526505028010e8ef084fdd27cd775897061f2fd4518532",
+  "error_rate": {
+    "denominator": 3,
+    "numerator": 0
+  },
+  "fnr": {
+    "denominator": 2,
+    "numerator": 0
+  },
+  "fpr": {
+    "denominator": 1,
+    "numerator": 0
+  },
+  "identity": {
+    "boot_id": "d8886edeaeaf4751860e60641dcca106",
+    "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
+    "public_key": "UvoK+Veum5ub+8WXxPBeH1djQfkxTq5ZwDgOzdunXVE="
+  },
+  "logger": "synthetic signed exporter",
+  "negative": {
+    "flagged": false
+  },
+  "note": "FPR/FNR exclude errors; zero denominator means undefined",
+  "plan_digest": "sha256:a127baf950020485256d617e7bdbe10cbe96c962088ea01eebace352a006f978",
+  "policy_digest": "sha256:26902b697f28fed39d8d85d0b45ecbf9da510cf70a9067c65efe0e65981e7e82",
+  "positive": {
+    "flagged": true
+  },
+  "release_digest": "sha256:45604e2b43ea985620ee90b95f557a441c5a4770757424dd6c63de36c4476484",
+  "schema": "aiab-evaluation/v1",
+  "status": "completed"
+}
