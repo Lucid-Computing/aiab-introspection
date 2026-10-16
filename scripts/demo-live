@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_dir/static"
+printf '$ cd %q\n' "$repo_dir/static"
+printf '$ uv sync --locked --quiet\n'
+uv sync --locked --quiet
+printf '$'
+printf ' %q' uv run --locked python demo/audit/walkthrough.py "$@"
+printf '\n'
+exec uv run --locked python demo/audit/walkthrough.py "$@"
