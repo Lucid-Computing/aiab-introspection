@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set active = "runs" %}
+{% block title %}Run {{ run.id }} · AIAB agreement{% endblock %}
+{% block head %}{% if run.status == "running" %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/runs" class="link">← Runs</a></p>
+<h1>Run <span class="mono" style="font-size: var(--text-xl)">{{ run.id }}</span></h1>
+<p class="lead">Transcript <span class="mono">{{ run.transcript }}</span>, started {{ run.started[:16].replace("T", " ") }} by {{ run.by.user }} ({{ run.by.party }}).
+{% if run.status == "running" %}Running. This page refreshes itself every few seconds.{% elif run.status == "failed" %}Stopped: a step failed. Nothing after it ran.{% elif run.status == "interrupted" %}Interrupted: the server restarted while this run was going. Start a new one.{% else %}Finished and verified.{% endif %}</p>
+
+{% if run.status == "done" and run.result %}
+<div class="notice" style="margin-bottom: var(--space-8)">
+  <p><strong>Result:</strong> {% if run.result.flagged %}flagged{% else %}not flagged{% endif %}. The box's signed report says <span class="mono">flagged = {{ run.result.flagged | lower }}</span> for run <span class="mono">{{ run.result.run_id }}</span>, and the report verified offline.</p>
+</div>
+{% endif %}
+
+<ol class="vflow">
+  {% for s in run.steps %}
+  <li class="{% if s.status == 'failed' %}has-error{% elif s.status == 'running' %}is-running{% elif s.status == 'done' %}is-done{% endif %}">
+    <div class="vflow-node"></div>
+    <div class="vflow-body">
+      <div class="vflow-head"><h3>{{ loop.index }}. {{ s.title }}</h3>
+        {% if s.status == "done" %}<span class="badge badge--ok">done</span>{% elif s.status == "running" %}<span class="badge"><span class="spinner spinner--sm"></span> running</span>{% elif s.status == "failed" %}<span class="badge badge--danger">failed</span>{% else %}<span class="badge">waiting</span>{% endif %}
+        {% if s.finished %}<span class="text-muted mono" style="font-size: var(--text-sm)">{{ s.finished[11:19] }}</span>{% endif %}
+      </div>
+      <p>{{ s.explain }}</p>
+      {% if s.error %}<p class="form-message error" style="margin-top: var(--space-4)">{{ s.error }}</p>{% endif %}
+      {% if s.output %}
+      <details class="info" style="margin-top: var(--space-4)">
+        <summary>What it returned</summary>
+        <div class="info-body"><pre class="cmd">{{ s.output | tojson | pretty_json }}</pre></div>
+      </details>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% endblock %}

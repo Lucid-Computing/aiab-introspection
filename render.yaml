@@ -1,0 +1,32 @@
+# Render blueprint for the agreement UI: one Docker web service with a persistent disk.
+# Create the service from this file in the Render dashboard ("New > Blueprint"), then set
+# the secrets marked sync: false. See ui/README.md, "Deploying on Render".
+services:
+  - type: web
+    name: aiab-agreement-ui
+    runtime: docker
+    plan: starter               # the smallest plan that allows a persistent disk
+    region: frankfurt
+    branch: ui-design           # the branch Render builds the image from; master once merged
+    dockerfilePath: ./ui/Dockerfile
+    dockerContext: .
+    healthCheckPath: /login
+    disk:
+      name: aiab-data
+      mountPath: /data          # the git checkout, accounts, trust file, runs
+      sizeGB: 1
+    envVars:
+      - key: AIAB_REPO
+        value: lucid-computing-labs/aiab-introspection
+      - key: AIAB_CHECKOUT_BRANCH
+        value: master           # the branch whose agreements/ and plan/ the UI works on
+      - key: UI_SESSION_SECRET
+        generateValue: true
+      - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
+        sync: false
+      - key: UI_BOOTSTRAP_ACCOUNTS   # first boot only, e.g. "teddy:lab:<password>,caleb:auditor:<password>"
+        sync: false
+      - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
+        sync: false
+      - key: LOGGER_KEY         # optional, for the Runs screen: the demo logger's private key (base64)
+        sync: false

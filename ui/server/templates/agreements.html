@@ -29,7 +29,7 @@
       <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm">Edit</button></form>
       <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/sign">Sign</a>
       {% if r.id != "plan" and not r.selected %}
-      <form method="post" action="/a/{{ r.id }}/deploy" class="inline" data-confirm="This selects {{ r.plan_id }} for deployment: its files replace plan/, a branch with that change is pushed, and a pull request is opened for you to merge. Continue?"><button class="btn btn--primary btn--sm" {% if not r.signed %}title="not signed by both parties yet: CI would reject it"{% endif %}>Deploy</button></form>
+      <form method="post" action="/a/{{ r.id }}/deploy" class="inline" data-busy="Deploying {{ r.plan_id }}: copying it into plan/, making the branch and pushing it. A few seconds." data-confirm="This selects {{ r.plan_id }} for deployment: its files replace plan/, a branch with that change is pushed, and a pull request is opened for you to merge. Continue?"><button class="btn btn--primary btn--sm" {% if not r.signed %}title="not signed by both parties yet: CI would reject it"{% endif %}>Deploy</button></form>
       <form method="post" action="/a/{{ r.id }}/delete" class="inline" data-confirm="Delete {{ r.plan_id }}? The folder agreements/{{ r.id }} and its history are removed. This cannot be undone."><button class="btn btn--ghost btn--sm">Delete</button></form>
       {% endif %}
     </td>

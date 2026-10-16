@@ -25,8 +25,12 @@
 <pre class="cmd">openssl genpkey -algorithm ed25519 -out ~/{{ user.party }}.pem
 openssl pkey -in ~/{{ user.party }}.pem -pubout -outform DER | tail -c 32 | base64</pre>
           <p class="explain">Development keys from <span class="mono">make dev-keys</span> are already on file; their key is <span class="mono">~/.aiab-dev/{{ user.party }}.pem</span>, so use that path in the sign command instead of <span class="mono">~/{{ user.party }}.pem</span>.</p>
-          <p class="explain">Without OpenSSL 3, <a class="link" href="/assets/sign_digest.py" download>sign_digest.py</a> (Python 3 with the <span class="mono">cryptography</span> package) does the same: <span class="mono">keygen --out ~/{{ user.party }}.key</span> to make a key, then <span class="mono">sign --digest … --key ~/{{ user.party }}.key</span> to print the signature, or add <span class="mono">--party {{ user.party }} --user {{ user.username }} --submit {{ request.base_url }}a/{{ aid }}/sign/upload</span> to submit it without pasting.</p>
-          <p class="explain">To check the digest before signing, download <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>, the exact files it covers, and run <span class="mono">python3 sign_digest.py digest plan.zip</span>; it must print the digest above.</p>
+          <p class="explain">Without OpenSSL 3, <a class="link" href="/assets/sign_digest.py" download>sign_digest.py</a> (Python 3 with the <span class="mono">cryptography</span> package) does the same. Make a key and print its public key, then sign; the last line submits the signature for you instead of pasting it:</p>
+<pre class="cmd">python3 sign_digest.py keygen --out ~/{{ user.party }}.key
+python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.key
+python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.key --party {{ user.party }} --user {{ user.username }} --submit {{ request.base_url }}a/{{ aid }}/sign/upload</pre>
+          <p class="explain">To check the digest before signing, download <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>, the exact files it covers, and run this; it must print the digest above:</p>
+<pre class="cmd">python3 sign_digest.py digest plan.zip</pre>
         </div>
       </details>
     </div>
@@ -38,10 +42,16 @@ openssl pkey -in ~/{{ user.party }}.pem -pubout -outform DER | tail -c 32 | base
       <span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{% if s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span>
     </div>
     <div class="card-body">
-      <p class="explain"><span class="text-muted">Public key on file for the {{ party }}</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span></p>
+      <p class="explain keyline"><span class="text-muted">Public key on file for the {{ party }}</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span></p>
       {% if s.status == 'invalid' %}<p class="explain">The stored signature was made for a different version of the plan, or with a different key, so it no longer counts. The {{ party }} needs to sign this version.</p>{% endif %}
-      {% if s.signature and s.status == 'ok' %}<p class="sig">{{ s.signature }}</p>{% endif %}
+      {% if s.signature and s.status == 'ok' %}<p class="explain keyline"><span class="text-muted">{{ "Your signature" if user.party == party else "Signature of the " ~ party }}</span> <span class="mono" style="word-break: break-all">{{ s.signature }}</span></p>{% endif %}
       {% if user.party == party %}
+      {% if s.status == 'ok' %}
+      <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?">
+        <input type="hidden" name="party" value="{{ party }}">
+        <button class="btn btn--ghost">Re-sign</button>
+      </form>
+      {% else %}
       <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
         <summary>Your public key</summary>
         <div class="info-body">
@@ -58,17 +68,11 @@ openssl pkey -in ~/{{ user.party }}.pem -pubout -outform DER | tail -c 32 | base
         <div class="field"><label for="sig-{{ party }}">Your signature</label><textarea id="sig-{{ party }}" name="signature" class="code" style="min-height: 72px" placeholder="paste the line the sign command printed"></textarea></div>
         <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Verify and store</button></p>
       </form>
+      {% endif %}
       {% else %}<p class="text-muted">Only the {{ party }} can sign here.</p>{% endif %}
     </div>
   </div>
   {% endfor %}
-
-  {% if view.frozen or view.stale %}
-  <form method="post" action="{{ base }}/sign/unfreeze" class="notice" data-confirm="This removes every stored signature. Both parties will need to sign again.">
-    <p>{% if view.frozen %}To change the plan after signing, remove the signatures first.{% else %}Remove the signatures that no longer count.{% endif %}</p>
-    <button class="btn btn--ghost btn--sm">Remove signatures</button>
-  </form>
-  {% endif %}
 
   <div class="notice">
     <p>{{ view.state | capitalize }}. A signature is stored the moment it verifies; nothing else to confirm here.</p>

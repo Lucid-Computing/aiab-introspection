@@ -24,6 +24,9 @@ class Settings:
     accounts_file: Path
     session_secret: bytes
     repo: str | None
+    runs_dir: Path  # one folder per audit run started from the Runs screen
+    demo_keys_dir: Path  # lab.token and logger.key for the live box, never in the repo
+    release_file: Path  # the release pins the live box must match
 
     @property
     def repo_url(self) -> str | None:
@@ -62,4 +65,11 @@ def load_settings() -> Settings:
         accounts_file=Path(env.get("UI_ACCOUNTS_FILE", UI_ROOT / "accounts.json")).resolve(),
         session_secret=secret.encode("utf-8") if secret else secrets.token_bytes(32),
         repo=env.get("AIAB_REPO") or _repo_from_git(),
+        runs_dir=Path(env.get("AIAB_RUNS_DIR", UI_ROOT / "runs")).resolve(),
+        demo_keys_dir=Path(
+            env.get("AIAB_DEMO_KEYS", Path.home() / ".local/share/aiab-audit-demo")
+        ).resolve(),
+        release_file=Path(
+            env.get("AIAB_RELEASE_FILE", STATIC_DIR / "deploy/tinfoil/audit/release.json")
+        ).resolve(),
     )

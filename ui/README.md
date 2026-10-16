@@ -20,6 +20,10 @@ To sign: the Sign screen shows one `openssl` command (OpenSSL 3; on a Mac `brew 
 
 Deploy pushes: it copies the agreement into `plan/`, makes a branch from the remote's default branch with only that change (in a temporary worktree, your checkout is not switched), pushes it, and opens the pull request when the GitHub CLI is logged in (`gh auth login`); otherwise it shows the compare link. You merge the pull request yourself. `AIAB_DEPLOY_BASE` overrides the base branch, for example `ui-design` while `master` lacks the new layout.
 
+## Runs: the deployed plan against the live box
+
+The Runs screen performs the six steps of `static/demo/audit/walkthrough.py` from the browser, each as one call of `python -m auditor.baked` from the static part: verify the plan's signatures, attest the box and pin its identity, sign a test transcript with the demo logger key, submit it, wait for the signed report, verify the report offline. The page shows what each command returned. It needs `lab.token` and `logger.key` in `AIAB_DEMO_KEYS` (default `~/.local/share/aiab-audit-demo/`), held by the box operator, and the deployed `plan/` must be the one the release pins name, otherwise step 2 refuses. Runs are folders under `AIAB_RUNS_DIR` (default `ui/runs/`, git-ignored) holding the CLI's output files and `state.json`.
+
 ## How to read this (in order)
 
 The UI calls the static part's own functions, so it cannot disagree with the box:
@@ -38,6 +42,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | [`server/plan_view.py`](server/plan_view.py) | Turns the plan folder into what the screens show; saves settings, functions, prompts, signatures. |
 | [`server/box.py`](server/box.py) | Reads the box's manifest and health. Never writes. |
 | [`server/publish.py`](server/publish.py) | Deploy's git side: branch from the base, replace `plan/`, commit, push, open the PR with `gh`. |
+| [`server/runs.py`](server/runs.py) | The Runs screen's steps: each one a call of the static part's `auditor.baked` CLI, results on disk. |
 | [`server/app.py`](server/app.py) | The routes, one per screen or form. |
 | [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm dialog, and CodeMirror (from cdnjs) for `plan.py` with Tab indentation and syntax colours. |
 | [`server/template/`](server/template/) | The minimal valid agreement that "New agreement" starts from. |
@@ -52,15 +57,34 @@ Each agreement is a folder under `agreements/<name>/` with the same layout as `p
 
 ## What this first version does and does not do
 
-Does: login per party; the how-it-works screen; agreements as folders with a deploy slot, create, delete; the plan flow with per-step settings, function body (with a code editor) and prompt editing, written straight to the files, and the function's docstring shown as its description; a change log with lab/auditor attribution; the box's own loader check on every load; the plan digest, a standalone signing tool and signature paste verified against the trust file; lock on a valid signature; Deploy that pushes a plan-only branch and opens the pull request; reading the box manifest and comparing plan digests.
+Does: login per party; the Runs screen that drives the auditor CLI against the live box; the how-it-works screen; agreements as folders with a deploy slot, create, delete; the plan flow with per-step settings, function body (with a code editor) and prompt editing, written straight to the files, and the function's docstring shown as its description; a change log with lab/auditor attribution; the box's own loader check on every load; the plan digest, a standalone signing tool and signature paste verified against the trust file; lock on a valid signature; Deploy that pushes a plan-only branch and opens the pull request; reading the box manifest and comparing plan digests.
 
 Does not yet: the dry run (deferred; the static part's `python -m aiab.dryrun` works from the terminal), merging (people and CI do that), GitHub login, comments, the attestation verifier, run submission. The state lives in the agreement folders and the box; the server keeps only login sessions, no database.
 
-## Deploying
+## Deploying on Render
 
-The server is one container (see [`Dockerfile`](Dockerfile), built from the repository root) with the checkout's `plan/` mounted at `/data/plan` and the accounts file at `/data/accounts.json`. On the existing demo host it is one more Caddy route and compose service next to the webchat. On the Lucid tailnet, `tailscale serve` in front of port 8090 gives HTTPS without any DNS work.
+The UI is one Docker container with a persistent disk. [`../render.yaml`](../render.yaml) defines it; [`Dockerfile`](Dockerfile) builds it (from the repository root, filtered by `Dockerfile.dockerignore`); [`docker-entrypoint.sh`](docker-entrypoint.sh) runs on every start.
 
-Environment: `AIAB_PLAN_DIR` (default `../plan`), `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository Deploy pushes from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for deploy PRs, default the remote's default branch), `AIAB_TRUST_FILE` (default `static/aiab/baked/trust.json`), `AIAB_BOX_URL` (optional), `UI_ACCOUNTS_FILE` (default `ui/accounts.json`), `UI_SESSION_SECRET` (random per start if unset). Deploy uses the git and GitHub CLI credentials of whoever runs the UI. No private signing key or box admin credential is ever configured here.
+1. Push the branch named in `render.yaml` (`branch:`) to GitHub.
+2. On render.com, sign in with GitHub, choose **New → Blueprint**, pick this repository. Render reads `render.yaml` and asks for the values marked `sync: false`:
+   - `GITHUB_TOKEN`: a GitHub token that can push branches and open pull requests on this repository (fine-grained token with Contents and Pull requests read/write, or a bot account's token). Deploy pushes with it.
+   - `UI_BOOTSTRAP_ACCOUNTS`: the UI logins to create on first boot, `teddy:lab:<password>,caleb:auditor:<password>`. Remove the variable afterwards.
+   - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
+3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo`, creates the accounts, and copies the box's trust file to `/data/trust.json`.
+4. Open the service URL, log in, and submit each party's public key on a Sign screen, as locally.
+
+What lives where: the image holds the UI code and the static part it imports; the disk holds the checkout the UI edits (`/data/repo`), the accounts, the trust file and the runs. Redeploys replace the image and keep the disk. `AIAB_CHECKOUT_BRANCH` is the branch whose `agreements/` and `plan/` the UI works on. Agreement drafts live on that disk until deployed; the deploy branch carries only `plan/` because CI accepts plan-only changes.
+
+To try the container locally against a throwaway bare repository instead of GitHub:
+
+```sh
+docker build -f ui/Dockerfile -t aiab-ui .
+docker run --rm -p 8090:8090 -v /path/to/origin.git:/origin.git -v aiab-data:/data \
+  -e AIAB_REPO=lucid-computing-labs/aiab-introspection -e AIAB_REPO_URL=file:///origin.git \
+  -e AIAB_CHECKOUT_BRANCH=ui-design -e UI_BOOTSTRAP_ACCOUNTS=teddy:lab:lab-pass-123 aiab-ui
+```
+
+Environment, for any host: `AIAB_PLAN_DIR` (default `../plan`), `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository Deploy pushes from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for deploy PRs, default the remote's default branch), `AIAB_TRUST_FILE` (default `static/aiab/baked/trust.json`), `AIAB_BOX_URL` (optional), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `UI_ACCOUNTS_FILE` (default `ui/accounts.json`), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
 
 ## Integration contract with the box (from master, Jon)
 

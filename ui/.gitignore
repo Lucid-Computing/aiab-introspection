@@ -1,2 +1,3 @@
 # Local login accounts (hashed passwords). Never commit.
 accounts.json
+runs/

@@ -9,12 +9,13 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/swiss.css?v={{ asset_version }}">
 <link rel="stylesheet" href="/assets/aiab.css?v={{ asset_version }}">
+{% block head %}{% endblock %}
 </head>
 <body>
 <nav class="navbar">
   <a class="nav-brand" href="/how"><span class="nav-wordmark">AIAB · Agreement</span></a>
   <div class="nav-links">
-    {% for href, label in [("/how", "How it works"), ("/agreements", "Agreements")] %}
+    {% for href, label in [("/how", "How it works"), ("/agreements", "Agreements"), ("/runs", "Runs")] %}
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
     {% endfor %}
     {% if user %}
@@ -36,7 +37,21 @@
     <div class="row modal-actions"><button value="cancel" class="btn btn--ghost">Cancel</button><button value="ok" class="btn btn--primary">Continue</button></div>
   </form>
 </dialog>
+<div id="busy" class="busy" hidden><div class="busy-box"><span class="spinner" aria-hidden="true"></span><p id="busy-text"></p></div></div>
 <script>
+  // Forms with data-busy show the spinner above while the server works (Deploy takes a few
+  // seconds: fetch, branch, push). It appears on the real submit, after any confirmation.
+  (function () {
+    var busy = document.getElementById("busy");
+    document.querySelectorAll("form[data-busy]").forEach(function (form) {
+      form.addEventListener("submit", function (event) {
+        if (event.defaultPrevented || !busy) return;
+        document.getElementById("busy-text").textContent = form.dataset.busy;
+        busy.hidden = false;
+      });
+    });
+    window.addEventListener("pageshow", function () { if (busy) busy.hidden = true; });
+  })();
   // Forms with data-confirm open the dialog above instead of submitting straight away.
   (function () {
     var dialog = document.getElementById("confirm");

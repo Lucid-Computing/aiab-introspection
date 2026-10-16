@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from server import plan_view as pv
-from server import publish
+from server import publish, runs
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
 from server.config import UI_ROOT, Settings, load_settings
@@ -245,6 +245,46 @@ async def new_agreement(request: Request) -> Response:
     )
 
 
+@app.get("/runs")
+async def runs_index(request: Request) -> Response:
+    if user_of(request) is None:
+        return to_login(request)
+    view, _ = load_view(settings)
+    return render(
+        request,
+        "runs.html",
+        pre=runs.preflight(settings),
+        transcripts=runs.transcripts(settings),
+        runs=runs.list_runs(settings),
+        plan_digest=view.digest if view else None,
+    )
+
+
+@app.post("/runs/start")
+async def runs_start(request: Request, transcript: Annotated[str, Form()] = "") -> Response:
+    user = user_of(request)
+    if user is None:
+        return to_login(request)
+    pre = runs.preflight(settings)
+    if not pre["ok"]:
+        return back("/runs", err="Cannot start: " + "; ".join(pre["missing"]))
+    try:
+        run_id = runs.start_run(settings, transcript, user)
+    except (ValueError, OSError) as exc:
+        return back("/runs", err=str(exc))
+    return RedirectResponse(f"/runs/{run_id}", status_code=303)
+
+
+@app.get("/runs/{run_id}")
+async def run_page(request: Request, run_id: str) -> Response:
+    if user_of(request) is None:
+        return to_login(request)
+    state = runs.load_run(settings, run_id)
+    if state is None:
+        return back("/runs", err="No such run.")
+    return render(request, "run.html", run=state)
+
+
 @app.get("/attest")
 async def attest(request: Request) -> Response:
     if user_of(request) is None:
@@ -475,6 +515,21 @@ async def sign_upload(
     return back(here, msg=f"{party} signature verified and stored.")
 
 
+@app.post("/a/{aid}/sign/remove")
+async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()]) -> Response:
+    """Re-sign: remove your own signature for this version, then the paste form comes back."""
+    target, redirect = agreement(request, aid)
+    if redirect:
+        return redirect
+    user = user_of(request)
+    here = f"/a/{aid}/sign"
+    if user is None or party != user["party"]:
+        return back(here, err="You can only remove your own signature.")
+    if not pv.remove_signature(target, party, user):
+        return back(here, err="There is no signature of yours to remove.")
+    return back(here, msg="Your signature is removed. Sign this version again below.")
+
+
 @app.post("/a/{aid}/sign/key")
 async def set_key(
     request: Request,
@@ -493,14 +548,3 @@ async def set_key(
     if problem:
         return back(here, err=problem)
     return back(here, msg=f"Public key for the {party} replaced. Sign with the matching key.")
-
-
-@app.post("/a/{aid}/sign/unfreeze")
-async def unfreeze(request: Request, aid: str) -> Response:
-    target, redirect = agreement(request, aid)
-    if redirect:
-        return redirect
-    removed = pv.delete_signatures(target)
-    return back(
-        f"/a/{aid}/sign", msg=f"{removed} signature file(s) removed. Both parties sign again."
-    )

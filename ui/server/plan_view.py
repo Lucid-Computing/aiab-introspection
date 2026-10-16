@@ -454,6 +454,16 @@ def write_signature(
     return "ok", "verified against the pinned key and stored"
 
 
+def remove_signature(settings: Settings, role: str, actor: dict[str, str]) -> bool:
+    """Drop one party's signature so that party can sign this same version again."""
+    path = settings.plan_dir / "signatures" / f"{role}.sig"
+    if not path.exists():
+        return False
+    path.unlink()
+    record_change(settings, actor, "signature", f"signature: {role}", "removed to sign again")
+    return True
+
+
 def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -> int:
     removed = 0
     for role in PARTIES:

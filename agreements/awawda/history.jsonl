@@ -7,3 +7,7 @@
 {"at": "2026-10-16T07:03:17Z", "party": "lab", "user": "teddy", "kind": "code", "where": "filter_logs: code", "detail": "@@ -21,3 +21,2 @@\n     kept: list[LogRecord] = []\n-    print(\"hello\")\n     for record in logs:"}
 {"at": "2026-10-16T07:05:16Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "filter_logs: input_scope.agents", "detail": "[\"agent-a\", \"agent-b\", \"agent-c\"] → [\"agent-a\", \"agent-b\", \"agent-c\", \"agent-d\"]"}
 {"at": "2026-10-16T07:05:28Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "filter_logs: input_scope.agents", "detail": "[\"agent-a\", \"agent-b\", \"agent-c\", \"agent-d\"] → [\"agent-a\", \"agent-b\", \"agent-c\"]"}
+{"at": "2026-10-16T07:33:04Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "filter_logs: input_scope.agents", "detail": "[\"agent-a\", \"agent-b\", \"agent-c\"] → [\"agent-a\", \"agent-b\"]"}
+{"at": "2026-10-16T07:41:36Z", "party": "lab", "user": "teddy", "kind": "key", "where": "public key: lab", "detail": "JUGbPZpN1+LIjCRDCrr+dXsK6KzPT620QCrAFmWqv5I= → NwLqPU+Vf5hvvgre7uL+J7a5DAHqLqsfeEQfiaaXjWE="}
+{"at": "2026-10-16T07:41:50Z", "party": "lab", "user": "teddy", "kind": "signature", "where": "signature: lab", "detail": "signed version 15738aa86f99"}
+{"at": "2026-10-16T07:50:18Z", "party": "lab", "user": "teddy", "kind": "deploy", "where": "deployment", "detail": "selected for deployment: copied into plan/"}

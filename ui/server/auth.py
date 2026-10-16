@@ -128,11 +128,32 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument(
         "--file", type=Path, default=None, help="accounts file (default ui/accounts.json)"
     )
+    boot = sub.add_parser(
+        "bootstrap", help='first-boot accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..."'
+    )
+    boot.add_argument("--file", type=Path, default=None)
     args = parser.parse_args(argv)
 
     from server.config import load_settings  # local import keeps the CLI free of FastAPI
 
     path = args.file or load_settings().accounts_file
+    if args.command == "bootstrap":
+        for entry in filter(None, os.environ.get("UI_BOOTSTRAP_ACCOUNTS", "").split(",")):
+            username, party, password = entry.strip().split(":", 2)
+            if party not in PARTIES or len(password) < 8:
+                print(f"skipping {username}: bad party or password shorter than 8", file=sys.stderr)
+                continue
+            save_account(
+                path,
+                Account(
+                    username=username,
+                    party=party,
+                    display_name=username,
+                    password_hash=hash_password(password),
+                ),
+            )
+            print(f"account {username} ({party}) created in {path}")
+        return 0
     password = getpass.getpass(f"password for {args.username}: ")
     if password != getpass.getpass("again: "):
         print("passwords differ", file=sys.stderr)

@@ -1,0 +1,25 @@
+# Build context filter for ui/Dockerfile (BuildKit). Only the UI and the parts of the
+# static part it imports enter the image. Keep the directory re-includes before the
+# file-level exclusions: re-including a directory also includes its descendants.
+**
+!ui/
+ui/.venv
+ui/runs
+ui/accounts.json
+!static/
+static/**
+!static/pyproject.toml
+!static/uv.lock
+!static/README.md
+!static/aiab/
+!static/auditor/
+!static/deploy/
+static/deploy/**
+!static/deploy/tinfoil/
+static/deploy/tinfoil/**
+!static/deploy/tinfoil/audit/
+static/deploy/tinfoil/audit/**
+!static/deploy/tinfoil/audit/release.json
+**/__pycache__
+**/*.pyc
+**/*.pyo

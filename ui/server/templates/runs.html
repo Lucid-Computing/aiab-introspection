@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% set active = "runs" %}
+{% block title %}Runs · AIAB agreement{% endblock %}
+{% block content %}
+<h1>Runs</h1>
+<p class="lead">Run the deployed plan against the live box and watch each step: the box is attested, a signed test export goes in, a signed report comes out, and the report is verified again offline. Only the logger is a stand-in; the box and the model are real.</p>
+
+<div class="stack">
+  <div class="card">
+    <div class="card-header">Before a run</div>
+    <div class="card-body">
+      {% if pre.release %}
+      <table class="kv">
+        <tr><th>Box</th><td class="mono">{{ pre.release.host }}</td></tr>
+        <tr><th>Release</th><td class="mono">{{ pre.release.tag }} · plan {{ pre.release.plan_digest[:19] }}…</td></tr>
+        <tr><th>Deployed plan here</th><td class="mono">{{ plan_digest or "does not load" }}{% if plan_digest and pre.release.plan_digest != plan_digest %} <span class="badge badge--danger">differs from the release, step 2 will refuse</span>{% endif %}</td></tr>
+        <tr><th>Credentials</th><td>{% if pre.ok %}<span class="badge badge--ok">lab.token and logger.key found</span>{% else %}{% for m in pre.missing %}<span class="badge badge--danger">missing {{ m }}</span><br>{% endfor %}{% endif %}</td></tr>
+      </table>
+      {% else %}<p class="form-message error">Release pins not found: {{ pre.missing | join(", ") }}</p>{% endif %}
+      {% if not pre.ok %}
+      <details class="info" style="margin-top: var(--space-4)">
+        <summary>Where the credentials come from</summary>
+        <div class="info-body">
+          <p class="explain"><span class="mono">lab.token</span> is the lab's API token for the box and <span class="mono">logger.key</span> is the demo logger's private key, the one whose public key the box pins as the logger. Both are held by the box's operator (Jon) under <span class="mono">~/.local/share/aiab-audit-demo/</span> on his host. Copy them to the same path on the machine running this UI, or point <span class="mono">AIAB_DEMO_KEYS</span> at a folder holding them. Never commit them.</p>
+        </div>
+      </details>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Start a run</div>
+    <div class="card-body">
+      <form method="post" action="/runs/start">
+        <p class="explain">Which transcript to send, from <span class="mono">plan/tests/transcripts/</span>:</p>
+        {% for t in transcripts %}<label class="choice"><input type="radio" name="transcript" value="{{ t }}" {% if loop.first %}checked{% endif %}> <span class="mono">{{ t }}</span></label>{% endfor %}
+        <p style="margin-top: var(--space-6)"><button class="btn btn--primary" {% if not pre.ok %}disabled title="credentials missing"{% endif %}>Start the run</button></p>
+      </form>
+    </div>
+  </div>
+
+  {% if runs %}
+  <table class="table">
+    <thead><tr><th>Started</th><th>Transcript</th><th>By</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+    <tr>
+      <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
+      <td class="mono">{{ r.transcript }}</td>
+      <td>{{ r.by.user }} <span class="badge {% if r.by.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ r.by.party }}</span></td>
+      <td>{% if r.status == "done" %}{% if r.result and r.result.flagged %}flagged{% elif r.result %}not flagged{% else %}done{% endif %}, verified{% elif r.status == "failed" %}stopped at step {{ (r.steps | selectattr("status", "equalto", "failed") | list | first).title | lower }}{% elif r.status == "interrupted" %}interrupted{% else %}running…{% endif %}</td>
+      <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

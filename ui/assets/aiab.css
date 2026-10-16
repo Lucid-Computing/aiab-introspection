@@ -233,3 +233,20 @@ details.info > summary { font-size: var(--text-sm); }
 .changes-filter .text-muted + a, .changes-filter a + .text-muted { margin-left: var(--space-1); }
 .changes-filter a.current { color: var(--ink-1); text-decoration: underline; text-underline-offset: 3px; }
 .changes-more { margin: var(--space-3) 0 0; }
+
+/* ---- sign screen: key and signature lines use the full card width ---- */
+.keyline { max-width: none; margin-bottom: var(--space-4); }
+
+/* ---- busy overlay while a slow action (Deploy) runs ---- */
+.busy { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(246, 241, 231, 0.88); }
+.busy[hidden] { display: none; }
+.busy-box { text-align: center; max-width: 520px; padding: var(--space-8); font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-1); }
+.busy-box p { margin: var(--space-4) 0 0; }
+.spinner { display: inline-block; width: 44px; height: 44px; border: 3px solid var(--paper-3); border-top-color: var(--amber); border-radius: 50%; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- runs: step states on the vertical flow ---- */
+.vflow li.is-done .vflow-node { background: var(--ink-1); }
+.vflow li.is-running .vflow-node { border-color: var(--amber); background: var(--amber); }
+.vflow li.has-error .vflow-node { border-color: var(--destructive); }
+.spinner--sm { width: 12px; height: 12px; border-width: 2px; vertical-align: -1px; margin-right: 4px; }
