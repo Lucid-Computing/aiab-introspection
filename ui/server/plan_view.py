@@ -89,7 +89,13 @@ class SettingView:
 
     @property
     def multiline(self) -> bool:
-        return self.kind in {"list", "dict"}
+        long_text = self.kind == "str" and (len(self.value) > 60 or self.path.endswith(".problem"))
+        return self.kind in {"list", "dict"} or long_text
+
+    @property
+    def raw(self) -> str:
+        """What the form shows: plain text for strings, JSON for everything else."""
+        return self.value if self.kind == "str" else self.value_json
 
 
 @dataclass(frozen=True)
@@ -137,16 +143,18 @@ def load_trust(settings: Settings) -> dict[str, Any]:
 def agreement_state(
     signatures: dict[str, dict[str, Any]], frozen: bool, issue: str | None
 ) -> tuple[str, str]:
+    """The state is about signatures only: not signed, partly signed, expired, signed."""
     ok = [p for p, s in signatures.items() if s["status"] == "ok"]
+    expired = [p for p, s in signatures.items() if s["status"] == "invalid"]
     if len(ok) == len(PARTIES):
         return "signed by both", "badge--ok"
+    if ok and expired:
+        return f"signed by {ok[0]}; {expired[0]}'s signature expired", "badge"
     if ok:
         return f"signed by {ok[0]}, waiting for the other party", "badge--ok"
-    if any(s["status"] == "invalid" for s in signatures.values()):
-        return "draft, not signed", "badge"
-    if issue:
-        return "draft, box would reject it", "badge--danger"
-    return "draft, not signed", "badge"
+    if expired:
+        return "signatures expired, sign this version again", "badge"
+    return "not signed", "badge"
 
 
 def load_plan_view(settings: Settings) -> PlanView:
@@ -290,6 +298,54 @@ def _short_diff(before: str, after: str) -> str:
     return "\n".join(list(lines)[2:])  # drop the file headers
 
 
+# --------------------------------------------------------------------------- pre-save check
+
+
+def _explain_schema(config: Any) -> str:
+    """Name the field the box's plan schema rejects, when the jsonschema package can tell."""
+    try:
+        from aiab.baked.bundle import PLAN
+        from jsonschema import Draft202012Validator
+
+        errors = sorted(Draft202012Validator(PLAN).iter_errors(config), key=lambda e: e.json_path)
+    except Exception:  # noqa: BLE001 - fall back to the bare code
+        return ""
+    if not errors:
+        return ""
+    error = errors[0]
+    where = error.json_path.removeprefix("$.") or "plan.json"
+    return f"{where}: {error.message}"
+
+
+def box_would_reject(settings: Settings, overrides: dict[str, bytes]) -> str | None:
+    """Run the box's loader on a copy of the folder with these files replaced."""
+    import shutil
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="aiab-check-") as tmp:
+        folder = Path(tmp) / "plan"
+        shutil.copytree(
+            settings.plan_dir,
+            folder,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests", "signatures"),
+        )
+        for name, raw in overrides.items():
+            (folder / name).parent.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(raw)
+        try:
+            load_bundle(folder, load_trust(settings), signed=False)
+        except AuditError as exc:
+            detail = ""
+            if exc.code == "invalid_plan" and "plan.json" in overrides:
+                try:
+                    detail = _explain_schema(decode(overrides["plan.json"]))
+                except AuditError:
+                    detail = ""
+            where = detail or ISSUE_WHERE.get(exc.code, exc.code)
+            return f"the box would reject this ({exc.code}): {where}"
+    return None
+
+
 # --------------------------------------------------------------------------- edits
 
 
@@ -307,12 +363,15 @@ def save_step_settings(
     for dotted in step.settings:
         if dotted not in form:
             continue
-        try:
-            value = parse_setting(form[dotted])
-        except ValueError as exc:
-            errors.append(f"{dotted}: could not read this as a value ({exc})")
-            continue
         current = get_setting(config, dotted)
+        if _kind(current) == "str":
+            value = form[dotted].replace("\r\n", "\n").strip()
+        else:
+            try:
+                value = parse_setting(form[dotted])
+            except ValueError as exc:
+                errors.append(f"{dotted}: could not read this as a value ({exc})")
+                continue
         if current is not None and _kind(current) != _kind(value):
             if not (_kind(current) in numeric and _kind(value) in numeric):
                 errors.append(f"{dotted}: expected {_kind(current)}, got {_kind(value)}")
@@ -322,6 +381,11 @@ def save_step_settings(
         set_setting(config, dotted, value)
     if errors:
         return errors
+    if not changes:
+        return []
+    rejected = box_would_reject(settings, {"plan.json": canonical(config) + b"\n"})
+    if rejected:
+        return [rejected]
     path.write_bytes(canonical(config) + b"\n")  # the box's canonical form
     for dotted, before, after in changes:
         record_change(settings, actor, "settings", f"{step_name}: {dotted}", f"{before} → {after}")
@@ -354,6 +418,9 @@ def save_prompt(settings: Settings, prompt_id: str, text: str, actor: dict[str, 
         text += "\n"
     before = path.read_text(encoding="utf-8")
     if text != before:
+        rejected = box_would_reject(settings, {f"prompts/{prompt_id}.txt": text.encode("utf-8")})
+        if rejected:
+            return rejected
         path.write_text(text, encoding="utf-8")
         record_change(
             settings, actor, "prompt", f"classify: prompt {prompt_id}", _short_diff(before, text)
@@ -366,11 +433,12 @@ def write_signature(
 ) -> tuple[str, str]:
     """Verify an uploaded signature file against the pinned key, then store it."""
     try:
-        text = content.decode("ascii").strip()
+        # Joined, not just stripped: Linux base64 wraps long output at 76 columns.
+        text = "".join(content.decode("ascii").split())
     except UnicodeDecodeError:
-        return "invalid", "file is not a base64 signature"
-    if not text or len(text) > 256 or "\n" in text:
-        return "invalid", "expected one base64 line, as written by auditor.baked sign"
+        return "invalid", "that is not a base64 signature"
+    if not text or len(text) > 256:
+        return "invalid", "expected the base64 line the sign command printed"
     plan_digest = file_digest(bundle_files(settings.plan_dir))
     trust = load_trust(settings)
     try:
@@ -532,23 +600,56 @@ def new_agreement(
 
 def deploy_agreement(settings: Settings, agreement_id: str, actor: dict[str, str]) -> str | None:
     """Select an agreement for deployment: copy its folder into plan/, the baked folder."""
-    import shutil
+    from server.publish import copy_into_plan
 
     source_settings = for_agreement(settings, agreement_id)
     if source_settings is None or agreement_id == "plan":
         return "unknown agreement"
-    source = source_settings.plan_dir
-    target = settings.plan_dir
-    keep = {"README.md"}
-    for child in target.iterdir():
-        if child.name in keep:
-            continue
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-    _copy_folder(source, target)
+    copy_into_plan(source_settings.plan_dir, settings.plan_dir)  # same copy the push uses
     record_change(
         source_settings, actor, "deploy", "deployment", "selected for deployment: copied into plan/"
     )
+    return None
+
+
+def delete_agreement(settings: Settings, agreement_id: str) -> str | None:
+    """Remove an agreement folder; never the deploy slot or the agreement it was made from."""
+    import shutil
+
+    if agreement_id == "plan":
+        return "the deploy slot cannot be deleted"
+    target = for_agreement(settings, agreement_id)
+    if target is None:
+        return "unknown agreement"
+    try:
+        selected = file_digest(bundle_files(settings.plan_dir))
+        own = file_digest(bundle_files(target.plan_dir))
+    except AuditError:
+        selected, own = None, None
+    if selected and own == selected:
+        return "this agreement is selected for deployment; deploy another one first"
+    shutil.rmtree(target.plan_dir)
+    return None
+
+
+def set_public_key(
+    settings: Settings, party: str, public_key: str, actor: dict[str, str]
+) -> str | None:
+    """Replace the party's public key in the trust file this UI verifies against."""
+    import base64
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    text = public_key.strip()
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(text, validate=True))
+    except Exception:  # noqa: BLE001 - any decoding or key error means "not a key"
+        return "that is not a base64 Ed25519 public key (44 characters, ending in =)"
+    trust = load_trust(settings)
+    previous = trust.get(f"{party}_key")
+    if previous == text:
+        return "that key is already on file"
+    trust[f"{party}_key"] = text
+    settings.trust_file.write_text(json.dumps(trust, indent=2, sort_keys=True) + "\n")
+    record_change(settings, actor, "key", f"public key: {party}", f"{previous} → {text}")
     return None

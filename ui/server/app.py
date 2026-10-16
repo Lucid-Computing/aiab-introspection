@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from server import plan_view as pv
+from server import publish
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
 from server.config import UI_ROOT, Settings, load_settings
@@ -22,6 +23,26 @@ app = FastAPI(title="AIAB agreement UI", docs_url=None, redoc_url=None, openapi_
 app.mount("/assets", StaticFiles(directory=UI_ROOT / "assets"), name="assets")
 templates = Jinja2Templates(directory=UI_ROOT / "server" / "templates")
 COOKIE = "aiab_ui"
+
+
+def pretty_json(text: str) -> str:
+    """Indent JSON for display; leave anything else as it is."""
+    import json
+
+    try:
+        return json.dumps(json.loads(text), indent=2, ensure_ascii=False)
+    except (ValueError, TypeError):
+        return text
+
+
+templates.env.filters["pretty_json"] = pretty_json
+CHANGE_KINDS = {  # filter name -> history "kind" values it covers
+    "settings": ("settings",),
+    "code": ("code",),
+    "prompt": ("prompt",),
+    "signing": ("signature", "key"),
+    "deploy": ("deploy", "created"),
+}
 FROZEN = "A valid signature exists for this version. Use Edit on the Agreements screen first."
 EDIT_WARNING = (
     "Editing makes a new version of the plan. Both parties must sign it again, "
@@ -50,8 +71,9 @@ STAGES: list[tuple[str, str, list[str]]] = [
         "Each party signs the digest on its own machine and pastes the signature.",
         [
             "The Sign screen shows the version's digest and the one-line signing command.",
-            "sign_digest.py signs that digest with your private key and prints one line; "
-            "paste it and the UI verifies it against the public key pinned in the trust file.",
+            "One openssl command signs that digest with your private key and prints one "
+            "line; paste it and the UI verifies it against the public key on file for your "
+            "party, which you submit on the same screen.",
             "The first valid signature locks editing. To change anything after that, remove "
             "the signatures and both parties sign the new version.",
         ],
@@ -119,6 +141,7 @@ def render(request: Request, template: str, **context: Any) -> Response:
         active=template.removesuffix(".html"),
         parties=PARTIES,
         edit_warning=EDIT_WARNING,
+        asset_version=int((UI_ROOT / "assets" / "aiab.css").stat().st_mtime),
     )
     return templates.TemplateResponse(request, template, context)
 
@@ -245,9 +268,33 @@ async def plan(request: Request, aid: str) -> Response:
     if redirect:
         return redirect
     view, error = load_view(target)
-    edit = request.query_params.get("edit") == "1"
+    q = request.query_params
+    edit = q.get("edit") == "1"
+    # The change log can get long: filter by party or kind, show ten at a time.
+    who, kind, show_all = q.get("who", ""), q.get("kind", ""), q.get("changes") == "all"
+    history = view.history if view else []
+    if who in PARTIES:
+        history = [e for e in history if e.get("party") == who]
+    if kind in CHANGE_KINDS:
+        history = [e for e in history if e.get("kind") in CHANGE_KINDS[kind]]
+    changes = {
+        "entries": history if show_all else history[:10],
+        "total": len(history),
+        "who": who,
+        "kind": kind,
+        "all": show_all,
+        "open": bool(who or kind or show_all),
+        "kinds": list(CHANGE_KINDS),
+    }
     return render(
-        request, "plan.html", view=view, error=error, edit=edit, base=f"/a/{aid}", aid=aid
+        request,
+        "plan.html",
+        view=view,
+        error=error,
+        edit=edit,
+        base=f"/a/{aid}",
+        aid=aid,
+        changes=changes,
     )
 
 
@@ -259,21 +306,43 @@ async def start_editing(request: Request, aid: str) -> Response:
         return redirect
     removed = pv.delete_signatures(target, user_of(request))
     note = f" {removed} signature file(s) removed." if removed else ""
-    return back(f"/a/{aid}/plan?edit=1", msg="Editing. Every save makes a new version." + note)
+    form = await request.form()
+    where = str(form.get("next", ""))
+    if not where.startswith(f"/a/{aid}/plan"):
+        where = f"/a/{aid}/plan"
+    return back(f"{where}?edit=1", msg="Editing. Every save makes a new version." + note)
 
 
 @app.post("/a/{aid}/deploy")
 async def deploy(request: Request, aid: str) -> Response:
-    """Select this agreement for deployment: copy it into plan/, the folder the image bakes."""
+    """Select for deployment: copy into plan/, push a plan-only branch, open the pull request."""
     target, redirect = agreement(request, aid)
     if redirect:
         return redirect
-    problem = pv.deploy_agreement(settings, aid, user_of(request) or {})
+    actor = user_of(request) or {}
+    problem = pv.deploy_agreement(settings, aid, actor)
     if problem:
         return back("/agreements", err=problem)
-    return back(
-        "/agreements", msg=f"{aid} is now selected for deployment: it was copied into plan/."
+    view, _ = load_view(target)
+    digest = view.digest if view else ""
+    pushed = publish.push_deploy(
+        settings.git_dir, target.plan_dir, aid, digest, actor, base=settings.deploy_base
     )
+    rows = pv.list_agreements(settings)
+    selected = next((r for r in rows if r["id"] == "plan"), None)
+    box = await box_status(settings.box_url, selected["digest"] if selected else "")
+    return render(request, "agreements.html", rows=rows, box=box, pushed=pushed, deployed=aid)
+
+
+@app.post("/a/{aid}/delete")
+async def delete_agreement(request: Request, aid: str) -> Response:
+    target, redirect = agreement(request, aid)
+    if redirect:
+        return redirect
+    problem = pv.delete_agreement(settings, aid)
+    if problem:
+        return back("/agreements", err=problem)
+    return back("/agreements", msg=f"{aid} deleted.")
 
 
 @app.get("/a/{aid}/plan/step/{name}")
@@ -385,8 +454,12 @@ async def sign(request: Request, aid: str) -> Response:
 
 @app.post("/a/{aid}/sign/upload")
 async def sign_upload(
-    request: Request, aid: str, party: Annotated[str, Form()], signature: Annotated[str, Form()]
+    request: Request,
+    aid: str,
+    party: Annotated[str, Form()],
+    signature: Annotated[str, Form()] = "",
 ) -> Response:
+    # The default keeps an empty paste from being a 422; the browser sends "" for an empty box.
     target, redirect = agreement(request, aid)
     if redirect:
         return redirect
@@ -394,10 +467,32 @@ async def sign_upload(
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
         return back(here, err="Paste only your own party's signature.")
+    if not signature.strip():
+        return back(here, err="Paste the line the sign command printed first.")
     status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user)
     if status != "ok":
         return back(here, err=f"Signature not accepted: {detail}")
     return back(here, msg=f"{party} signature verified and stored.")
+
+
+@app.post("/a/{aid}/sign/key")
+async def set_key(
+    request: Request,
+    aid: str,
+    party: Annotated[str, Form()],
+    public_key: Annotated[str, Form()] = "",
+) -> Response:
+    target, redirect = agreement(request, aid)
+    if redirect:
+        return redirect
+    user = user_of(request)
+    here = f"/a/{aid}/sign"
+    if user is None or party != user["party"]:
+        return back(here, err="You can only replace your own party's public key.")
+    problem = pv.set_public_key(target, party, public_key, user)
+    if problem:
+        return back(here, err=problem)
+    return back(here, msg=f"Public key for the {party} replaced. Sign with the matching key.")
 
 
 @app.post("/a/{aid}/sign/unfreeze")

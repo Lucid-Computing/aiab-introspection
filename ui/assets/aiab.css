@@ -64,10 +64,10 @@ body::before { display: none; }           /* the binary-field decoration is nois
 .stages li.here::before, .stages li.here strong { color: var(--ink-1); }
 
 details.info { border: var(--border-hairline); margin-top: var(--space-4); background: var(--paper-1); }
-details.info summary { cursor: pointer; list-style: none; padding: var(--space-4) var(--space-6); font-family: var(--font-mono); font-size: var(--text-base); color: var(--ink-1); }
-details.info summary::-webkit-details-marker { display: none; }
-details.info summary::before { content: "+"; display: inline-block; width: 1.4em; color: var(--amber-ink); }
-details.info[open] summary::before { content: "−"; }
+details.info > summary { cursor: pointer; list-style: none; padding: var(--space-4) var(--space-6); font-family: var(--font-mono); font-size: var(--text-base); color: var(--ink-1); }
+details.info > summary::-webkit-details-marker { display: none; }
+details.info > summary::before { content: "+"; display: inline-block; width: 1.4em; color: var(--amber-ink); }
+details.info[open] > summary::before { content: "−"; }
 .after { margin: 0; padding-left: var(--space-6); color: var(--ink-2); font-size: var(--text-base); }
 .after li { padding: var(--space-2) 0; border-bottom: var(--border-hairline); }
 
@@ -122,7 +122,7 @@ textarea[readonly], input[readonly] { background: var(--paper-2); color: var(--i
 textarea.code { min-height: 200px; }
 textarea.prose { min-height: 120px; }
 pre.cmd { padding: var(--space-2) var(--space-4); margin: var(--space-2) 0; }
-details.info summary { padding: var(--space-3) var(--space-5, 20px); }
+details.info > summary { padding: var(--space-3) var(--space-5, 20px); }
 .stages li { padding: var(--space-3); }
 .steps { margin: var(--space-4) 0; padding-left: var(--space-6); color: var(--ink-2); }
 .steps li { margin-bottom: var(--space-2); }
@@ -160,3 +160,76 @@ label.choice { display: flex; gap: var(--space-3); align-items: baseline; font-f
 .info-body .kv th { padding-left: 0; }
 .info-body .after { padding-left: var(--space-6); }
 .info-body pre.cmd { margin-left: 0; }
+
+/* ---- code: taller boxes ---- */
+textarea.code { min-height: 420px; }
+.whatitdoes { font-size: var(--text-base); color: var(--ink-1); white-space: pre-line; margin: 0; }
+.deploy-result p { line-height: var(--leading-normal); }
+
+/* ---- explanation paragraphs, and the code editor in the page's colours (beats the
+        library stylesheet, which loads later, by specificity) ---- */
+.whatitdoes + .whatitdoes { margin-top: var(--space-3); }
+.whatitdoes.note { border-top: var(--border-hairline); padding-top: var(--space-3); margin-top: var(--space-4); }
+
+.vflow li.not-called .vflow-body { border-style: dashed; color: var(--ink-3); }
+.vflow li.not-called .vflow-node { border-style: dashed; }
+
+textarea.code { caret-color: var(--paper-1); }
+
+/* ---- change log rows: one line each, long details fold out ---- */
+.changes li { padding: 0; }
+.change-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) 0; font-size: var(--text-sm); color: var(--ink-2); }
+details.change > summary { cursor: pointer; list-style: none; }
+details.change > summary::-webkit-details-marker { display: none; }
+details.change > summary::after { content: "+"; margin-left: auto; color: var(--amber-ink); font-family: var(--font-mono); }
+details.change[open] > summary::after { content: "−"; }
+.change-detail { padding: 0 0 var(--space-4) var(--space-6); display: grid; gap: var(--space-3); }
+.change-side .label { display: block; margin-bottom: var(--space-1); }
+.change-detail pre.cmd { margin: 0; white-space: pre; overflow-x: auto; }
+/* ---- the code editor: dark, in the page's type, under its own theme name so the
+        library's default colours never apply ---- */
+.CodeMirror.cm-s-aiab { height: auto; min-height: 420px; font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6; color: var(--paper-1); background: var(--ink-1); border: 1px solid var(--ink-1); border-radius: 0; }
+.cm-s-aiab .CodeMirror-scroll { min-height: 420px; }
+.cm-s-aiab .CodeMirror-gutters { background: #2a2b2f; border-right: 1px solid #3a3c41; }
+.cm-s-aiab .CodeMirror-linenumber { color: #7a7c82; font-family: var(--font-mono); }
+.cm-s-aiab .CodeMirror-cursor { border-left: 2px solid var(--paper-1); }
+.cm-s-aiab .CodeMirror-selected, .cm-s-aiab.CodeMirror-focused .CodeMirror-selected { background: rgba(201, 162, 39, 0.35); }
+.cm-s-aiab .CodeMirror-line::selection, .cm-s-aiab .CodeMirror-line > span::selection, .cm-s-aiab .CodeMirror-line > span > span::selection { background: rgba(201, 162, 39, 0.35); }
+.cm-s-aiab .CodeMirror-activeline-background { background: #26272b; }
+.cm-s-aiab .cm-keyword { color: var(--amber); font-weight: 500; }
+.cm-s-aiab .cm-def { color: var(--paper-1); font-weight: 600; }
+.cm-s-aiab .cm-variable, .cm-s-aiab .cm-variable-2, .cm-s-aiab .cm-property, .cm-s-aiab .cm-operator, .cm-s-aiab .cm-punctuation, .cm-s-aiab .cm-bracket { color: var(--paper-1); }
+.cm-s-aiab .cm-builtin { color: var(--paper-3); }
+.cm-s-aiab .cm-string, .cm-s-aiab .cm-string-2 { color: #cfc6ad; font-style: italic; }
+.cm-s-aiab .cm-comment { color: #8a8c92; font-style: italic; }
+.cm-s-aiab .cm-number, .cm-s-aiab .cm-atom { color: #e07a62; }
+textarea.code { background: var(--ink-1); color: var(--paper-1); border: 1px solid var(--ink-1); caret-color: var(--paper-1); }
+
+/* ---- nested dropdowns: plus on the right, one font size throughout ---- */
+details.change > summary::after { content: none; }
+.change-head { width: 100%; font-size: var(--text-sm); }
+.change-head .mono, .change-head strong, .change-head .text-muted { font-size: var(--text-sm); }
+.change-head .toggle { margin-left: auto; color: var(--amber-ink); font-family: var(--font-mono); font-size: var(--text-sm); }
+details.change[open] > summary .toggle { visibility: hidden; }
+details.change[open] > summary .toggle::before { content: "−"; visibility: visible; }
+.change-detail, .change-detail pre.cmd, .change-detail .label { font-size: var(--text-sm); }
+.change-detail .label { text-transform: none; letter-spacing: 0; color: var(--ink-3); }
+
+.info-body .explain, .info-body p { max-width: none; }
+
+/* ---- sign screen: commands in small type, the digest stays large ---- */
+pre.cmd { font-size: 12px; line-height: 1.6; }
+
+/* ---- agreements list: the selected agreement is marked by one amber line under its name ---- */
+.selected-label { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--amber-ink); }
+
+/* ---- smaller type on controls: buttons and dropdown titles sit below the body text ---- */
+.btn, .btn--sm { font-size: var(--text-xs); }
+.btn { padding: var(--space-2) var(--space-5, 20px); }
+details.info > summary { font-size: var(--text-sm); }
+
+/* ---- change log: filter links and paging line ---- */
+.changes-filter, .changes-more { font-family: var(--font-mono); font-size: var(--text-sm); margin: 0 0 var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: baseline; }
+.changes-filter .text-muted + a, .changes-filter a + .text-muted { margin-left: var(--space-1); }
+.changes-filter a.current { color: var(--ink-1); text-decoration: underline; text-underline-offset: 3px; }
+.changes-more { margin: var(--space-3) 0 0; }

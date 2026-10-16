@@ -15,6 +15,7 @@ class FunctionInfo:
     end_lineno: int
     signature: str
     source: str
+    docstring: str | None
 
 
 def plan_functions(source: str) -> dict[str, FunctionInfo]:
@@ -32,6 +33,7 @@ def plan_functions(source: str) -> dict[str, FunctionInfo]:
             end_lineno=end,
             signature=f"def {node.name}({ast.unparse(node.args)}){returns}",
             source="".join(lines[node.lineno - 1 : end]),
+            docstring=ast.get_docstring(node),
         )
     return found
 

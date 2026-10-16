@@ -5,16 +5,69 @@
 <h1>{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
 <p class="lead">The box runs these five functions in this order.</p>
 {% if view %}
-{% if edit %}
-<div class="notice">
-  <p><strong>Editing.</strong> Every save makes a new version that both parties must sign again.</p>
-  <a class="btn btn--ghost btn--sm" href="{{ base }}/plan">Finish editing</a>
+<div class="stack" style="margin-bottom: var(--space-10)">
+<details class="info" {% if changes.open %}open{% endif %}>
+  <summary>Changes · who did what{% if view.history %} <span class="text-muted">({{ view.history | length }})</span>{% endif %}</summary>
+  <div class="info-body">
+  {% if view.history %}
+  {% set q0 = "edit=1&" if edit else "" %}
+  <p class="changes-filter">
+    <span class="text-muted">who</span>
+    {% for w in ["", "lab", "auditor"] %}<a class="link {% if changes.who == w %}current{% endif %}" href="{{ base }}/plan?{{ q0 }}who={{ w }}&kind={{ changes.kind }}">{{ w or "all" }}</a>{% endfor %}
+    <span class="text-muted">what</span>
+    {% for k in [""] + changes.kinds %}<a class="link {% if changes.kind == k %}current{% endif %}" href="{{ base }}/plan?{{ q0 }}who={{ changes.who }}&kind={{ k }}">{{ k or "all" }}</a>{% endfor %}
+  </p>
+  {% endif %}
+  {% if changes.total %}
+  <ul class="changes">
+    {% for e in changes.entries %}
+    {% set short = e.kind not in ["code", "prompt"] and e.detail | length <= 60 %}
+    <li>
+      {% if short %}
+      <div class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="mono">{{ e.detail }}</span></div>
+      {% else %}
+      <details class="change">
+        <summary class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="text-muted">{{ "changed" if e.kind in ["code", "prompt", "settings"] else e.kind }}</span><span class="toggle" aria-hidden="true">+</span></summary>
+        <div class="change-detail">
+          {% if e.kind == "settings" and " → " in e.detail %}
+          {% set parts = e.detail.split(" → ", 1) %}
+          <div class="change-side"><span class="label">before</span><pre class="cmd">{{ parts[0] | pretty_json }}</pre></div>
+          <div class="change-side"><span class="label">after</span><pre class="cmd">{{ parts[1] | pretty_json }}</pre></div>
+          {% else %}
+          <pre class="cmd">{{ e.detail }}</pre>
+          {% endif %}
+        </div>
+      </details>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if changes.total > changes.entries | length %}
+  <p class="changes-more"><span class="text-muted">Latest {{ changes.entries | length }} of {{ changes.total }}.</span> <a class="link" href="{{ base }}/plan?{{ q0 }}who={{ changes.who }}&kind={{ changes.kind }}&changes=all">Show all</a></p>
+  {% elif changes.all and changes.total > 10 %}
+  <p class="changes-more"><span class="text-muted">All {{ changes.total }}.</span> <a class="link" href="{{ base }}/plan?{{ q0 }}who={{ changes.who }}&kind={{ changes.kind }}">Show the latest 10</a></p>
+  {% endif %}
+  {% elif view.history %}<p class="text-muted">No changes match this filter.</p>
+  {% else %}<p class="text-muted">No changes recorded yet. Saves made through this UI are listed here with the party that made them.</p>{% endif %}
+  </div>
+</details>
+<details class="info">
+  <summary>What is in the version, and the box's limits</summary>
+  <div class="info-body">
+  <table class="kv">
+    <tr><th>Files</th><td class="mono">{{ view.files | join(" · ") }}</td></tr>
+    <tr><th>Outside the digest</th><td><span class="mono">tests/</span> and <span class="mono">signatures/</span></td></tr>
+    <tr><th>Pinned model</th><td class="mono">{{ view.restrictions.models[0].id }}</td></tr>
+    <tr><th>Box limits</th><td class="mono">{% for k, v in view.restrictions.limits.items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>
+    {% if view.issue %}<tr><th>Loader says</th><td><span class="badge badge--danger">{{ view.issue }}</span> {{ view.issue_where }}.</td></tr>{% endif %}
+  </table>
+  </div>
+</details>
 </div>
-{% endif %}
 
 <ol class="vflow">
   {% for s in view.steps if s.step.called %}
-  <li class="{% if s.issue %}has-error{% endif %} {% if s.step.kind == 'run_llm' %}is-llm{% endif %}">
+  <li class="{% if s.issue %}has-error{% endif %}">
     <div class="vflow-node"></div>
     <div class="vflow-body">
       <div class="vflow-head">
@@ -34,34 +87,15 @@
   {% endfor %}
 </ol>
 
-{% if not edit %}
-<form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--primary">Edit this plan</button></form>
-{% endif %}
+<div class="row" style="gap: var(--space-4)">
+  {% if not edit %}
+  <form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost">Edit this plan</button></form>
+  {% else %}
+  <a class="btn btn--ghost" href="{{ base }}/plan">Finish editing</a>
+  {% endif %}
+  <a class="btn btn--primary" href="{{ base }}/sign">Sign this plan</a>
+</div>
 
-<details class="info" style="margin-top: var(--space-10)" {% if view.history %}open{% endif %}>
-  <summary>Changes · who did what</summary>
-  <div class="info-body">
-  {% if view.history %}
-  <ul class="changes">
-    {% for e in view.history[:40] %}
-    <li><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong>{% if e.kind in ['code', 'prompt'] %}<pre class="cmd">{{ e.detail }}</pre>{% else %} <span class="mono">{{ e.detail }}</span>{% endif %}</li>
-    {% endfor %}
-  </ul>
-  {% else %}<p class="text-muted">No changes recorded yet. Saves made through this UI are listed here with the party that made them.</p>{% endif %}
-  </div>
-</details>
 
-<details class="info">
-  <summary>What is in the version, and the box's limits</summary>
-  <div class="info-body">
-  <table class="kv">
-    <tr><th>Files</th><td class="mono">{{ view.files | join(" · ") }}</td></tr>
-    <tr><th>Outside the digest</th><td><span class="mono">tests/</span> and <span class="mono">signatures/</span></td></tr>
-    <tr><th>Pinned model</th><td class="mono">{{ view.restrictions.models[0].id }}</td></tr>
-    <tr><th>Box limits</th><td class="mono">{% for k, v in view.restrictions.limits.items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>
-    {% if view.issue %}<tr><th>Loader says</th><td><span class="badge badge--danger">{{ view.issue }}</span> {{ view.issue_where }}.</td></tr>{% endif %}
-  </table>
-  </div>
-</details>
 {% endif %}
 {% endblock %}
