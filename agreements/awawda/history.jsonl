@@ -1,0 +1,9 @@
+{"at": "2026-10-15T16:00:07Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "filter_logs: filter", "detail": "{\"keywords\": [], \"kinds\": [\"request\", \"response\", \"tool_call\", \"tool_result\"]} → {\"keywords\": [], \"kinds\": [\"request\", \"response\", \"tool_call\"]}"}
+{"at": "2026-10-16T02:16:54Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "metric: classification.threshold", "detail": "0.7 → 10"}
+{"at": "2026-10-16T02:34:57Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "metric: classification.threshold", "detail": "10 → 1"}
+{"at": "2026-10-16T07:01:30Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "classify: limits.max_model_calls_per_run", "detail": "64 → 48"}
+{"at": "2026-10-16T07:01:43Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "classify: limits.max_model_calls_per_run", "detail": "48 → 64"}
+{"at": "2026-10-16T07:03:08Z", "party": "lab", "user": "teddy", "kind": "code", "where": "filter_logs: code", "detail": "@@ -21,2 +21,3 @@\n     kept: list[LogRecord] = []\n+    print(\"hello\")\n     for record in logs:"}
+{"at": "2026-10-16T07:03:17Z", "party": "lab", "user": "teddy", "kind": "code", "where": "filter_logs: code", "detail": "@@ -21,3 +21,2 @@\n     kept: list[LogRecord] = []\n-    print(\"hello\")\n     for record in logs:"}
+{"at": "2026-10-16T07:05:16Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "filter_logs: input_scope.agents", "detail": "[\"agent-a\", \"agent-b\", \"agent-c\"] → [\"agent-a\", \"agent-b\", \"agent-c\", \"agent-d\"]"}
+{"at": "2026-10-16T07:05:28Z", "party": "lab", "user": "teddy", "kind": "settings", "where": "filter_logs: input_scope.agents", "detail": "[\"agent-a\", \"agent-b\", \"agent-c\", \"agent-d\"] → [\"agent-a\", \"agent-b\", \"agent-c\"]"}

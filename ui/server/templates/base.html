@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}AIAB agreement{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/swiss.css?v={{ asset_version }}">
+<link rel="stylesheet" href="/assets/aiab.css?v={{ asset_version }}">
+</head>
+<body>
+<nav class="navbar">
+  <a class="nav-brand" href="/how"><span class="nav-wordmark">AIAB · Agreement</span></a>
+  <div class="nav-links">
+    {% for href, label in [("/how", "How it works"), ("/agreements", "Agreements")] %}
+    <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
+    {% endfor %}
+    {% if user %}
+    <span class="chip">{{ user.display_name }} <span class="badge badge--ink">{{ user.party }}</span></span>
+    <form method="post" action="/logout" class="inline"><button class="btn btn--ghost btn--sm">Log out</button></form>
+    {% endif %}
+  </div>
+</nav>
+<main class="container page">
+  {% if msg %}<p class="form-message success">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="form-message error">{{ err }}</p>{% endif %}
+  {% if error %}<p class="form-message error">The plan folder does not load: {{ error }}</p>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+<dialog id="confirm" class="modal">
+  <form method="dialog">
+    <p class="label">Please confirm</p>
+    <p id="confirm-text" class="modal-text"></p>
+    <div class="row modal-actions"><button value="cancel" class="btn btn--ghost">Cancel</button><button value="ok" class="btn btn--primary">Continue</button></div>
+  </form>
+</dialog>
+<script>
+  // Forms with data-confirm open the dialog above instead of submitting straight away.
+  (function () {
+    var dialog = document.getElementById("confirm");
+    if (!dialog || !dialog.showModal) return;
+    document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+      form.addEventListener("submit", function (event) {
+        if (form.dataset.confirmed) return;
+        event.preventDefault();
+        document.getElementById("confirm-text").textContent = form.dataset.confirm;
+        dialog.returnValue = "";
+        dialog.addEventListener("close", function () {
+          if (dialog.returnValue === "ok") { form.dataset.confirmed = "1"; form.requestSubmit(); }
+        }, { once: true });
+        dialog.showModal();
+      });
+    });
+  })();
+</script>
+</body>
+</html>

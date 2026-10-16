@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Log in · AIAB agreement{% endblock %}
+{% block content %}
+<div class="panel panel--offset login">
+    <h3>Log in</h3>
+  <p class="explain">Accounts are local to this server for now (one per person, each bound to a party: lab or auditor). GitHub login comes with the pull-request flow.</p>
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="field"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required></div>
+    <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
+    <button class="btn btn--primary">Log in</button>
+  </form>
+</div>
+{% endblock %}

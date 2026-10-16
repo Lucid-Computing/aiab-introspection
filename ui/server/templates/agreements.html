@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Agreements · AIAB agreement{% endblock %}
+{% block content %}
+{% if pushed is defined and pushed %}
+<div class="notice deploy-result" style="margin-bottom: var(--space-8)">
+  {% if pushed.error %}
+  <p><strong>{{ deployed }}</strong> is selected for deployment and copied into <span class="mono">plan/</span>, but pushing it failed: <span class="mono">{{ pushed.error }}</span>. Commit and push <span class="mono">plan/</span> by hand.</p>
+  {% elif pushed.unchanged %}
+  <p><strong>{{ deployed }}</strong> is selected for deployment. Branch <span class="mono">{{ pushed.branch }}</span> was already pushed with these exact files, so there is nothing new to push.{% if pushed.compare_url %} <a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Its pull request</a>.{% endif %}</p>
+  {% else %}
+  <p><strong>{{ deployed }}</strong> is selected for deployment. Branch <span class="mono">{{ pushed.branch }}</span> ({{ pushed.commit }}) is pushed with only the <span class="mono">plan/</span> change.
+    {% if pushed.pr_url %}Pull request: <a class="link" href="{{ pushed.pr_url }}" target="_blank" rel="noopener">{{ pushed.pr_url }}</a>. Merge it when CI is green.
+    {% elif pushed.compare_url %}<a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Open the pull request</a>, then merge it when CI is green.
+    {% endif %}</p>
+  {% endif %}
+</div>
+{% endif %}
+<div class="row" style="justify-content: space-between; margin-bottom: var(--space-6)"><h1 style="margin: 0">Agreements</h1><a class="btn btn--primary" href="/agreements/new">New agreement</a></div>
+<table class="table">
+  <thead><tr><th>Agreement</th><th>Version</th><th>State</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr{% if r.selected %} class="selected"{% endif %}>
+    <td><strong>{{ r.plan_id }}</strong>{% if r.selected %}<br><span class="selected-label">selected · deploy</span>{% elif r.id != "plan" %}<br><span class="text-muted">agreements/{{ r.id }}</span>{% endif %}</td>
+    <td>{% if r.digest %}<span class="digest">{{ r.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
+    <td>{{ r.state }}</td>
+    <td class="actions">
+      <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/plan">Open</a>
+      <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm">Edit</button></form>
+      <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/sign">Sign</a>
+      {% if r.id != "plan" and not r.selected %}
+      <form method="post" action="/a/{{ r.id }}/deploy" class="inline" data-confirm="This selects {{ r.plan_id }} for deployment: its files replace plan/, a branch with that change is pushed, and a pull request is opened for you to merge. Continue?"><button class="btn btn--primary btn--sm" {% if not r.signed %}title="not signed by both parties yet: CI would reject it"{% endif %}>Deploy</button></form>
+      <form method="post" action="/a/{{ r.id }}/delete" class="inline" data-confirm="Delete {{ r.plan_id }}? The folder agreements/{{ r.id }} and its history are removed. This cannot be undone."><button class="btn btn--ghost btn--sm">Delete</button></form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="notice" style="margin-top: var(--space-8)">
+  {% if box.configured %}
+  <p><strong>The box</strong> ({{ box.url }}) is running
+    {% if box.plan_digest %}version <span class="digest">{{ box.plan_digest[7:19] }}…</span>{% if box.plan_matches %}, the one selected for deployment{% else %}, which is not the one selected for deployment{% endif %}{% else %}an unknown version ({{ box.manifest_error or "not reported yet" }}){% endif %}.</p>
+  {% else %}
+  <p><strong>The box</strong> is not connected, so nothing is running yet. Start the UI with <span class="mono">AIAB_BOX_URL</span> set to show which version it runs.</p>
+  {% endif %}
+  <a class="btn btn--ghost btn--sm" href="/attest">What is running</a>
+</div>
+{% endblock %}
