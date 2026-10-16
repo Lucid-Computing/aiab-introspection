@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! command -v uv >/dev/null 2>&1; then
+  printf 'Install uv first: https://docs.astral.sh/uv/getting-started/installation/\n' >&2
+  exit 1
+fi
 cd "$repo_dir/static"
 printf '$ cd %q\n' "$repo_dir/static"
 printf '$ uv sync --locked --quiet\n'

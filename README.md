@@ -10,6 +10,8 @@ Live audit API: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev
 
 Explore a recorded run: [Inside an audit](https://aiab-signed-audit-run.surge.sh). Operator commands: [evaluation, offline verification and release automation](docs/AUDIT_OPERATIONS.md).
 
+**Run the live demo yourself:** [PM quick start](docs/PM_DEMO.md). It uses stub logger records and real attested inference; no Docker, GPU or Tailscale setup required.
+
 The repository is split into three parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AIAB_DESIGN_SPEC.md) for the design.
 
 | Folder | Part | Owner | Changes |

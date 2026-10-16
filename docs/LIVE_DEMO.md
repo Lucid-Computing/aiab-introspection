@@ -1,5 +1,7 @@
 # Live, guided audit demonstration
 
+Running this on your own machine? Start with the [PM quick start](PM_DEMO.md).
+
 On the configured development host, launch from any directory:
 
 ```sh

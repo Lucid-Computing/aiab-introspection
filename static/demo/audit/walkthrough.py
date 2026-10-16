@@ -26,6 +26,7 @@ def main():
     )
     parser.add_argument("--output", type=Path, help="New private artifact directory")
     args = parser.parse_args()
+    args.key_directory = args.key_directory.expanduser().resolve()
     os.umask(0o077)
     out = args.output or Path(tempfile.mkdtemp(prefix="aiab-live-demo-"))
     if args.output:
@@ -37,7 +38,20 @@ def main():
     logger = args.key_directory / "logger.key"
     for path in (release, folder / "plan.json", token, logger):
         if not path.exists():
-            raise SystemExit(f"Missing prerequisite: {path}")
+            raise SystemExit(
+                f"Missing prerequisite: {path}\n"
+                "For demo credentials, follow docs/PM_DEMO.md or use --key-directory PATH."
+            )
+    from aiab.config import read_private_key
+
+    try:
+        read_private_key(str(token), "AUDIT_TOKEN")
+        read_private_key(str(logger), "SIGNING_KEY")
+    except Exception:
+        raise SystemExit(
+            "Credentials must be readable, owned by you, regular files with permissions 600.\n"
+            f"Run: chmod 600 {shlex.quote(str(token))} {shlex.quote(str(logger))}"
+        ) from None
     cfg = json.loads((folder / "plan.json").read_text())
     pins = json.loads(release.read_text())
     (out / "release.json").write_text(release.read_text())
