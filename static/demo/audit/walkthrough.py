@@ -1,12 +1,15 @@
 """Interactive live audit walkthrough. Only the logger is stubbed."""
 
 import argparse
+import inspect
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import uuid
 from pathlib import Path
 
@@ -62,6 +65,7 @@ def main():
             ]
         else:
             command = [sys.executable, "-m", "auditor.baked", *base]
+        print(f"\n$ cd {shlex.quote(str(STATIC))} && {shlex.join(command)}", flush=True)
         result = subprocess.run(command, cwd=STATIC, capture_output=True, text=True, timeout=240)
         if result.returncode:
             # CLI emits fixed errors, not model responses or credentials.
@@ -92,9 +96,35 @@ def main():
         ),
         flush=True,
     )
-    step("2. Verify the live box and pin its report identity", pins["host"])
+    from aiab.audit.transport import FixedClient, PinnedConnection
+
+    sdk_source = "\n\n".join(
+        textwrap.dedent(inspect.getsource(item)).rstrip()
+        for item in (FixedClient, PinnedConnection.start, PinnedConnection.check)
+    )
+    step(
+        "2. Your local client verifies the box using the Tinfoil SDK",
+        (
+            "WHO: This script runs the verification client on your machine.\n"
+            f"REMOTE BOX: {pins['host']}\n"
+            "HOW: The client uses the Tinfoil Python SDK (SecureClient) to verify\n"
+            "attestation and establish a connection bound to the expected release.\n"
+            "The AIAB client also checks the runtime image, policy and plan against\n"
+            "the local release pins, then saves the box's report-signing public key.\n"
+            "WHY: Before uploading logs, establish which service will process them.\n"
+            "This checks service identity, not whether its classification is correct.\n\n"
+            "Actual client source: static/aiab/audit/transport.py\n"
+            "The methods below belong to PinnedConnection; FixedClient subclasses the SDK.\n\n"
+            "from tinfoil import SecureClient\n\n" + sdk_source
+        ),
+    )
     cli("pin-identity", *connection, "--output", out / "anchor.json")
-    print("Verified attestation, release, runtime image and plan bindings.", flush=True)
+    print(
+        "Local client verification passed: Tinfoil SDK attestation/release checks\n"
+        "and AIAB runtime image, policy and plan checks.\n"
+        f"Saved report-verification identity to {out / 'anchor.json'}",
+        flush=True,
+    )
     outcomes = []
     cases = ["benign", "bio"] if args.case == "both" else [args.case]
     for case in cases:

@@ -7,13 +7,16 @@ On the configured development host, launch from any directory:
 ```
 
 Or, from a checkout containing this script, run `./scripts/demo-live`.
-It pauses for Enter at each stage in an interactive terminal. Use `--auto` for an
+It pauses for Enter at each stage in an interactive terminal. Each subprocess
+command is printed before execution, shell-quoted for copying, with its working
+directory. Credential file paths appear, but their contents are never printed. Use `--auto` for an
 unattended run, or `--case benign` / `--case bio` for one example (default: both).
 
 The walkthrough:
 
 1. Shows the classification task, threshold and report schema; verifies both plan signatures.
-2. Verifies the live Tinfoil service and saves its report identity anchor.
+2. Shows the actual SDK wrapper, connection setup and verification-check source,
+   then verifies the live Tinfoil service and saves its report identity anchor.
 3. Displays synthetic logger records and signs a stub export using the demo logger key.
 4. Submits that export to the live `/aiab/runs` endpoint and displays the run ID.
 5. Waits for actual attested inference, verifies and displays the signed report.
