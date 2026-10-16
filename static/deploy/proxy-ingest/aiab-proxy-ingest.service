@@ -1,0 +1,19 @@
+[Unit]
+Description=AIAB unsigned test proxy segment receiver
+After=network.target
+
+[Service]
+User=jon
+Group=jon
+WorkingDirectory=/home/jon/projects/aiab-audit-execution/static
+ExecStart=/home/jon/projects/aiab-audit-execution/static/.venv/bin/python -m aiab.proxy_ingest serve --root /home/jon/.local/share/aiab-proxy-ingest
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/jon/.local/share/aiab-proxy-ingest
+
+[Install]
+WantedBy=multi-user.target
