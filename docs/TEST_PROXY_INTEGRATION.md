@@ -21,8 +21,10 @@ receive/decrypt in the attested boundary or agree on this trusted storage hop.
 
 At implementation time Tailscale initially reported Running without tag:worm.
 Requesting that tag using `tailscale up` transitioned to NeedsLogin. The session subsequently returned to Running with no tags. HTTPS forwarding is
-configured, but certificate provisioning and sender delivery are **not yet
-verified**. Have the tailnet admin approve/configure the receiver tag and ACLs.
+configured and its TLS certificate has been issued, but sender delivery is
+**not yet verified**. A same-host HTTPS probe hits the existing Caddy wildcard
+listener on port 443 and fails TLS; test Serve from another tailnet device.
+The existing Caddy configuration has not been changed. Have the tailnet admin approve/configure the receiver tag and ACLs.
 The installed forwarding configuration is:
 
 ```sh
