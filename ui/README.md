@@ -18,7 +18,7 @@ Open http://127.0.0.1:8090 and log in. The UI reads and edits agreement folders 
 
 To sign: the Sign screen shows one `openssl` command (OpenSSL 3; on a Mac `brew install openssl`) that signs the version digest with your private key and prints the signature; paste it and press Verify and store. Making a key pair is two more `openssl` lines, and the public key is submitted on the same screen (it replaces your party's key in the trust file the UI uses). `make dev-keys` writes both the box's raw `.key` form and a `.pem` copy for openssl, and can be re-run: existing keys are kept and only missing files are added. Without OpenSSL 3, `assets/sign_digest.py` does the same, and its `--submit` option posts the signature to the UI without pasting.
 
-Deploy pushes: it copies the agreement into `plan/`, makes a branch from the remote's default branch with only that change (in a temporary worktree, your checkout is not switched), pushes it, and opens the pull request when the GitHub CLI is logged in (`gh auth login`); otherwise it shows the compare link. You merge the pull request yourself. `AIAB_DEPLOY_BASE` overrides the base branch, for example `ui-design` while `master` lacks the new layout.
+Deploy pushes: it copies the agreement into `plan/`, makes a branch from the deploy base (`AIAB_DEPLOY_BASE`, normally `production`; default the remote's default branch) with only that change (in a temporary worktree, your checkout is not switched), pushes it, and opens the pull request when the GitHub CLI is logged in (`gh auth login`); otherwise it shows the compare link. You merge the pull request yourself. With `AIAB_PUSH_DRAFTS=1` every save also commits `agreements/` in the checkout and pushes it to the checkout's own branch a few seconds later, so the server disk is never the only copy of a draft. The branch model is in [docs/BRANCHES_AND_RELEASE.md](../docs/BRANCHES_AND_RELEASE.md).
 
 ## Runs: the deployed plan against the live box
 
@@ -84,7 +84,7 @@ docker run --rm -p 8090:8090 -v /path/to/origin.git:/origin.git -v aiab-data:/da
   -e AIAB_CHECKOUT_BRANCH=ui-design -e UI_BOOTSTRAP_ACCOUNTS=teddy:lab:lab-pass-123 aiab-ui
 ```
 
-Environment, for any host: `AIAB_PLAN_DIR` (default `../plan`), `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository Deploy pushes from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for deploy PRs, default the remote's default branch), `AIAB_TRUST_FILE` (default `static/aiab/baked/trust.json`), `AIAB_BOX_URL` (optional), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `UI_ACCOUNTS_FILE` (default `ui/accounts.json`), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
+Environment, for any host: `AIAB_PLAN_DIR` (default `../plan`), `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository Deploy pushes from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for deploy PRs, default the remote's default branch), `AIAB_TRUST_FILE` (default `static/aiab/baked/trust.json`), `AIAB_BOX_URL` (optional), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `UI_ACCOUNTS_FILE` (default `ui/accounts.json`), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
 
 ## Integration contract with the box (from master, Jon)
 

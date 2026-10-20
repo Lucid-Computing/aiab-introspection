@@ -1,0 +1,97 @@
+# Put a reviewed build live: run the release procedure (static/deploy/tinfoil/audit/release.py)
+# from CI instead of an operator's laptop. One approval in the "production" environment, then:
+# build-image.yml on the production branch, measured config pushed to the public config repo,
+# Tinfoil told to run the new tag, live identity verified, synthetic acceptance run, and the
+# new release pins committed back to production.
+#
+# Secrets (repository or environment "production"):
+#   TINFOIL_API_KEY    Lucid's Tinfoil control-plane key (what ~/.tinfoil/config.json holds)
+#   RELEASE_GH_TOKEN   a token that may run workflows and download runs in this repository and
+#                      push commits/tags and download releases in the public config repository
+#   AUDIT_LAB_TOKEN    the lab API token, for the live verification step
+#   AUDIT_LOGGER_KEY   the demo logger private key, for the synthetic acceptance run
+name: Release to the live box
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag vMAJOR.MINOR.PATCH (empty: bump the patch of the current tag)'
+        required: false
+        type: string
+  push:
+    branches: [production]
+    paths: ['plan/**', 'static/aiab/**', 'static/auditor/**', 'static/deploy/Dockerfile']
+concurrency:
+  group: audit-release
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    environment: production   # configure a required reviewer on this environment for the approval click
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: production
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.6"
+      - name: Install credentials for this job only
+        env:
+          TINFOIL_API_KEY: ${{ secrets.TINFOIL_API_KEY }}
+          AUDIT_LAB_TOKEN: ${{ secrets.AUDIT_LAB_TOKEN }}
+          AUDIT_LOGGER_KEY: ${{ secrets.AUDIT_LOGGER_KEY }}
+        run: |
+          umask 077
+          test -n "$TINFOIL_API_KEY" && test -n "$AUDIT_LAB_TOKEN" && test -n "$AUDIT_LOGGER_KEY"
+          mkdir -p ~/.tinfoil "$RUNNER_TEMP/keys"
+          printf '{"controlplane_url":"https://api.tinfoil.sh","api_key":"%s"}\n' "$TINFOIL_API_KEY" > ~/.tinfoil/config.json
+          printf '%s\n' "$AUDIT_LAB_TOKEN" > "$RUNNER_TEMP/keys/lab.token"
+          printf '%s\n' "$AUDIT_LOGGER_KEY" > "$RUNNER_TEMP/keys/logger.key"
+      - name: Choose the tag
+        id: tag
+        env:
+          REQUESTED: ${{ inputs.tag }}
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            TAG="$REQUESTED"
+          else
+            CURRENT=$(python3 -c "import json; print(json.load(open('static/deploy/tinfoil/audit/release.json'))['tag'])")
+            TAG=$(python3 -c "import sys; a,b,c=sys.argv[1][1:].split('.'); print(f'v{a}.{b}.{int(c)+1}')" "$CURRENT")
+          fi
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run the release procedure
+        working-directory: static
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+        run: |
+          uv sync --locked
+          git config user.name "AIAB release"
+          git config user.email "aiab-release@users.noreply.github.com"
+          gh auth setup-git
+          uv run --locked python deploy/tinfoil/audit/release.py \
+            --execute --source-ref production --tag "${{ steps.tag.outputs.tag }}" \
+            --key-directory "$RUNNER_TEMP/keys" --output "$RUNNER_TEMP/release-out"
+      - name: Commit the new release pins to production
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+        run: |
+          cp "$RUNNER_TEMP/release-out/release.json" static/deploy/tinfoil/audit/release.json
+          git config user.name "AIAB release"
+          git config user.email "aiab-release@users.noreply.github.com"
+          git add static/deploy/tinfoil/audit/release.json
+          git commit -m "Release ${{ steps.tag.outputs.tag }}: update pins [skip ci]"
+          git push origin HEAD:production
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ steps.tag.outputs.tag }}
+          path: |
+            ${{ runner.temp }}/release-out/attempt.json
+            ${{ runner.temp }}/release-out/release.json
+            ${{ runner.temp }}/release-out/acceptance.json
+          if-no-files-found: error

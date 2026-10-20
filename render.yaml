@@ -19,7 +19,11 @@ services:
       - key: AIAB_REPO
         value: lucid-computing-labs/aiab-introspection
       - key: AIAB_CHECKOUT_BRANCH
-        value: master           # the branch whose agreements/ and plan/ the UI works on
+        value: production       # the branch the image is built from; the UI works on its agreements/ and plan/
+      - key: AIAB_DEPLOY_BASE
+        value: production       # Deploy opens its plan pull request against this branch
+      - key: AIAB_PUSH_DRAFTS
+        value: "1"              # agreement drafts are pushed to that branch after each save
       - key: UI_SESSION_SECRET
         generateValue: true
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write

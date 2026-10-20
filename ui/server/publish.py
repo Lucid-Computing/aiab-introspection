@@ -7,9 +7,11 @@ checkout you are working in is never switched. Merging is left to people and to 
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -166,3 +168,56 @@ def push_deploy(
         except RuntimeError:
             pass
     return result
+
+
+# ---- agreement drafts: pushed to the checkout's own branch, so the server disk is never the
+#      only copy. Drafts are not baked and CI does not check them, so a plain push is right.
+
+log = logging.getLogger("aiab.drafts")
+_drafts_lock = threading.Lock()
+_drafts_timer: threading.Timer | None = None
+DRAFTS_DELAY = 5.0  # seconds; several quick saves become one commit
+
+
+def push_drafts(repo: Path, actor: dict[str, str] | None = None) -> str:
+    """Commit agreements/ in the checkout and push it to the branch the checkout is on.
+
+    Returns a short status line. Only the checkout's own branch is pushed, never another
+    one, so a laptop checkout on a feature branch stays untouched unless asked.
+    """
+    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch == "HEAD":
+        return "detached checkout; drafts not pushed"
+    _git(repo, "add", "-A", "agreements")
+    if not _git(repo, "status", "--porcelain", "--", "agreements"):
+        return "no draft changes"
+    who = f"{(actor or {}).get('party', 'party')} ({(actor or {}).get('username', '?')})"
+    _git(
+        repo, "commit", "-q", "-m", f"Save agreement drafts\n\nSaved by {who} via the agreement UI."
+    )
+    try:
+        _git(repo, "push", "origin", f"HEAD:refs/heads/{branch}", timeout=120)
+    except RuntimeError:
+        # Someone else pushed first (another save, a merge from master). Replay on top.
+        _git(repo, "pull", "--rebase", "--quiet", "origin", branch, timeout=120)
+        _git(repo, "push", "origin", f"HEAD:refs/heads/{branch}", timeout=120)
+    return f"drafts pushed to {branch}"
+
+
+def schedule_drafts_push(repo: Path, actor: dict[str, str] | None = None) -> None:
+    """Push a few seconds after the last save, in the background, one push for a burst."""
+    global _drafts_timer
+
+    def run() -> None:
+        with _drafts_lock:
+            try:
+                log.info(push_drafts(repo, actor))
+            except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
+                log.warning("drafts push failed: %s", str(exc)[-300:])
+
+    with _drafts_lock:
+        if _drafts_timer is not None:
+            _drafts_timer.cancel()
+        _drafts_timer = threading.Timer(DRAFTS_DELAY, run)
+        _drafts_timer.daemon = True
+        _drafts_timer.start()

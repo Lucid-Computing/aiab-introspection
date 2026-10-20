@@ -2,7 +2,7 @@
 name: Build reviewed enclave image
 on:
   push:
-    branches: [master]
+    branches: [master, production]
     paths: ['plan/**', 'static/**', '.dockerignore', '.github/workflows/build-image.yml']
   workflow_dispatch:
     inputs:

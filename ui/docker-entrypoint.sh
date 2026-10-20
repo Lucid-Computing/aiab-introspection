@@ -27,6 +27,19 @@ if [ ! -d "$DATA/repo/.git" ]; then
   git clone --quiet --branch "$BRANCH" "$URL" "$DATA/repo"
 fi
 mkdir -p "$DATA/repo/agreements"
+# Follow the configured branch: switch if AIAB_CHECKOUT_BRANCH changed since the clone, then
+# pick up what landed on it since the last start (merges from master, new release pins).
+# Only when nothing unsaved sits in the working tree.
+if [ -z "$(git -C "$DATA/repo" status --porcelain)" ]; then
+  if [ "$(git -C "$DATA/repo" rev-parse --abbrev-ref HEAD)" != "$BRANCH" ]; then
+    git -C "$DATA/repo" fetch --quiet origin "$BRANCH" \
+      && git -C "$DATA/repo" switch --quiet --track -C "$BRANCH" "origin/$BRANCH" \
+      && echo "switched the repository copy to $BRANCH"
+  fi
+  git -C "$DATA/repo" pull --ff-only --quiet origin "$BRANCH" || echo "warning: could not fast-forward $BRANCH"
+else
+  echo "note: unsaved changes in $DATA/repo, not pulling or switching"
+fi
 if [ ! -f "$DATA/trust.json" ]; then
   cp /app/static/aiab/baked/trust.json "$DATA/trust.json"
 fi
@@ -36,6 +49,8 @@ if [ -n "${LOGGER_KEY:-}" ]; then printf '%s\n' "$LOGGER_KEY" > "$DATA/demo-keys
 export AIAB_GIT_DIR="$DATA/repo" AIAB_PLAN_DIR="$DATA/repo/plan" AIAB_AGREEMENTS_DIR="$DATA/repo/agreements"
 export AIAB_TRUST_FILE="$DATA/trust.json" UI_ACCOUNTS_FILE="$DATA/accounts.json"
 export AIAB_RUNS_DIR="$DATA/runs" AIAB_DEMO_KEYS="$DATA/demo-keys"
+# Release pins from the checkout, not the image, so a redeploy by the operator is seen here.
+export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DATA/repo/static/deploy/tinfoil/audit/release.json}"
 
 # First boot only: accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,...".
 if [ ! -f "$DATA/accounts.json" ] && [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then

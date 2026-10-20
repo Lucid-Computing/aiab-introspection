@@ -146,6 +146,12 @@ def render(request: Request, template: str, **context: Any) -> Response:
     return templates.TemplateResponse(request, template, context)
 
 
+def saved(actor: dict[str, str] | None) -> None:
+    """After a write to an agreement folder: push the drafts if this deployment asked for it."""
+    if settings.push_drafts:
+        publish.schedule_drafts_push(settings.git_dir, actor)
+
+
 def load_view(target: Settings) -> tuple[pv.PlanView | None, str | None]:
     try:
         return pv.load_plan_view(target), None
@@ -240,6 +246,7 @@ async def new_agreement(request: Request) -> Response:
         return render(
             request, "new_agreement.html", view=view, error=error, form=form, err="; ".join(errors)
         )
+    saved(user_of(request))
     return back(
         f"/a/{created}/plan?edit=1", msg=f"New agreement {created}. Code and prompt copied."
     )
@@ -345,6 +352,7 @@ async def start_editing(request: Request, aid: str) -> Response:
     if redirect:
         return redirect
     removed = pv.delete_signatures(target, user_of(request))
+    saved(user_of(request))
     note = f" {removed} signature file(s) removed." if removed else ""
     form = await request.form()
     where = str(form.get("next", ""))
@@ -368,6 +376,7 @@ async def deploy(request: Request, aid: str) -> Response:
     pushed = publish.push_deploy(
         settings.git_dir, target.plan_dir, aid, digest, actor, base=settings.deploy_base
     )
+    saved(actor)  # the deploy is recorded in the agreement's change log
     rows = pv.list_agreements(settings)
     selected = next((r for r in rows if r["id"] == "plan"), None)
     box = await box_status(settings.box_url, selected["digest"] if selected else "")
@@ -382,6 +391,7 @@ async def delete_agreement(request: Request, aid: str) -> Response:
     problem = pv.delete_agreement(settings, aid)
     if problem:
         return back("/agreements", err=problem)
+    saved(user_of(request))
     return back("/agreements", msg=f"{aid} deleted.")
 
 
@@ -422,6 +432,7 @@ async def save_settings(request: Request, aid: str, name: str) -> Response:
     errors = pv.save_step_settings(target, name, form, user_of(request) or {})
     if errors:
         return back(here, err="; ".join(errors))
+    saved(user_of(request))
     return back(here, msg="Settings saved. This is a new version.")
 
 
@@ -439,6 +450,7 @@ async def save_code(request: Request, aid: str, name: str, source: str = Form(..
     problem = pv.save_function(target, name, source, user_of(request) or {})
     if problem:
         return back(here, err=problem)
+    saved(user_of(request))
     return back(here, msg=f"{name}() saved. This is a new version.")
 
 
@@ -458,6 +470,7 @@ async def save_prompt(
     problem = pv.save_prompt(target, prompt_id, text, user_of(request) or {})
     if problem:
         return back(here, err=problem)
+    saved(user_of(request))
     return back(here, msg="Prompt saved. This is a new version.")
 
 
@@ -512,6 +525,7 @@ async def sign_upload(
     status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user)
     if status != "ok":
         return back(here, err=f"Signature not accepted: {detail}")
+    saved(user)
     return back(here, msg=f"{party} signature verified and stored.")
 
 
@@ -527,6 +541,7 @@ async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()])
         return back(here, err="You can only remove your own signature.")
     if not pv.remove_signature(target, party, user):
         return back(here, err="There is no signature of yours to remove.")
+    saved(user)
     return back(here, msg="Your signature is removed. Sign this version again below.")
 
 

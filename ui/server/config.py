@@ -27,6 +27,7 @@ class Settings:
     runs_dir: Path  # one folder per audit run started from the Runs screen
     demo_keys_dir: Path  # lab.token and logger.key for the live box, never in the repo
     release_file: Path  # the release pins the live box must match
+    push_drafts: bool  # push agreement folders to the checkout's branch after each save
 
     @property
     def repo_url(self) -> str | None:
@@ -72,4 +73,5 @@ def load_settings() -> Settings:
         release_file=Path(
             env.get("AIAB_RELEASE_FILE", STATIC_DIR / "deploy/tinfoil/audit/release.json")
         ).resolve(),
+        push_drafts=env.get("AIAB_PUSH_DRAFTS", "").lower() in {"1", "true", "yes"},
     )
