@@ -8,15 +8,88 @@
 <p class="lead">Transcript <span class="mono">{{ run.transcript }}</span>, started {{ run.started[:16].replace("T", " ") }} by {{ run.by.user }} ({{ run.by.party }}).
 {% if run.status == "running" %}Running. This page refreshes itself every few seconds.{% elif run.status == "failed" %}Stopped: a step failed. Nothing after it ran.{% elif run.status == "interrupted" %}Interrupted: the server restarted while this run was going. Start a new one.{% else %}Finished and verified.{% endif %}</p>
 
-{% if run.status == "done" and run.result %}
-<div class="notice" style="margin-bottom: var(--space-8)">
-  <p><strong>Result:</strong> {% if run.result.flagged %}flagged{% else %}not flagged{% endif %}. The box's signed report says <span class="mono">flagged = {{ run.result.flagged | lower }}</span> for run <span class="mono">{{ run.result.run_id }}</span>, and the report verified offline.</p>
-</div>
-{% endif %}
+{# which step is "now": the running one, else the failed one, else the last done one #}
+{% set ns = namespace(idx=0) %}
+{% for s in run.steps %}{% if s.status in ["running", "failed"] %}{% set ns.idx = loop.index0 %}{% elif s.status == "done" %}{% set ns.idx = loop.index0 %}{% endif %}{% endfor %}
+{% set now = run.steps[ns.idx] %}
 
-<ol class="vflow">
+{# state classes: one per step, e.g. s-attest-running, so the map can colour its parts #}
+<div class="runview">
+<div class="map-wrap">
+<svg class="map {% for s in run.steps %}s-{{ s.key }}-{{ s.status }} {% endfor %}" viewBox="0 0 1000 372" role="img" aria-label="Where the run is right now">
+  <defs>
+    <marker id="m-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#E3D9C2"/></marker>
+    <marker id="m-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#1A1A1A"/></marker>
+    <marker id="m-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#8A6E12"/></marker>
+    <marker id="m-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#B3261E"/></marker>
+  </defs>
+
+  <!-- the box: two enclaves on Tinfoil -->
+  <g class="region"><rect x="560" y="24" width="436" height="330"/><text x="572" y="330" class="rt">The box</text><text x="572" y="344" class="rs">Tinfoil · attested hardware</text></g>
+
+  <!-- how the plan got into the box: not a run step, always grey -->
+  <path class="edge ctx" d="M290 100 H 586"/>
+  <text x="438" y="94" class="el ctx" text-anchor="middle">built into the box</text>
+
+  <!-- run steps, drawn where they belong in the real system -->
+  <path class="edge e-report" d="M590 140 H 294"/>
+  <text x="438" y="156" class="el l-report" text-anchor="middle">5 · signed report</text>
+  <path class="edge e-attest dotted" d="M290 270 H 630 V 194"/>
+  <text x="438" y="264" class="el l-attest" text-anchor="middle">2 · attest the box</text>
+  <path class="edge e-submit" d="M290 300 H 680 V 194"/>
+  <text x="438" y="314" class="el l-submit" text-anchor="middle">4 · signed logs in</text>
+  <path class="edge e-report two" d="M746 135 H 832"/>
+  <text x="789" y="212" class="el l-report" text-anchor="middle">5 · classify</text>
+
+  <!-- nodes -->
+  <g class="node n-verify n-report n-offline"><rect x="30" y="50" width="260" height="110"/><text x="40" y="74" class="nt">Agreement</text><text x="40" y="92" class="ns">lab + auditor write and sign</text><text x="40" y="106" class="ns">the pre-analysis plan on GitHub;</text><text x="40" y="120" class="ns">it is built into the box</text><text x="40" y="134" class="ns">auditor checks the report</text>
+    <g class="chip c-verify"><circle cx="250" cy="144" r="9"/><text x="250" y="148" text-anchor="middle">1</text></g>
+    <g class="chip c-offline"><circle cx="274" cy="144" r="9"/><text x="274" y="148" text-anchor="middle">6</text></g></g>
+  <g class="node n-attest n-export n-submit"><rect x="30" y="236" width="260" height="104"/><text x="40" y="260" class="nt">Logger <tspan class="ns">· under development</tspan></text><text x="40" y="278" class="ns">records + signs the model calls (3),</text><text x="40" y="292" class="ns">checks the box (2), sends logs in (4)</text><text x="40" y="306" class="ns">stand-in today: the UI does this with</text><text x="40" y="320" class="ns">a test key and test transcripts</text>
+    <g class="chip c-export"><circle cx="274" cy="324" r="9"/><text x="274" y="328" text-anchor="middle">3</text></g></g>
+  <g class="node n-attest n-submit n-report"><rect x="590" y="80" width="156" height="114"/><text x="600" y="104" class="nt">CPU enclave</text><text x="600" y="122" class="ns">plan + keys baked in</text><text x="600" y="136" class="ns">checks plan at boot</text><text x="600" y="150" class="ns">runs the plan</text><text x="600" y="164" class="ns">signs the report</text></g>
+  <g class="node n-report"><rect x="832" y="80" width="160" height="114"/><text x="842" y="104" class="nt">GPU enclave</text><text x="842" y="122" class="ns">the model</text><text x="842" y="136" class="ns">gpt-oss-safeguard-120b</text><text x="842" y="150" class="ns">classifies the logs</text></g>
+</svg>
+<p class="map-legend"><span class="lg lg--solid">traffic</span> <span class="lg lg--dotted">verification</span> <span class="lg lg--now">now</span> <span class="lg lg--done">done</span> <span class="lg lg--wait">not yet</span></p>
+<p class="map-note text-muted">Drawn as the real system. 1 checks the plan and both signatures; 6 checks the report again with no network. The logger side is under development: today the UI stands in for it, doing 2, 3 and 4 with a test key and a test transcript. The grey arrow is how the plan got into the box, not part of a run.</p>
+</div>
+
+{% set short = {"verify": "Verify plan", "attest": "Attest box", "export": "Sign export", "submit": "Submit logs", "report": "Get report", "offline": "Check report"} %}
+<ol class="stepper">
   {% for s in run.steps %}
-  <li class="{% if s.status == 'failed' %}has-error{% elif s.status == 'running' %}is-running{% elif s.status == 'done' %}is-done{% endif %}">
+  <li class="{{ s.status }} {% if loop.index0 == ns.idx %}current{% endif %}"><a href="#step-{{ loop.index }}">
+    <span class="stepper-n">{% if s.status == "done" %}✓{% elif s.status == "failed" %}✕{% else %}{{ loop.index }}{% endif %}</span>
+    <span class="stepper-title">{{ short[s.key] }}</span>
+    <span class="stepper-state">{% if s.status == "running" %}<span class="spinner spinner--sm"></span> running{% elif s.status == "done" %}{{ s.finished[11:19] if s.finished else "done" }}{% elif s.status == "failed" %}failed{% else %}waiting{% endif %}</span>
+  </a></li>
+  {% endfor %}
+</ol>
+
+<div class="card now">
+  <div class="card-header">{% if now.status == "running" %}Now{% elif now.status == "failed" %}Stopped here{% elif run.status == "done" %}Finished{% else %}Next{% endif %} · {{ ns.idx + 1 }}. {{ now.title }}
+    {% if now.status == "done" %}<span class="badge badge--ok">done</span>{% elif now.status == "running" %}<span class="badge"><span class="spinner spinner--sm"></span> running</span>{% elif now.status == "failed" %}<span class="badge badge--danger">failed</span>{% else %}<span class="badge">waiting</span>{% endif %}
+  </div>
+  <div class="card-body">
+    <p class="whatitdoes">{{ now.explain }}</p>
+    {% if now.error %}<p class="form-message error" style="margin-top: var(--space-4)">{{ now.error }}</p>{% endif %}
+    {% if run.status == "done" and run.result %}
+    <p class="whatitdoes" style="margin-top: var(--space-4)"><strong>Result: {% if run.result.flagged %}flagged{% else %}not flagged{% endif %}.</strong> The box's signed report says <span class="mono">flagged = {{ run.result.flagged | lower }}</span> for run <span class="mono">{{ run.result.run_id }}</span>, and it verified offline.</p>
+    {% endif %}
+    {% if now.output %}
+    <details class="info" style="margin-top: var(--space-4)">
+      <summary>What it returned</summary>
+      <div class="info-body"><pre class="cmd">{{ now.output | tojson | pretty_json }}</pre></div>
+    </details>
+    {% endif %}
+  </div>
+</div>
+
+<details class="info" style="margin-top: var(--space-6)">
+  <summary>All six steps in detail</summary>
+  <div class="info-body">
+<ol class="vflow run-steps" style="margin-bottom: 0">
+  {% for s in run.steps %}
+  <li id="step-{{ loop.index }}" class="{% if s.status == 'failed' %}has-error{% elif s.status == 'running' %}is-running{% elif s.status == 'done' %}is-done{% endif %}">
     <div class="vflow-node"></div>
     <div class="vflow-body">
       <div class="vflow-head"><h3>{{ loop.index }}. {{ s.title }}</h3>
@@ -25,6 +98,9 @@
       </div>
       <p>{{ s.explain }}</p>
       {% if s.error %}<p class="form-message error" style="margin-top: var(--space-4)">{{ s.error }}</p>{% endif %}
+      {% if s.key == "offline" and run.status == "done" and run.result %}
+      <p><strong>Result: {% if run.result.flagged %}flagged{% else %}not flagged{% endif %}.</strong> The box's signed report says <span class="mono">flagged = {{ run.result.flagged | lower }}</span> for run <span class="mono">{{ run.result.run_id }}</span>, and it verified offline.</p>
+      {% endif %}
       {% if s.output %}
       <details class="info" style="margin-top: var(--space-4)">
         <summary>What it returned</summary>
@@ -35,4 +111,8 @@
   </li>
   {% endfor %}
 </ol>
+  </div>
+</details>
+</div>
+
 {% endblock %}

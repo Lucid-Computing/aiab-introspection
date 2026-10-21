@@ -19,6 +19,9 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from aiab.audit.protocol import AuditError
+from aiab.baked.bundle import load_bundle
+
 from server.config import STATIC_DIR, Settings
 
 BOX_TRUST = STATIC_DIR / "aiab" / "baked" / "trust.json"  # the keys the box itself pins
@@ -133,7 +136,19 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
     def run_step(index: int) -> dict | None:
         key = state["steps"][index]["key"]
         if key == "verify":
-            return _cli(settings, "verify")
+            # The CLI hides the cause of a load failure behind one code; call the same box
+            # function here so a missing file or a bad key shows as itself.
+            try:
+                bundle = load_bundle(
+                    settings.plan_dir, json.loads(BOX_TRUST.read_text()), signed=True
+                )
+            except AuditError as exc:
+                raise RuntimeError(
+                    f"{exc.code} (the box's loader refused {settings.plan_dir})"
+                ) from None
+            except OSError as exc:
+                raise RuntimeError(f"{type(exc).__name__}: {exc}") from None
+            return {"plan_digest": bundle.digest, "signatures_verified": True}
         if key == "attest":
             _cli(settings, "pin-identity", *connection, "--output", str(files["anchor"]))
             anchor = json.loads(files["anchor"].read_text())
@@ -210,7 +225,8 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
             return
         step["finished"] = _now()
         _write(folder, state)
-    report = state["steps"][4]["output"] or {}
+    report_step = next((s for s in state["steps"] if s["key"] == "report"), {})
+    report = report_step.get("output") or {}
     state["result"] = {
         "run_id": admission.get("run_id"),
         "flagged": report.get("report", {}).get("result", {}).get("flagged"),

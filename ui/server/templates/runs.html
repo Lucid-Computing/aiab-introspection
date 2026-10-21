@@ -34,7 +34,11 @@
       <form method="post" action="/runs/start">
         <p class="explain">Which transcript to send, from <span class="mono">plan/tests/transcripts/</span>:</p>
         {% for t in transcripts %}<label class="choice"><input type="radio" name="transcript" value="{{ t }}" {% if loop.first %}checked{% endif %}> <span class="mono">{{ t }}</span></label>{% endfor %}
-        <p style="margin-top: var(--space-6)"><button class="btn btn--primary" {% if not pre.ok %}disabled title="credentials missing"{% endif %}>Start the run</button></p>
+        {% if pre.ok %}
+        <p style="margin-top: var(--space-6)"><button class="btn btn--primary">Start the run</button></p>
+        {% else %}
+        <p style="margin-top: var(--space-6)"><button class="btn btn--primary" disabled>Start the run</button> <span class="text-muted">Add the two credentials first; the button is off until they are found.</span></p>
+        {% endif %}
       </form>
     </div>
   </div>
