@@ -4,7 +4,6 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [production]   # plans are deployed only through the production branch
     paths: ['plan/**']
-    branches: [production]
 permissions:
   contents: write
   pull-requests: write
