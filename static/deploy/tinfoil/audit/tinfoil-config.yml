@@ -10,7 +10,7 @@
   "containers": [
     {
       "name": "aiab",
-      "image": "ghcr.io/lucid-computing-labs/aiab-introspection-enclave@sha256:023dbd88e98d6912e6c3b9d640636b29bfe3687744920b45d227a65858bc4554",
+      "image": "ghcr.io/lucid-computing/aiab-introspection-enclave@sha256:023dbd88e98d6912e6c3b9d640636b29bfe3687744920b45d227a65858bc4554",
       "command": [
         "python",
         "-m",
