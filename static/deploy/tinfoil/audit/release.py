@@ -55,6 +55,27 @@ def workflow(repo, name, ref, output, *inputs):
     raise RuntimeError("Workflow timeout; inspect run " + run_id)
 
 
+def verify_config_baseline(checkout, baseline, prior):
+    """Pin the reviewed config commit; never silently accept remote HEAD drift."""
+    expected = prior.get("reviewed_config_commit")
+    if expected is not None:
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{40}", expected):
+            raise RuntimeError("Invalid reviewed config commit")
+        # A migration review may advance from the live tag but cannot replace its history.
+        command("git", "merge-base", "--is-ancestor", prior["tag"], expected, cwd=checkout)
+    else:
+        expected = command("git", "rev-parse", prior["tag"] + "^{commit}", cwd=checkout)
+    if command("git", "rev-parse", "HEAD", cwd=checkout) != expected:
+        raise RuntimeError("Config repository has unreviewed changes since the approved commit")
+    for name in ("tinfoil-config.yml", "trust.json", "manifest.json"):
+        if json.loads((checkout / name).read_text()) != json.loads((baseline / name).read_text()):
+            raise RuntimeError("Published baseline differs from approved local " + name)
+    if (checkout / "policy-digest.txt").read_text().strip() != (
+        baseline / "policy-digest.txt"
+    ).read_text().strip():
+        raise RuntimeError("Published baseline policy digest differs from approved local digest")
+
+
 def render(config, trust, build, release_tag):
     if not re.fullmatch(r"v\d+\.\d+\.\d+", release_tag):
         raise ValueError("Invalid release tag")
@@ -225,15 +246,7 @@ def main():
             raise RuntimeError("Build identity mismatch")
         checkout = args.output / "config"
         command("git", "clone", "https://github.com/" + repo + ".git", str(checkout))
-        previous_config_commit = command(
-            "git", "rev-parse", prior["tag"] + "^{commit}", cwd=checkout
-        )
-        if command("git", "rev-parse", "HEAD", cwd=checkout) != previous_config_commit:
-            raise RuntimeError("Config repository has unreviewed changes since the baseline tag")
-        if json.loads((checkout / "tinfoil-config.yml").read_text()) != json.loads(
-            (baseline / "tinfoil-config.yml").read_text()
-        ):
-            raise RuntimeError("Published baseline config differs from approved local config")
+        verify_config_baseline(checkout, baseline, prior)
         config, trust, manifest = render(
             json.loads((checkout / "tinfoil-config.yml").read_text()),
             json.loads((baseline / "trust.json").read_text()),
@@ -284,6 +297,7 @@ def main():
         release = {
             **prior,
             "tag": args.tag,
+            "reviewed_config_commit": config_sha,
             "release_digest": "sha256:" + release_hash,
             "policy_digest": digest(manifest),
             "application_source_commit": sha,

@@ -92,9 +92,16 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
         run: |
           cp "$RUNNER_TEMP/release-out/release.json" static/deploy/tinfoil/audit/release.json
+          for file in tinfoil-config.yml trust.json manifest.json policy-digest.txt; do
+            cp "$RUNNER_TEMP/release-out/config/$file" "static/deploy/tinfoil/audit/$file"
+          done
           git config user.name "AIAB release"
           git config user.email "aiab-release@users.noreply.github.com"
-          git add static/deploy/tinfoil/audit/release.json
+          git add static/deploy/tinfoil/audit/release.json \
+            static/deploy/tinfoil/audit/tinfoil-config.yml \
+            static/deploy/tinfoil/audit/trust.json \
+            static/deploy/tinfoil/audit/manifest.json \
+            static/deploy/tinfoil/audit/policy-digest.txt
           git commit -m "Release ${{ steps.tag.outputs.tag }}: update pins [skip ci]"
           git push origin HEAD:production
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

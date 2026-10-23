@@ -24,7 +24,7 @@ UI Deploy --PR--> production --merge--> release.yml, started by the merge itself
                                    |  runs static/deploy/tinfoil/audit/release.py --execute:
                                    |    build-image.yml on production (image to ghcr.io, reproduced twice), config repo tagged and measured,
                                    |    Tinfoil told to run the new tag, live identity verified, synthetic acceptance
-                                   +--> commits the new release pins (release.json) back to production [skip ci]
+                                   +--> commits the new release pins and matching config/trust/manifest baseline back to production [skip ci]
 ```
 
 The box never fetches anything at run time. The plan, the trust keys and the model binding are inside the image, so the hardware attestation covers them. Clients (the UI's Runs page, `scripts/demo-live`) read the release pins from the repository and refuse a box that does not match.
@@ -43,3 +43,18 @@ Repository secrets:
 A merge into `production` starts the release by itself; the Actions tab button is only for re-runs and dry runs. No GitHub environment or reviewer is used.
 
 Tags are `vMAJOR.MINOR.PATCH`; the job bumps the patch of the current tag unless one is given. The same `release.py` works from an operator's laptop as before.
+
+## Reviewed configuration baseline
+
+`release.json.reviewed_config_commit` pins the exact reviewed config repository
+commit used as the input to the next release. Normally this is the current
+release tag commit. An explicitly reviewed migration can advance it: the October
+2026 organization migration pins `e207344c55e29fa0e37de3cb9005c9a5c93b5e85`,
+whose only change is the GHCR namespace, preserving the image digest. This does
+not change the expected measurement of the still-running v0.2.2 release.
+
+The coordinator rejects any other remote HEAD, verifies ancestry from the prior
+tag, and compares the config, trust, manifest and policy digest with the local
+reviewed baseline. On success it records the new config commit and the workflow
+commits all five baseline files together. Never update only release.json after
+deployment: that leaves the next release with inconsistent baseline inputs.
