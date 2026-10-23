@@ -74,14 +74,14 @@ def _now() -> str:
 
 
 def transcripts(settings: Settings) -> list[str]:
-    folder = settings.plan_dir / "tests" / "transcripts"
+    folder = settings.deployed_plan_dir / "tests" / "transcripts"
     return sorted(p.name for p in folder.glob("*.jsonl")) if folder.is_dir() else []
 
 
 def plan_scope(settings: Settings) -> dict | None:
     """The deployed plan's input_scope block, or None when the plan does not load."""
     try:
-        return json.loads((settings.plan_dir / "plan.json").read_text(encoding="utf-8"))[
+        return json.loads((settings.deployed_plan_dir / "plan.json").read_text(encoding="utf-8"))[
             "input_scope"
         ]
     except (OSError, ValueError, KeyError):
@@ -112,7 +112,9 @@ def scope_notes(settings: Settings, who: str, first: float, last: float) -> list
 def check_limits(settings: Settings, records: list[dict]) -> None:
     """Refuse here what the box would refuse as input_too_large."""
     try:
-        limits = json.loads((settings.plan_dir / "plan.json").read_text(encoding="utf-8"))["limits"]
+        limits = json.loads((settings.deployed_plan_dir / "plan.json").read_text(encoding="utf-8"))[
+            "limits"
+        ]
     except (OSError, ValueError, KeyError):
         return
     size = len(json.dumps(records, separators=(",", ":"), sort_keys=True).encode("utf-8"))
@@ -132,6 +134,14 @@ def preflight(settings: Settings) -> dict:
     """What a run needs, and what is missing. Shown on the Runs screen before starting."""
     release = {}
     missing = []
+    plan_digest = None
+    try:
+        bundle = load_bundle(
+            settings.deployed_plan_dir, json.loads(BOX_TRUST.read_text()), signed=True
+        )
+        plan_digest = bundle.digest
+    except (OSError, ValueError, AuditError) as exc:
+        missing.append("signed deployed plan: " + str(exc))
     if settings.release_file.is_file():
         release = json.loads(settings.release_file.read_text(encoding="utf-8"))
     else:
@@ -140,8 +150,10 @@ def preflight(settings: Settings) -> dict:
         if not (settings.demo_keys_dir / name).is_file():
             missing.append(f"{name} in {settings.demo_keys_dir}")
     if not transcripts(settings):
-        missing.append(f"a transcript in {settings.plan_dir / 'tests/transcripts'}")
-    return {"release": release, "missing": missing, "ok": not missing}
+        missing.append(f"a transcript in {settings.deployed_plan_dir / 'tests/transcripts'}")
+    if release and plan_digest and release.get("plan_digest") != plan_digest:
+        missing.append("deployed plan digest differs from release pins")
+    return {"release": release, "missing": missing, "ok": not missing, "plan_digest": plan_digest}
 
 
 def _write(folder: Path, state: dict) -> None:
@@ -151,7 +163,7 @@ def _write(folder: Path, state: dict) -> None:
 
 
 def _cli(settings: Settings, *args: str, offline: bool = False) -> dict | None:
-    base = ["--folder", str(settings.plan_dir), "--trust", str(BOX_TRUST), *args]
+    base = ["--folder", str(settings.deployed_plan_dir), "--trust", str(BOX_TRUST), *args]
     if offline:
         # The same CLI, with sockets disabled, as the walkthrough does for the offline check.
         code = (
@@ -175,7 +187,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
     logger = settings.demo_keys_dir / "logger.key"
     fixture = folder / "records.jsonl"  # chosen sessions, written by start_run
     if not fixture.exists():
-        fixture = settings.plan_dir / "tests" / "transcripts" / state["transcript"]
+        fixture = settings.deployed_plan_dir / "tests" / "transcripts" / state["transcript"]
     files = {
         "anchor": folder / "anchor.json",
         "submission": folder / "submission.json",
@@ -192,11 +204,11 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
             # function here so a missing file or a bad key shows as itself.
             try:
                 bundle = load_bundle(
-                    settings.plan_dir, json.loads(BOX_TRUST.read_text()), signed=True
+                    settings.deployed_plan_dir, json.loads(BOX_TRUST.read_text()), signed=True
                 )
             except AuditError as exc:
                 raise RuntimeError(
-                    f"{exc.code} (the box's loader refused {settings.plan_dir})"
+                    f"{exc.code} (the box's loader refused {settings.deployed_plan_dir})"
                 ) from None
             except OSError as exc:
                 raise RuntimeError(f"{type(exc).__name__}: {exc}") from None

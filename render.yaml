@@ -7,7 +7,7 @@ services:
     runtime: docker
     plan: starter               # the smallest plan that allows a persistent disk
     region: frankfurt
-    branch: ui-design           # the branch Render builds the image from; master once merged
+    branch: master              # contains the current UI and runtime fixes
     dockerfilePath: ./ui/Dockerfile
     dockerContext: .
     healthCheckPath: /login

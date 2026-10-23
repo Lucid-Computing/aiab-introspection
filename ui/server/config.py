@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import subprocess
@@ -34,6 +35,12 @@ class Settings:
     logs_dir: Path  # downloaded proxy log segments, one folder
     proxy_url: str  # the logging proxy's address (its /_logs download API)
     proxy_key: str | None  # the "tester" key for that API; None means the Logs page is read-only
+
+    run_plan_dir: Path | None = None
+
+    @property
+    def deployed_plan_dir(self) -> Path:
+        return self.run_plan_dir or self.plan_dir
 
     @property
     def repo_url(self) -> str | None:
@@ -77,7 +84,16 @@ def load_settings() -> Settings:
     _load_dotenv(UI_ROOT / ".env")
     env = os.environ
     secret = env.get("UI_SESSION_SECRET")
+    release_file = Path(
+        env.get("AIAB_RELEASE_FILE", STATIC_DIR / "deploy/tinfoil/audit/release.json")
+    ).resolve()
+    box_url = env.get("AIAB_BOX_URL", "").rstrip("/")
+    if not box_url and release_file.is_file():
+        box_url = "https://" + json.loads(release_file.read_text())["host"]
     return Settings(
+        run_plan_dir=Path(env["AIAB_RUN_PLAN_DIR"]).resolve()
+        if env.get("AIAB_RUN_PLAN_DIR")
+        else None,
         plan_dir=Path(env.get("AIAB_PLAN_DIR", REPO_ROOT / "plan")).resolve(),
         agreements_dir=Path(env.get("AIAB_AGREEMENTS_DIR", REPO_ROOT / "agreements")).resolve(),
         git_dir=Path(env.get("AIAB_GIT_DIR", REPO_ROOT)).resolve(),
@@ -85,7 +101,7 @@ def load_settings() -> Settings:
         trust_file=Path(
             env.get("AIAB_TRUST_FILE", STATIC_DIR / "aiab" / "baked" / "trust.json")
         ).resolve(),
-        box_url=(env.get("AIAB_BOX_URL") or "").rstrip("/") or None,
+        box_url=box_url or None,
         accounts_file=Path(env.get("UI_ACCOUNTS_FILE", UI_ROOT / "accounts.json")).resolve(),
         session_secret=secret.encode("utf-8") if secret else secrets.token_bytes(32),
         repo=env.get("AIAB_REPO") or _repo_from_git(),

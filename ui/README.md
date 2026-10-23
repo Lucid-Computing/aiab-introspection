@@ -111,3 +111,18 @@ and output capacity; verify these through the attested client against the approv
 release. Submission is `POST /aiab/runs` with complete records, scope and authenticated
 source evidence. Poll `GET /aiab/runs/{run_id}/report` and verify the v3 signed
 envelope. A display of a server-supplied hash alone is not attestation verification.
+
+### Production snapshots and editable drafts
+
+Build the Render service from `master`. On every restart the entrypoint fetches
+`AIAB_RELEASE_BRANCH` (default `production`) into a separate Git repository under
+`/data/release-source.git` and selects `/data/releases/<commit>`. Runs use that
+snapshot's signed `plan/` and release pins. Unsaved changes under `/data/repo`
+remain intact and cannot block this update or invalidate the deployed plan's
+signatures. Fetch failures stop startup instead of silently using stale pins.
+Restart after a successful enclave release to pick up its committed pins.
+
+`AIAB_RUN_PLAN_DIR` can select a deployed plan for local development. It is separate
+from `AIAB_PLAN_DIR`, which is the editable draft. When `AIAB_BOX_URL` is unset,
+the status view uses the host in `AIAB_RELEASE_FILE`. The status view is informational;
+the run still verifies attestation through the Tinfoil SDK against pinned measurements.

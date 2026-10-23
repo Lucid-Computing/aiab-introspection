@@ -425,7 +425,7 @@ async def new_agreement(request: Request) -> Response:
 async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    view, _ = load_view(settings)
+    pre = runs.preflight(settings)
     qp = request.query_params
     win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
     lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
@@ -457,7 +457,7 @@ async def runs_index(request: Request) -> Response:
     return render(
         request,
         "runs.html",
-        pre=runs.preflight(settings),
+        pre=pre,
         transcripts=runs.transcripts(settings),
         sessions=sessions,
         all_count=len(all_sessions),
@@ -468,7 +468,7 @@ async def runs_index(request: Request) -> Response:
         picked=set(qp.getlist("session")),
         scope=runs.plan_scope(settings),
         runs=runs.list_runs(settings),
-        plan_digest=view.digest if view else None,
+        plan_digest=pre["plan_digest"],
     )
 
 

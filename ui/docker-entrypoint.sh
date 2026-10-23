@@ -50,8 +50,11 @@ if [ -n "${LOGGER_KEY:-}" ]; then printf '%s\n' "$LOGGER_KEY" > "$DATA/demo-keys
 export AIAB_GIT_DIR="$DATA/repo" AIAB_PLAN_DIR="$DATA/repo/plan" AIAB_AGREEMENTS_DIR="$DATA/repo/agreements"
 export AIAB_TRUST_FILE="$DATA/trust.json" UI_ACCOUNTS_FILE="$DATA/accounts.json"
 export AIAB_RUNS_DIR="$DATA/runs" AIAB_DEMO_KEYS="$DATA/demo-keys" AIAB_LOGS_DIR="$DATA/logs"
-# Release pins from the checkout, not the image, so a redeploy by the operator is seen here.
-export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DATA/repo/static/deploy/tinfoil/audit/release.json}"
+# Runs use an independent production snapshot. Unsaved drafts must neither block release
+# updates nor remove the signatures needed to run the already-deployed plan.
+DEPLOYED=$(uv run --no-sync python -m server.deployed)
+export AIAB_RUN_PLAN_DIR="$DEPLOYED/plan"
+export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DEPLOYED/static/deploy/tinfoil/audit/release.json}"
 
 # First boot only: accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,...".
 if [ ! -f "$DATA/accounts.json" ] && [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then

@@ -414,3 +414,23 @@ details.more[open] .more-btn::before { content: attr(data-open); }
 .md pre.md-code { margin: var(--space-2) 0; padding: var(--space-3); background: var(--paper-1); border: var(--border-hairline); overflow: auto; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.5; }
 .md pre.md-code code { background: none; padding: 0; font-size: inherit; }
 .msg-note { margin: 0; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); border-left: 2px solid var(--rule-strong); padding-left: var(--space-3); }
+
+/* Long hashes, tables and log text must stay inside a narrow viewport. */
+.container, .card, .card-body, .panel, .stack, .src, .info-body { min-width: 0; }
+.kv { width: 100%; table-layout: fixed; }
+.kv td, .mono, .src-sub, .src-title { overflow-wrap: anywhere; }
+pre { max-width: 100%; overflow-x: auto; }
+@media (max-width: 640px) {
+  .navbar, .nav-links, .row, .src-head { flex-wrap: wrap; }
+  .navbar { gap: .5rem; }
+  .nav-links { gap: .65rem; }
+  .container { width: 100%; box-sizing: border-box; }
+  table:not(.kv) { display: block; max-width: 100%; overflow-x: auto; }
+  .kv th { width: 30%; }
+  input, select, textarea { max-width: 100%; min-width: 0; }
+}
+@media (max-width: 640px) {
+  .badge { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+  .logs-filters { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+  .logs-filters input { width: 100%; }
+}
