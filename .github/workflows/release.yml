@@ -98,6 +98,7 @@ jobs:
           git commit -m "Release ${{ steps.tag.outputs.tag }}: update pins [skip ci]"
           git push origin HEAD:production
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()   # on failure the journal holds the reason
         with:
           name: release-${{ steps.tag.outputs.tag }}
           path: ${{ runner.temp }}/release-out/

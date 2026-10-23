@@ -351,7 +351,8 @@ def main():
             recovery="Inspect stage/provider state; no automatic rollback or resubmission",
         )
         raise SystemExit(
-            "Release failed; inspect private attempt journal and CI/provider status"
+            f"Release failed at stage {journal.get('failed_stage')}: "
+            f"{type(exc).__name__}: {exc}. The attempt journal has the details."
         ) from None
     finally:
         cp.client.close()
