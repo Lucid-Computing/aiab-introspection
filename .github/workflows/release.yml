@@ -78,8 +78,8 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
         run: |
           uv sync --locked
-          git config user.name "AIAB release"
-          git config user.email "aiab-release@users.noreply.github.com"
+          git config --global user.name "AIAB release"
+          git config --global user.email "aiab-release@users.noreply.github.com"
           gh auth setup-git
           EXECUTE=--execute
           if [ "${{ inputs.dry_run }}" = "true" ]; then EXECUTE=""; echo "Dry run: planning only" >> "$GITHUB_STEP_SUMMARY"; fi
@@ -95,8 +95,8 @@ jobs:
           for file in tinfoil-config.yml trust.json manifest.json policy-digest.txt; do
             cp "$RUNNER_TEMP/release-out/config/$file" "static/deploy/tinfoil/audit/$file"
           done
-          git config user.name "AIAB release"
-          git config user.email "aiab-release@users.noreply.github.com"
+          git config --global user.name "AIAB release"
+          git config --global user.email "aiab-release@users.noreply.github.com"
           git add static/deploy/tinfoil/audit/release.json \
             static/deploy/tinfoil/audit/tinfoil-config.yml \
             static/deploy/tinfoil/audit/trust.json \
