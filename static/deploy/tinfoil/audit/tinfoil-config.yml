@@ -41,7 +41,7 @@
           "XDG_DATA_HOME": "/tmp/aiab-data"
         },
         {
-          "AIAB_RELEASE_TAG": "v0.2.3"
+          "AIAB_RELEASE_TAG": "v0.2.4"
         }
       ],
       "secrets": [
