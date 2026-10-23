@@ -1,10 +1,10 @@
 # Put a reviewed build live: run the release procedure (static/deploy/tinfoil/audit/release.py)
-# from CI instead of an operator's laptop. One approval in the "production" environment, then:
+# from CI instead of an operator's laptop. Started by a merge into production, then:
 # build-image.yml on the production branch, measured config pushed to the public config repo,
 # Tinfoil told to run the new tag, live identity verified, synthetic acceptance run, and the
 # new release pins committed back to production.
 #
-# Secrets (repository or environment "production"):
+# Repository secrets:
 #   TINFOIL_API_KEY    Lucid's Tinfoil control-plane key (what ~/.tinfoil/config.json holds)
 #   RELEASE_GH_TOKEN   a token that may run workflows and download runs in this repository and
 #                      push commits/tags and download releases in the public config repository
@@ -18,6 +18,14 @@ on:
         description: 'Release tag vMAJOR.MINOR.PATCH (empty: bump the patch of the current tag)'
         required: false
         type: string
+      dry_run:
+        description: 'Plan only: check the secrets and preconditions, touch nothing'
+        required: false
+        type: boolean
+        default: false
+  # A merge into production (a plan or a key change, merged by approve-plan.yml or by a
+  # person) starts the release by itself. The pins commit below says [skip ci], so it does
+  # not start another one. The Actions tab button remains for re-runs and dry runs.
   push:
     branches: [production]
     paths: ['plan/**', 'static/aiab/**', 'static/auditor/**', 'static/deploy/Dockerfile']
@@ -29,7 +37,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-24.04
-    environment: production   # configure a required reviewer on this environment for the approval click
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -74,10 +81,13 @@ jobs:
           git config user.name "AIAB release"
           git config user.email "aiab-release@users.noreply.github.com"
           gh auth setup-git
+          EXECUTE=--execute
+          if [ "${{ inputs.dry_run }}" = "true" ]; then EXECUTE=""; echo "Dry run: planning only" >> "$GITHUB_STEP_SUMMARY"; fi
           uv run --locked python deploy/tinfoil/audit/release.py \
-            --execute --source-ref production --tag "${{ steps.tag.outputs.tag }}" \
+            $EXECUTE --source-ref production --tag "${{ steps.tag.outputs.tag }}" \
             --key-directory "$RUNNER_TEMP/keys" --output "$RUNNER_TEMP/release-out"
       - name: Commit the new release pins to production
+        if: ${{ inputs.dry_run != true }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
         run: |
@@ -90,8 +100,5 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ steps.tag.outputs.tag }}
-          path: |
-            ${{ runner.temp }}/release-out/attempt.json
-            ${{ runner.temp }}/release-out/release.json
-            ${{ runner.temp }}/release-out/acceptance.json
+          path: ${{ runner.temp }}/release-out/
           if-no-files-found: error

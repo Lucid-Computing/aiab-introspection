@@ -97,7 +97,11 @@ PLAN = closed(
         "output_schema": {"type": "object"},
     }
 )
+PLAN["required"] = [k for k in PLAN["required"] if k != "filter"]  # see OPTIONAL_FUNCTIONS
 FUNCTIONS = {"filter_logs", "build_query", "classify", "metric", "emit_report", "appeal"}
+# filter_logs is optional: input selection moved to run time,
+# so plans without it skip that step.
+OPTIONAL_FUNCTIONS = {"filter_logs"}
 IMPORTS = {
     "__future__": ["annotations"],
     "typing": ["Any", "Literal", "Mapping", "Sequence", "Iterable", "Optional", "Union"],
@@ -117,7 +121,8 @@ def check_source(source: str):
     try:
         tree = ast.parse(source)
         functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
-        if {n.name for n in functions} != FUNCTIONS or len(functions) != 6:
+        names = {n.name for n in functions}
+        if names not in (FUNCTIONS, FUNCTIONS - OPTIONAL_FUNCTIONS) or len(functions) != len(names):
             raise ValueError
         for node in tree.body:
             if (

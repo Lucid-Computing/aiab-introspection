@@ -11,3 +11,4 @@
 {"at": "2026-10-16T07:41:36Z", "party": "lab", "user": "teddy", "kind": "key", "where": "public key: lab", "detail": "JUGbPZpN1+LIjCRDCrr+dXsK6KzPT620QCrAFmWqv5I= → NwLqPU+Vf5hvvgre7uL+J7a5DAHqLqsfeEQfiaaXjWE="}
 {"at": "2026-10-16T07:41:50Z", "party": "lab", "user": "teddy", "kind": "signature", "where": "signature: lab", "detail": "signed version 15738aa86f99"}
 {"at": "2026-10-16T07:50:18Z", "party": "lab", "user": "teddy", "kind": "deploy", "where": "deployment", "detail": "selected for deployment: copied into plan/"}
+{"at": "2026-10-23T02:46:01Z", "party": "lab", "user": "teddy", "kind": "signature", "where": "signatures", "detail": "removed 1 signature file(s)"}

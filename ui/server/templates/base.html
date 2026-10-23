@@ -15,7 +15,7 @@
 <nav class="navbar">
   <a class="nav-brand" href="/how"><span class="nav-wordmark">AIAB · Agreement</span></a>
   <div class="nav-links">
-    {% for href, label in [("/how", "How it works"), ("/agreements", "Agreements"), ("/runs", "Runs")] %}
+    {% for href, label in [("/how", "How it works"), ("/logs", "Logs"), ("/agreements", "Agreements"), ("/runs", "Runs")] %}
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
     {% endfor %}
     {% if user %}
@@ -24,7 +24,7 @@
     {% endif %}
   </div>
 </nav>
-<main class="container page">
+<main class="container page {% block main_class %}{% endblock %}">
   {% if msg %}<p class="form-message success">{{ msg }}</p>{% endif %}
   {% if err %}<p class="form-message error">{{ err }}</p>{% endif %}
   {% if error %}<p class="form-message error">The plan folder does not load: {{ error }}</p>{% endif %}

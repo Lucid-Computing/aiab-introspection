@@ -17,7 +17,7 @@ services:
       sizeGB: 1
     envVars:
       - key: AIAB_REPO
-        value: lucid-computing-labs/aiab-introspection
+        value: Lucid-Computing/aiab-introspection
       - key: AIAB_CHECKOUT_BRANCH
         value: production       # the branch the image is built from; the UI works on its agreements/ and plan/
       - key: AIAB_DEPLOY_BASE
@@ -33,4 +33,6 @@ services:
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false
       - key: LOGGER_KEY         # optional, for the Runs screen: the demo logger's private key (base64)
+        sync: false
+      - key: AIAB_PROXY_KEY     # optional, for the Logs screen: the logging proxy's shared key ("tester:<key>" or the key alone)
         sync: false

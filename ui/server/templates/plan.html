@@ -3,7 +3,7 @@
 {% block content %}
 <p class="crumb"><a href="/agreements" class="link">← Agreements</a></p>
 <h1>{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
-<p class="lead">The box runs these five functions in this order.</p>
+<p class="lead">The box runs these four functions in this order. Which records come in is chosen when a run is started, not in the plan.</p>
 {% if view %}
 <div class="stack" style="margin-bottom: var(--space-10)">
 <details class="info" {% if changes.open %}open{% endif %}>

@@ -1,0 +1,54 @@
+# A party's public key changes through a pull request against production that touches only
+# static/aiab/baked/trust.json. This job checks the change is well-formed; it never merges.
+# A person merges (the one decision the automation must not make). The merge then rebuilds
+# the image and the release job puts the new key into the live box.
+name: Check a trust key change
+on:
+  pull_request:
+    branches: [production]
+    paths: ['static/aiab/baked/trust.json']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      # Base code only; the PR's files are read as data from git, never executed.
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Only trust.json may change, and only the party keys in it
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --quiet origin "$HEAD_SHA"
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          echo "changed files:"; echo "$changed"
+          test "$changed" = "static/aiab/baked/trust.json" || { echo "::error::a key change may touch only static/aiab/baked/trust.json"; exit 1; }
+          git show "$BASE_SHA:static/aiab/baked/trust.json" > /tmp/base.json
+          git show "$HEAD_SHA:static/aiab/baked/trust.json" > /tmp/head.json
+          python3 - <<'PY'
+          import base64, json, sys
+          base, head = json.load(open('/tmp/base.json')), json.load(open('/tmp/head.json'))
+          allowed = {"lab_key", "auditor_key", "logger_key"}
+          changed = {k for k in set(base) | set(head) if base.get(k) != head.get(k)}
+          if not changed:
+              sys.exit("nothing changed in trust.json")
+          if changed - allowed:
+              sys.exit(f"only party keys may change here, not: {sorted(changed - allowed)}")
+          for k in changed:
+              raw = base64.b64decode(head[k], validate=True)
+              if len(raw) != 32:
+                  sys.exit(f"{k} is not a 32-byte Ed25519 public key")
+              print(f"{k}: {base.get(k)} -> {head[k]}")
+          with open('/tmp/summary.md', 'w') as f:
+              f.write("| key | before | after |\n| --- | --- | --- |\n")
+              for k in sorted(changed):
+                  f.write(f"| `{k}` | `{base.get(k)}` | `{head[k]}` |\n")
+          PY
+          cat /tmp/summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "Well-formed. A person must review and merge; this job never merges." >> "$GITHUB_STEP_SUMMARY"

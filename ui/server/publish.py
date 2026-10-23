@@ -7,6 +7,7 @@ checkout you are working in is never switched. Merging is left to people and to 
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import subprocess
@@ -73,16 +74,10 @@ def copy_into_plan(source: Path, target: Path) -> None:
     )
 
 
-def _open_pr(
-    slug: str, base: str, branch: str, name: str, digest: str, who: str, cwd: Path
-) -> str | None:
-    """Open the pull request with the GitHub CLI when it is installed and logged in."""
+def _open_pr(slug: str, base: str, branch: str, title: str, body: str, cwd: Path) -> str | None:
+    """Open a pull request with the GitHub CLI when it is installed and logged in."""
     if not shutil.which("gh"):
         return None
-    body = (
-        f"Plan digest `{digest}`.\n\nSelected for deployment by {who}. "
-        "Plan-only change; CI verifies both signatures and the restrictions."
-    )
     done = subprocess.run(
         [
             "gh",
@@ -95,7 +90,7 @@ def _open_pr(
             "--head",
             branch,
             "--title",
-            f"Deploy agreement {name}",
+            title,
             "--body",
             body,
         ],
@@ -155,7 +150,11 @@ def push_deploy(
         _git(worktree, "push", "-u", "origin", branch, timeout=300)
         result.branch = branch
         if slug and not on_remote:
-            result.pr_url = _open_pr(slug, base, branch, name, digest, who, worktree)
+            body = (
+                f"Plan digest `{digest}`.\n\nSelected for deployment by {who}. "
+                "Plan-only change; CI verifies both signatures and the restrictions."
+            )
+            result.pr_url = _open_pr(slug, base, branch, f"Deploy agreement {name}", body, worktree)
     except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
         result.error = str(exc)[-400:]
     finally:
@@ -221,3 +220,72 @@ def schedule_drafts_push(repo: Path, actor: dict[str, str] | None = None) -> Non
         _drafts_timer = threading.Timer(DRAFTS_DELAY, run)
         _drafts_timer.daemon = True
         _drafts_timer.start()
+
+
+# ---- a party's public key: a pull request against the deploy base that changes only
+#      static/aiab/baked/trust.json. A person merges it (approve-keys.yml checks, never merges).
+
+TRUST_PATH = Path("static") / "aiab" / "baked" / "trust.json"
+
+
+def push_key_change(
+    repo: Path, party: str, public_key: str, actor: dict[str, str], base: str | None = None
+) -> PushResult:
+    result = PushResult()
+    base = base or default_branch(repo)
+    branch = f"keys/{party}-{public_key[:8].replace('+', '').replace('/', '')}"
+    who = f"{actor.get('party', 'party')} ({actor.get('username', '?')}) via the agreement UI"
+    worktree = Path(tempfile.mkdtemp(prefix="aiab-key-"))
+    try:
+        _git(repo, "fetch", "origin", base)
+        on_remote = bool(_git(repo, "ls-remote", "--heads", "origin", branch))
+        if on_remote:
+            result.unchanged, result.branch = True, branch
+            slug = github_slug(repo)
+            if slug:
+                result.compare_url = f"https://github.com/{slug}/compare/{base}...{branch}?expand=1"
+            return result
+        _git(repo, "worktree", "add", "--detach", str(worktree), f"origin/{base}")
+        _git(worktree, "checkout", "-q", "-B", branch)
+        path = worktree / TRUST_PATH
+        trust = json.loads(path.read_text(encoding="utf-8"))
+        if trust.get(f"{party}_key") == public_key:
+            result.unchanged, result.branch = True, base
+            return result
+        trust[f"{party}_key"] = public_key
+        path.write_text(json.dumps(trust, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        _git(worktree, "add", str(TRUST_PATH))
+        _git(
+            worktree,
+            "commit",
+            "-q",
+            "-m",
+            f"Trust the {party} public key\n\n{party}_key = {public_key}\nSubmitted by {who}.\n",
+        )
+        result.commit = _git(worktree, "rev-parse", "--short", "HEAD")
+        _git(worktree, "push", "-u", "origin", branch, timeout=120)
+        result.branch = branch
+        slug = github_slug(repo)
+        if slug:
+            result.compare_url = f"https://github.com/{slug}/compare/{base}...{branch}?expand=1"
+            body = (
+                f"Replaces the {party} public key in `static/aiab/baked/trust.json` with "
+                f"`{public_key}`.\n\nSubmitted by {who}. Changing a party key needs a human "
+                "review; approve-keys.yml checks the format, a person merges. The box picks it "
+                "up at the next release."
+            )
+            result.pr_url = _open_pr(
+                slug, base, branch, f"Trust the {party} public key", body, worktree
+            )
+    except (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        result.error = str(exc)[-400:]
+    finally:
+        try:
+            _git(repo, "worktree", "remove", "--force", str(worktree))
+        except RuntimeError:
+            shutil.rmtree(worktree, ignore_errors=True)
+        try:
+            _git(repo, "branch", "-D", branch)
+        except RuntimeError:
+            pass
+    return result

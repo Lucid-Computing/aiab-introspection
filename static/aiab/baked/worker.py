@@ -71,20 +71,23 @@ def main():
     isolate(cfg["limits"]["max_runtime_seconds_per_run"])
     namespace = {"__name__": "plan.plan"}
     exec(source, namespace)
-    kept = namespace["filter_logs"](
-        records,
-        rules=plan_api.FilterRules(
-            keywords=tuple(cfg["filter"]["keywords"]),
-            kinds=tuple(cfg["filter"]["kinds"]),
-            agents=tuple(cfg["input_scope"]["agents"]),
-        ),
-    )
-    if (
-        not isinstance(kept, list)
-        or len(kept) > len(records)
-        or any(r not in records for r in kept)
-    ):
-        raise ValueError
+    # Input selection happens at run time now; a plan may still carry the old filter step.
+    kept = records
+    if "filter_logs" in namespace and "filter" in cfg:
+        kept = namespace["filter_logs"](
+            records,
+            rules=plan_api.FilterRules(
+                keywords=tuple(cfg["filter"]["keywords"]),
+                kinds=tuple(cfg["filter"]["kinds"]),
+                agents=tuple(cfg["input_scope"]["agents"]),
+            ),
+        )
+        if (
+            not isinstance(kept, list)
+            or len(kept) > len(records)
+            or any(r not in records for r in kept)
+        ):
+            raise ValueError
     queries = namespace["build_query"](kept, window=cfg["window"])
     if not isinstance(queries, list) or len(queries) > cfg["limits"]["max_model_calls_per_run"]:
         raise ValueError

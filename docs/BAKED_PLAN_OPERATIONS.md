@@ -3,7 +3,7 @@
 Current deployed release: **v0.2.2**. [Deployment pins](../static/deploy/tinfoil/audit/release.json) and [live acceptance evidence](../static/demo/audit/baked-evidence/README.md).
 
 The v0.5 runtime runs one jointly signed `plan/` bundle per image. The six functions
-in `plan/plan.py` now run through the static runtime, in order: filter, group into
+in `plan/plan.py` now run through the static runtime, in order: (optionally) filter, group into
 queries, classify each query, aggregate scores, emit result. Appeals remain an
 explicitly uncalled post-demo function. The UI and native logger are separate
 workstreams. The broader mandatory requirements are tracked in

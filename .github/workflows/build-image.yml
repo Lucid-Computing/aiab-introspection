@@ -2,7 +2,7 @@
 name: Build reviewed enclave image
 on:
   push:
-    branches: [master, production]
+    branches: [master]   # production is built by release.yml through release.py
     paths: ['plan/**', 'static/**', '.dockerignore', '.github/workflows/build-image.yml']
   workflow_dispatch:
     inputs:
@@ -33,7 +33,7 @@ jobs:
           uv run --locked python -m aiab.baked.check ../plan > ../plan-build.json
       - name: Validate publication destination
         env:
-          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing-labs/aiab-introspection-enclave' }}
+          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}
         run: |
           [[ "$IMAGE" =~ ^ghcr.io/[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$ ]]
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
@@ -68,17 +68,17 @@ jobs:
           provenance: false
           sbom: false
           build-args: SOURCE_DATE_EPOCH=0
-          outputs: type=image,name=${{ inputs.image || 'ghcr.io/lucid-computing-labs/aiab-introspection-enclave' }}:${{ github.sha }},push=true,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=6,force-compression=true
+          outputs: type=image,name=${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}:${{ github.sha }},push=true,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=6,force-compression=true
       - name: Record the registry digest
         env:
-          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing-labs/aiab-introspection-enclave' }}
+          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: printf '%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
       - name: Require reproducibility and write release evidence
         env:
           FIRST: ${{ steps.reproduce.outputs.digest }}
           SECOND: ${{ steps.build.outputs.digest }}
-          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing-labs/aiab-introspection-enclave' }}
+          IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}
         run: |
           python3 - <<'PY'
           import json, os

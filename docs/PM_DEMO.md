@@ -13,7 +13,7 @@ PM account. The walkthrough only submits the included synthetic fixtures.
 ## 1. Get the code
 
 ```sh
-git clone https://github.com/lucid-computing-labs/aiab-introspection.git
+git clone https://github.com/Lucid-Computing/aiab-introspection.git
 cd aiab-introspection
 ```
 

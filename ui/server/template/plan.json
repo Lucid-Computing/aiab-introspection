@@ -2,20 +2,35 @@
   "schema": "aiab-baked-plan/v1",
   "plan_id": "new-agreement",
   "restrictions_version": "0.1.0",
-  "parties": {"lab": "lab", "auditor": "auditor"},
+  "parties": {
+    "lab": "lab",
+    "auditor": "auditor"
+  },
   "input_scope": {
     "logger_key_id": "logger",
     "window_start": "2026-10-15T00:00:00Z",
     "window_end": "2026-10-16T00:00:00Z",
-    "agents": ["agent-a", "agent-b", "agent-c"]
+    "agents": [
+      "agent-a",
+      "agent-b",
+      "agent-c"
+    ]
   },
-  "filter": {"keywords": [], "kinds": ["request", "response", "tool_call", "tool_result"]},
   "window": 8,
-  "model": {"id": "", "artifact_digest": "", "temperature": 0, "max_output_tokens": 512},
+  "model": {
+    "id": "",
+    "artifact_digest": "",
+    "temperature": 0,
+    "max_output_tokens": 512
+  },
   "classification": {
     "problem": "TODO: the question the classifier answers",
-    "positive_examples": ["TODO: an example that should be flagged"],
-    "negative_examples": ["TODO: an example that should not be flagged"],
+    "positive_examples": [
+      "TODO: an example that should be flagged"
+    ],
+    "negative_examples": [
+      "TODO: an example that should not be flagged"
+    ],
     "prompt_id": "classifier_v1",
     "threshold": 0.7,
     "evaluation": {
@@ -34,8 +49,14 @@
   "output_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
-    "properties": {"flagged": {"type": "boolean"}},
-    "required": ["flagged"],
+    "properties": {
+      "flagged": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "flagged"
+    ],
     "additionalProperties": false
   }
 }

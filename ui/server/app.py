@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import re
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import quote
 
@@ -9,9 +13,10 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 from server import plan_view as pv
-from server import publish, runs
+from server import proxylogs, publish, runs
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
 from server.config import UI_ROOT, Settings, load_settings
@@ -19,7 +24,17 @@ from server.pipeline import PARTIES
 
 settings = load_settings()
 signer = SessionSigner(settings.session_secret)
-app = FastAPI(title="AIAB agreement UI", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of the proxy fresh
+    yield
+
+
+app = FastAPI(
+    title="AIAB agreement UI", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
+)
 app.mount("/assets", StaticFiles(directory=UI_ROOT / "assets"), name="assets")
 templates = Jinja2Templates(directory=UI_ROOT / "server" / "templates")
 COOKIE = "aiab_ui"
@@ -36,6 +51,90 @@ def pretty_json(text: str) -> str:
 
 
 templates.env.filters["pretty_json"] = pretty_json
+
+
+def preview(text: str, chars: int = 420, lines: int = 6) -> str:
+    """The start of a long text: at most `lines` lines and `chars` characters."""
+    head = "\n".join(text.split("\n")[:lines])[:chars]
+    return head.rstrip() + (" …" if len(head) < len(text) else "")
+
+
+def is_long(text: str) -> bool:
+    return len(text) > 700 or text.count("\n") > 10
+
+
+_INLINE = [
+    (re.compile(r"`([^`\n]+)`"), r"<code>\1</code>"),
+    (re.compile(r"\*\*(.+?)\*\*"), r"<strong>\1</strong>"),
+]
+
+
+def _inline(line: str) -> str:
+    out = str(escape(line))
+    for pattern, repl in _INLINE:
+        out = pattern.sub(repl, out)
+    return out
+
+
+def md(text: str) -> Markup:
+    """Light, safe markdown for model replies: bold, inline code, headings, bullets, fences.
+    Everything is HTML-escaped first; only these few tags are produced."""
+    out: list[str] = []
+    para: list[str] = []
+    in_code = False
+    in_list = False
+
+    def flush() -> None:
+        nonlocal in_list
+        if para:
+            out.append("<p>" + "<br>".join(para) + "</p>")
+            para.clear()
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    for line in text.split("\n"):
+        if line.strip().startswith("```"):
+            if in_code:
+                out.append("</code></pre>")
+            else:
+                flush()
+                out.append('<pre class="md-code"><code>')
+            in_code = not in_code
+            continue
+        if in_code:
+            out.append(str(escape(line)))
+            continue
+        s = line.rstrip()
+        bullet = re.match(r"^\s*[-*•]\s+(.*)", s)
+        heading = re.match(r"^#{1,6}\s+(.*)", s)
+        if bullet:
+            if para:
+                out.append("<p>" + "<br>".join(para) + "</p>")
+                para.clear()
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append("<li>" + _inline(bullet.group(1)) + "</li>")
+        elif heading:
+            flush()
+            out.append('<p class="md-h">' + _inline(heading.group(1)) + "</p>")
+        elif not s:
+            flush()
+        else:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            para.append(_inline(s))
+    if in_code:
+        out.append("</code></pre>")
+    flush()
+    return Markup("\n".join(out))
+
+
+templates.env.filters["preview"] = preview
+templates.env.filters["md"] = md
+templates.env.tests["long"] = is_long
 CHANGE_KINDS = {  # filter name -> history "kind" values it covers
     "settings": ("settings",),
     "code": ("code",),
@@ -56,8 +155,8 @@ STAGES: list[tuple[str, str, list[str]]] = [
         [
             "Create an agreement with a name and the question the classifier answers, "
             "from a minimal template or as a copy of the deployed one.",
-            "Open it to see the five steps the box runs, in order: filter which records count, "
-            "group them into queries, classify each query, turn scores into a verdict, "
+            "Open it to see the four steps the box runs, in order: "
+            "group the records into queries, classify each query, turn scores into a verdict, "
             "emit the typed answer.",
             "Edit a step: its settings in plan.json, its code in plan.py, and for classify "
             "the prompt. Saves are written straight to those files, and edits made in the "
@@ -217,6 +316,76 @@ async def how(request: Request) -> Response:
     return render(request, "how.html", stages=STAGES, after=AFTER_SIGNING)
 
 
+@app.get("/logs")
+async def logs_page(request: Request) -> Response:
+    if user_of(request) is None:
+        return to_login(request)
+    q = request.query_params.get("q", "").strip()
+    who = request.query_params.get("who", "").strip()
+    wanted = request.query_params.get("session", "")
+    wanted_req = request.query_params.get("req", "")
+    records = proxylogs.load_records(settings)
+    all_sessions = proxylogs.sessions(records)
+    whos = sorted({s.who for s in all_sessions})
+    shown = [s for s in all_sessions if not who or s.who == who]
+    if q:
+        needle = q.lower()
+        shown = [s for s in shown if needle in s.title.lower()]
+    current = next((s for s in all_sessions if s.id == wanted), None) or (
+        shown[0] if shown else None
+    )
+    req = None
+    if current:
+        req = (
+            next((r for r in current.requests if r.id == wanted_req), None) or current.requests[-1]
+        )
+    return render(
+        request,
+        "logs.html",
+        shown=shown,
+        current=current,
+        req=req,
+        q=q,
+        who=who,
+        whos=whos,
+        total_requests=len(records),
+        fetch=proxylogs.status(),
+    )
+
+
+@app.get("/logs/raw/{rid}")
+async def logs_raw(request: Request, rid: str) -> Response:
+    """The recorded request as the proxy stored it, with the JSON bodies unpacked."""
+    if user_of(request) is None:
+        return to_login(request)
+    entry = next((e for e in proxylogs.load_records(settings) if str(e.get("id")) == rid), None)
+    if entry is None:
+        return Response("no such request", status_code=404)
+    shown = dict(entry)
+    for key in ("request_raw", "response_raw"):
+        if isinstance(shown.get(key), dict) and isinstance(shown[key].get("text"), str):
+            try:
+                shown[key] = json.loads(shown[key]["text"])
+            except ValueError:
+                shown[key] = shown[key]["text"]
+    return Response(json.dumps(shown, indent=2, ensure_ascii=False), media_type="application/json")
+
+
+@app.post("/logs/sync")
+async def logs_sync(request: Request) -> Response:
+    if user_of(request) is None:
+        return to_login(request)
+    try:
+        result = proxylogs.sync_now(settings)
+    except proxylogs.ProxyError as exc:
+        return back("/logs", err=str(exc))
+    return back(
+        "/logs",
+        msg=f"Fetched {result['new']} new segment(s); {result['segments']} on disk, "
+        f"{result['live_entries']} live request(s) not sealed yet.",
+    )
+
+
 @app.get("/agreements")
 async def agreements(request: Request) -> Response:
     if user_of(request) is None:
@@ -257,26 +426,82 @@ async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     view, _ = load_view(settings)
+    qp = request.query_params
+    win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
+    lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
+    all_sessions = proxylogs.sessions(proxylogs.load_records(settings))
+    whos = sorted({s.who for s in all_sessions})
+    sessions = []
+    for s in all_sessions:
+        times = [r.time for r in s.requests]
+        if (
+            (win["who"] and s.who != win["who"])
+            or (lo and max(times) < lo)
+            or (hi and min(times) > hi)
+        ):
+            continue
+        recs = proxylogs.to_box_records(s.requests)
+        sessions.append(
+            {
+                "session": s,
+                "notes": runs.scope_notes(settings, s.who, min(times), max(times)),
+                "records": len(recs),
+                "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
+            }
+        )
+    totals = {
+        "records": sum(i["records"] for i in sessions),
+        "kb": round(sum(i["kb"] for i in sessions), 1),
+        "fits": sum(1 for i in sessions if not i["notes"]),
+    }
     return render(
         request,
         "runs.html",
         pre=runs.preflight(settings),
         transcripts=runs.transcripts(settings),
+        sessions=sessions,
+        all_count=len(all_sessions),
+        whos=whos,
+        win=win,
+        totals=totals,
+        source=qp.get("source", ""),
+        picked=set(qp.getlist("session")),
+        scope=runs.plan_scope(settings),
         runs=runs.list_runs(settings),
         plan_digest=view.digest if view else None,
     )
 
 
+def _local_ts(value: str) -> float | None:
+    """A datetime-local field value ("2026-10-15T09:00") as a UTC timestamp, or None."""
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=UTC).timestamp() if value else None
+    except ValueError:
+        return None
+
+
 @app.post("/runs/start")
-async def runs_start(request: Request, transcript: Annotated[str, Form()] = "") -> Response:
+async def runs_start(request: Request) -> Response:
     user = user_of(request)
     if user is None:
         return to_login(request)
     pre = runs.preflight(settings)
     if not pre["ok"]:
         return back("/runs", err="Cannot start: " + "; ".join(pre["missing"]))
+    form = await request.form()
     try:
-        run_id = runs.start_run(settings, transcript, user)
+        if form.get("source") == "sessions":
+            chosen = set(form.getlist("session"))
+            picked = [
+                s for s in proxylogs.sessions(proxylogs.load_records(settings)) if s.id in chosen
+            ]
+            if not picked:
+                return back("/runs", err="Pick at least one recorded session.")
+            records = proxylogs.to_box_records([r for s in picked for r in s.requests])
+            label = f"{len(picked)} recorded session(s), {len(records)} records"
+            run_id = runs.start_run(settings, user, records=records, label=label)
+        else:
+            run_id = runs.start_run(settings, user, transcript=str(form.get("transcript", "")))
     except (ValueError, OSError) as exc:
         return back("/runs", err=str(exc))
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
@@ -562,4 +787,23 @@ async def set_key(
     problem = pv.set_public_key(target, party, public_key, user)
     if problem:
         return back(here, err=problem)
-    return back(here, msg=f"Public key for the {party} replaced. Sign with the matching key.")
+    if not settings.deploy_base:
+        return back(
+            here,
+            msg=f"Public key for the {party} replaced here. The box's trust file is unchanged: "
+            "set AIAB_DEPLOY_BASE for the UI to open the pull request.",
+        )
+    pushed = publish.push_key_change(
+        settings.git_dir, party, public_key.strip(), user, base=settings.deploy_base
+    )
+    view, error = load_view(target)
+    return render(
+        request,
+        "sign.html",
+        view=view,
+        error=error,
+        base=f"/a/{aid}",
+        aid=aid,
+        key_push=pushed,
+        key_party=party,
+    )

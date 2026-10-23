@@ -29,17 +29,61 @@
   </div>
 
   <div class="card">
+    <div class="card-header">Input</div>
+    <div class="card-body">
+      <form method="post" action="/runs/start" id="run-form"></form>
+      <p class="explain">Which records go into this run. The plan does not filter any more; you choose here. The box still checks every record against the plan's scope (agents and time window) and refuses a run outside it.</p>
+      <div class="sources">
+        <div class="src">
+          <label class="src-head"><input type="radio" name="source" value="transcript" form="run-form" {% if source != "sessions" %}checked{% endif %}> <span class="src-title">A test transcript</span> <span class="src-sub">from <span class="mono">plan/tests/transcripts/</span>, written to fit the plan's scope</span></label>
+          <div class="pick">
+            {% for t in transcripts %}<label class="choice"><input type="radio" name="transcript" value="{{ t }}" form="run-form" {% if loop.first %}checked{% endif %}> <span class="mono">{{ t }}</span></label>{% endfor %}
+          </div>
+        </div>
+        <div class="src">
+          <label class="src-head"><input type="radio" name="source" value="sessions" form="run-form" {% if source == "sessions" %}checked{% endif %} {% if not all_count %}disabled{% endif %}> <span class="src-title">Recorded sessions</span> <span class="src-sub">from the <a class="link" href="/logs">Logs</a> page, as the proxy recorded them{% if not all_count %} · none on disk yet{% endif %}</span></label>
+          {% if all_count %}
+          <form method="get" action="/runs" class="window">
+            <input type="hidden" name="source" value="sessions">
+            <span class="lbl">window</span>
+            <input type="datetime-local" name="from" value="{{ win.from }}"> <span class="lbl">to</span> <input type="datetime-local" name="to" value="{{ win.to }}">
+            <span class="lbl">sender</span>
+            <select name="who"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == win.who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>
+            <button class="btn btn--ghost btn--sm">Show</button>
+            {% if win.from or win.to or win.who %}<a class="link" href="/runs?source=sessions">all time</a>{% endif %}
+          </form>
+          <p class="pick-sum">
+            <label class="choice"><input type="checkbox" onchange="for (const c of document.querySelectorAll('.sess input')) c.checked = this.checked"> select all shown</label>
+            <span>{{ sessions | length }} of {{ all_count }} session(s) shown · {{ totals.records }} records · {{ totals.kb }} KB · {{ totals.fits }} fit the plan's scope</span>
+          </p>
+          {% for item in sessions %}
+          <label class="sess {% if item.notes %}sess--refused{% else %}sess--fits{% endif %}">
+            <input type="checkbox" name="session" value="{{ item.session.id }}" form="run-form" {% if item.session.id in picked %}checked{% endif %}>
+            <span><span class="sess-title">{{ item.session.title }}</span>
+              <span class="sess-meta">{{ item.session.who }} · {{ item.session.started_short }} · {{ item.session.requests | length }} req · {{ item.records }} records · {{ item.kb }} KB</span>
+              {% for n in item.notes %}<span class="sess-warn">the box would refuse: {{ n }}</span>{% endfor %}</span>
+            <span class="tag {% if item.notes %}tag--refused{% else %}tag--fits{% endif %}">{% if item.notes %}refused{% else %}fits{% endif %}</span>
+          </label>
+          {% else %}<p class="text-muted" style="margin-left: var(--space-6)">No session in this window.</p>
+          {% endfor %}
+          {% if scope and totals.fits == 0 and sessions %}
+          <p class="scope-note">The deployed plan allows agents <span class="mono">{{ scope.agents | join(", ") }}</span> between <span class="mono">{{ scope.window_start[:10] }}</span> and <span class="mono">{{ scope.window_end[:10] }}</span>. The recorded sessions come from <span class="mono">{{ whos | join(", ") }}</span>. To run on real logs, widen the plan's input scope (Plan → Settings), have both parties sign, and deploy.</p>
+          {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-header">Start a run</div>
     <div class="card-body">
-      <form method="post" action="/runs/start">
-        <p class="explain">Which transcript to send, from <span class="mono">plan/tests/transcripts/</span>:</p>
-        {% for t in transcripts %}<label class="choice"><input type="radio" name="transcript" value="{{ t }}" {% if loop.first %}checked{% endif %}> <span class="mono">{{ t }}</span></label>{% endfor %}
-        {% if pre.ok %}
-        <p style="margin-top: var(--space-6)"><button class="btn btn--primary">Start the run</button></p>
-        {% else %}
-        <p style="margin-top: var(--space-6)"><button class="btn btn--primary" disabled>Start the run</button> <span class="text-muted">Add the two credentials first; the button is off until they are found.</span></p>
-        {% endif %}
-      </form>
+      {% if pre.ok %}
+      <p class="explain">Six steps: verify the plan, attest the box, sign the chosen records with the stand-in logger key, send them in, wait for the signed report, verify it offline.</p>
+      <p><button class="btn btn--primary" form="run-form">Start the run</button></p>
+      {% else %}
+      <p><button class="btn btn--primary" disabled>Start the run</button> <span class="text-muted">Add the two credentials first; the button is off until they are found.</span></p>
+      {% endif %}
     </div>
   </div>
 

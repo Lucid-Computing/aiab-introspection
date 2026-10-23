@@ -11,6 +11,9 @@ from pathlib import Path
 UI_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = UI_ROOT.parent
 STATIC_DIR = REPO_ROOT / "static"
+TEST_PROXY_URL = (
+    "https://47b9b017832cbbf8ca2572b480584460df142e04-8080.dstack-pha-prod9.phala.network"
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,9 @@ class Settings:
     demo_keys_dir: Path  # lab.token and logger.key for the live box, never in the repo
     release_file: Path  # the release pins the live box must match
     push_drafts: bool  # push agreement folders to the checkout's branch after each save
+    logs_dir: Path  # downloaded proxy log segments, one folder
+    proxy_url: str  # the logging proxy's address (its /_logs download API)
+    proxy_key: str | None  # the "tester" key for that API; None means the Logs page is read-only
 
     @property
     def repo_url(self) -> str | None:
@@ -51,7 +57,24 @@ def _repo_from_git() -> str | None:
     return None
 
 
+def _load_dotenv(path: Path) -> None:
+    """ui/.env, if present: KEY=VALUE lines, applied only where the environment is unset.
+
+    Secrets for a laptop run live there, git-ignored; on Render the same names are set in
+    the service's environment and this file does not exist.
+    """
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
 def load_settings() -> Settings:
+    _load_dotenv(UI_ROOT / ".env")
     env = os.environ
     secret = env.get("UI_SESSION_SECRET")
     return Settings(
@@ -74,4 +97,19 @@ def load_settings() -> Settings:
             env.get("AIAB_RELEASE_FILE", STATIC_DIR / "deploy/tinfoil/audit/release.json")
         ).resolve(),
         push_drafts=env.get("AIAB_PUSH_DRAFTS", "").lower() in {"1", "true", "yes"},
+        logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
+        proxy_url=env.get("AIAB_PROXY_URL", TEST_PROXY_URL).rstrip("/"),
+        proxy_key=_proxy_key(env.get("AIAB_PROXY_KEY", "")),
     )
+
+
+def _proxy_key(value: str) -> str | None:
+    """The key as pasted from 1Password: either bare, or a "name:key,name:key" list, in which
+    case the "tester" entry (or the first) is used."""
+    value = value.strip()
+    if not value:
+        return None
+    if ":" not in value:
+        return value
+    pairs = dict(p.strip().split(":", 1) for p in value.split(",") if ":" in p)
+    return pairs.get("tester") or next(iter(pairs.values()), None)

@@ -42,9 +42,9 @@ Why these choices:
 
 ## What I need from you
 
-1. Review `build-image.yml` and `release.yml`.
-2. Secrets into 1Password, then into GitHub: `TINFOIL_API_KEY`, `RELEASE_GH_TOKEN` (runs workflows here, pushes tags and downloads releases in the config repo), `AUDIT_LAB_TOKEN`, `AUDIT_LOGGER_KEY`. Create the GitHub environment `production` with a required reviewer.
-3. Replace the demo lab and auditor public keys in `static/aiab/baked/trust.json` with ours. I will send them.
+1. Review the workflow changes: `build-image.yml` (also builds from `production`; `master` keeps building too, so development changes are checked to build), `approve-plan.yml` (now only watches pull requests into `production`, and no longer starts a build of its own: the release job does), new `release.yml` and new `approve-keys.yml`.
+2. Secrets into 1Password, then into GitHub: `TINFOIL_API_KEY`, `RELEASE_GH_TOKEN` (runs workflows here, pushes tags and downloads releases in the config repo), `AUDIT_LAB_TOKEN`, `AUDIT_LOGGER_KEY`. Creating the GitHub environment `production` with a required reviewer needs repo admin rights, which I do not have; until an admin adds it, the release is started by hand from the Actions tab, which is the human step.
+3. Our public keys: the UI now opens a pull request against `production` for each one (branch `keys/<party>-…`, only `trust.json` changes); `approve-keys.yml` checks it, you review and merge. I will trigger them once the UI is redeployed.
 4. GitHub Actions on the organization is blocked right now ("payments failed or spending limit"). I have asked Caleb. Until then no CI job runs.
 
 ## Then: the logger

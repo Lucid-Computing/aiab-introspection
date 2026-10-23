@@ -1,4 +1,4 @@
-"""The plan graph the UI draws: the six functions in the order the worker calls them.
+"""The plan graph the UI draws: the functions in the order the worker calls them.
 
 This mirrors aiab/baked/worker.py (design spec 3.1, 3.3). The static part fixes the
 function names and signatures; this table adds what each step takes from plan.json and a
@@ -26,28 +26,6 @@ class Step:
 
 
 PIPELINE: tuple[Step, ...] = (
-    Step(
-        "filter_logs",
-        "run_python",
-        "list[LogRecord]",
-        "list[LogRecord]",
-        ("filter", "input_scope.agents", "input_scope.window_start", "input_scope.window_end"),
-        "Which records are in scope.",
-        explain=(
-            "Decides which log records the audit looks at. The box hands this step every "
-            "record in the submitted time window; it returns the ones that count. Records "
-            "dropped here are never shown to the model.\n\n"
-            "filter.kinds: which record types take part. request and response are what "
-            "the agent sent and received; tool_call and tool_result are the tools it ran "
-            "and what they returned. Remove one to ignore that type.\n\n"
-            "filter.keywords: if the list is not empty, only records whose text contains at "
-            "least one of these words are kept. An empty list keeps every record.\n\n"
-            "input_scope.agents: only these agents' records are in scope. On the test proxy "
-            "every record is labelled test, so that list must contain test.\n\n"
-            "input_scope.window_start and window_end: the time window the agreement covers; "
-            "records outside it are refused by the box before this step runs."
-        ),
-    ),
     Step(
         "build_query",
         "run_python",

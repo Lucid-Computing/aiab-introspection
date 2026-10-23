@@ -5,7 +5,7 @@
 {% block content %}
 <p class="crumb"><a href="/runs" class="link">← Runs</a></p>
 <h1>Run <span class="mono" style="font-size: var(--text-xl)">{{ run.id }}</span></h1>
-<p class="lead">Transcript <span class="mono">{{ run.transcript }}</span>, started {{ run.started[:16].replace("T", " ") }} by {{ run.by.user }} ({{ run.by.party }}).
+<p class="lead">Input: <span class="mono">{{ run.transcript }}</span>. Started {{ run.started[:16].replace("T", " ") }} by {{ run.by.user }} ({{ run.by.party }}).
 {% if run.status == "running" %}Running. This page refreshes itself every few seconds.{% elif run.status == "failed" %}Stopped: a step failed. Nothing after it ran.{% elif run.status == "interrupted" %}Interrupted: the server restarted while this run was going. Start a new one.{% else %}Finished and verified.{% endif %}</p>
 
 {# which step is "now": the running one, else the failed one, else the last done one #}

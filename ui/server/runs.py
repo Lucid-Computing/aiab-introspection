@@ -78,6 +78,56 @@ def transcripts(settings: Settings) -> list[str]:
     return sorted(p.name for p in folder.glob("*.jsonl")) if folder.is_dir() else []
 
 
+def plan_scope(settings: Settings) -> dict | None:
+    """The deployed plan's input_scope block, or None when the plan does not load."""
+    try:
+        return json.loads((settings.plan_dir / "plan.json").read_text(encoding="utf-8"))[
+            "input_scope"
+        ]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def scope_notes(settings: Settings, who: str, first: float, last: float) -> list[str]:
+    """Why the deployed plan's input scope would make the box refuse these records."""
+    scope = plan_scope(settings)
+    if not scope:
+        return []
+    notes = []
+    agents = scope.get("agents", [])
+    if who not in agents:
+        notes.append(f"agent '{who}' is not in the plan's scope ({', '.join(agents)})")
+    try:
+        start = datetime.fromisoformat(scope["window_start"]).timestamp()
+        end = datetime.fromisoformat(scope["window_end"]).timestamp()
+    except (KeyError, ValueError, TypeError):
+        return notes
+    if first < start or last >= end:
+        notes.append(
+            f"outside the plan's window {scope['window_start'][:10]} to {scope['window_end'][:10]}"
+        )
+    return notes
+
+
+def check_limits(settings: Settings, records: list[dict]) -> None:
+    """Refuse here what the box would refuse as input_too_large."""
+    try:
+        limits = json.loads((settings.plan_dir / "plan.json").read_text(encoding="utf-8"))["limits"]
+    except (OSError, ValueError, KeyError):
+        return
+    size = len(json.dumps(records, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    if len(records) > limits["max_records_per_run"]:
+        raise ValueError(
+            f"{len(records)} records, the plan allows {limits['max_records_per_run']} per run;"
+            " pick fewer sessions"
+        )
+    if size > limits["max_input_utf8_bytes"]:
+        raise ValueError(
+            f"{size // 1024} KB of records, the plan allows"
+            f" {limits['max_input_utf8_bytes'] // 1024} KB per run; pick fewer sessions"
+        )
+
+
 def preflight(settings: Settings) -> dict:
     """What a run needs, and what is missing. Shown on the Runs screen before starting."""
     release = {}
@@ -123,7 +173,9 @@ def _cli(settings: Settings, *args: str, offline: bool = False) -> dict | None:
 def _execute(settings: Settings, folder: Path, state: dict) -> None:
     release, token = settings.release_file, settings.demo_keys_dir / "lab.token"
     logger = settings.demo_keys_dir / "logger.key"
-    fixture = settings.plan_dir / "tests" / "transcripts" / state["transcript"]
+    fixture = folder / "records.jsonl"  # chosen sessions, written by start_run
+    if not fixture.exists():
+        fixture = settings.plan_dir / "tests" / "transcripts" / state["transcript"]
     files = {
         "anchor": folder / "anchor.json",
         "submission": folder / "submission.json",
@@ -237,17 +289,32 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
     _write(folder, state)
 
 
-def start_run(settings: Settings, transcript: str, actor: dict[str, str]) -> str:
-    if transcript not in transcripts(settings):
+def start_run(
+    settings: Settings,
+    actor: dict[str, str],
+    transcript: str | None = None,
+    records: list[dict] | None = None,
+    label: str | None = None,
+) -> str:
+    """Start a run on a test transcript, or on records chosen from the Logs page."""
+    if records is None and transcript not in transcripts(settings):
         raise ValueError("unknown transcript")
+    if records is not None:
+        if not records:
+            raise ValueError("no records chosen")
+        check_limits(settings, records)
     run_id = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(3)}"
     folder = settings.runs_dir / run_id
     folder.mkdir(parents=True, exist_ok=False)
+    if records is not None:
+        (folder / "records.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+        )
     state = {
         "id": run_id,
         "started": _now(),
         "by": {"party": actor.get("party", ""), "user": actor.get("username", "")},
-        "transcript": transcript,
+        "transcript": label or transcript,
         "status": "running",
         "steps": [{"key": k, "title": t, "explain": e, "status": "waiting"} for k, t, e in STEPS],
         "result": None,

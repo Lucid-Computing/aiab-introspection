@@ -111,7 +111,7 @@ Source commit `c687463` was built with the same pinned toolchain above. Two clea
 local OCI exports reproduced the CI-published digest exactly:
 `sha256:2b28e0ca3e531af8b188105f274c4dfb878f80750fd7c9fc88d6c9a1e38e537b`.
 Each passed inspection of 10,104 entries with no application bytecode/caches.
-CI: https://github.com/lucid-computing-labs/aiab-introspection/actions/runs/38702007153
+CI: https://github.com/Lucid-Computing/aiab-introspection/actions/runs/38702007153
 Local transcript: `/tmp/aiab-audit-repro-final.log`.
 
 File modes affect COPY layer digests: this workstation's default modes were 0664

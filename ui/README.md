@@ -16,13 +16,17 @@ AIAB_TRUST_FILE=$HOME/.aiab-dev/trust.json make dev
 
 Open http://127.0.0.1:8090 and log in. The UI reads and edits agreement folders in the checkout directly. Without `AIAB_TRUST_FILE` the UI pins the keys in `static/aiab/baked/trust.json`, which is right for reading the committed plan but means you cannot sign (those private keys are not yours). Optional: `AIAB_BOX_URL=https://…` shows what the box is running (`/aiab/manifest`).
 
-To sign: the Sign screen shows one `openssl` command (OpenSSL 3; on a Mac `brew install openssl`) that signs the version digest with your private key and prints the signature; paste it and press Verify and store. Making a key pair is two more `openssl` lines, and the public key is submitted on the same screen (it replaces your party's key in the trust file the UI uses). `make dev-keys` writes both the box's raw `.key` form and a `.pem` copy for openssl, and can be re-run: existing keys are kept and only missing files are added. Without OpenSSL 3, `assets/sign_digest.py` does the same, and its `--submit` option posts the signature to the UI without pasting.
+To sign: the Sign screen shows one `openssl` command (OpenSSL 3; on a Mac `brew install openssl`) that signs the version digest with your private key and prints the signature; paste it and press Verify and store. Making a key pair is two more `openssl` lines, and the public key is submitted on the same screen: it replaces your party's key in the trust file the UI uses, and when `AIAB_DEPLOY_BASE` is set the UI also opens a pull request (`keys/<party>-…`) that puts it into `static/aiab/baked/trust.json` on that branch for a person to review. `make dev-keys` writes both the box's raw `.key` form and a `.pem` copy for openssl, and can be re-run: existing keys are kept and only missing files are added. Without OpenSSL 3, `assets/sign_digest.py` does the same, and its `--submit` option posts the signature to the UI without pasting.
 
 Deploy pushes: it copies the agreement into `plan/`, makes a branch from the deploy base (`AIAB_DEPLOY_BASE`, normally `production`; default the remote's default branch) with only that change (in a temporary worktree, your checkout is not switched), pushes it, and opens the pull request when the GitHub CLI is logged in (`gh auth login`); otherwise it shows the compare link. You merge the pull request yourself. With `AIAB_PUSH_DRAFTS=1` every save also commits `agreements/` in the checkout and pushes it to the checkout's own branch a few seconds later, so the server disk is never the only copy of a draft. The branch model is in [docs/BRANCHES_AND_RELEASE.md](../docs/BRANCHES_AND_RELEASE.md).
 
+## Logs: what the logging proxy recorded
+
+The Logs screen shows every call that went through the logging proxy, grouped into sessions, one request's full transcript at a time (system prompt, tools and system reminders folded). It needs the proxy's shared key in `AIAB_PROXY_KEY` (locally in `ui/.env`, git-ignored; on Render an environment variable) and `AIAB_PROXY_URL` (default the test proxy). Segments are downloaded into `AIAB_LOGS_DIR` (default `ui/logs/`, git-ignored; on Render `/data/logs` on the disk, so they survive redeploys), checked against the sha256 the proxy lists, and never deleted. A background thread fetches new segments every minute from the moment the server starts; Refresh fetches at once.
+
 ## Runs: the deployed plan against the live box
 
-The Runs screen performs the six steps of `static/demo/audit/walkthrough.py` from the browser, each as one call of `python -m auditor.baked` from the static part: verify the plan's signatures, attest the box and pin its identity, sign a test transcript with the demo logger key, submit it, wait for the signed report, verify the report offline. The page shows what each command returned. It needs `lab.token` and `logger.key` in `AIAB_DEMO_KEYS` (default `~/.local/share/aiab-audit-demo/`), held by the box operator, and the deployed `plan/` must be the one the release pins name, otherwise step 2 refuses. Runs are folders under `AIAB_RUNS_DIR` (default `ui/runs/`, git-ignored) holding the CLI's output files and `state.json`.
+The Runs screen performs the six steps of `static/demo/audit/walkthrough.py` from the browser, each as one call of `python -m auditor.baked` from the static part: verify the plan's signatures, attest the box and pin its identity, sign the chosen records with the demo logger key, submit them, wait for the signed report, verify the report offline. The input is chosen on the page: a test transcript from `plan/tests/transcripts/`, or recorded sessions from the Logs page, which `server/proxylogs.py` turns into box records (`stream` is `proxy`, `agent_id` is the proxy's user name); the page warns when the plan's `input_scope` would make the box refuse them. The page shows what each command returned. It needs `lab.token` and `logger.key` in `AIAB_DEMO_KEYS` (default `~/.local/share/aiab-audit-demo/`), held by the box operator, and the deployed `plan/` must be the one the release pins name, otherwise step 2 refuses. Runs are folders under `AIAB_RUNS_DIR` (default `ui/runs/`, git-ignored) holding the CLI's output files and `state.json`.
 
 ## How to read this (in order)
 
@@ -43,6 +47,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | [`server/box.py`](server/box.py) | Reads the box's manifest and health. Never writes. |
 | [`server/publish.py`](server/publish.py) | Deploy's git side: branch from the base, replace `plan/`, commit, push, open the PR with `gh`. |
 | [`server/runs.py`](server/runs.py) | The Runs screen's steps: each one a call of the static part's `auditor.baked` CLI, results on disk. |
+| [`server/proxylogs.py`](server/proxylogs.py) | The Logs screen: fetches the logging proxy's segments (every minute in the background), groups requests into sessions, converts them to box records. |
 | [`server/app.py`](server/app.py) | The routes, one per screen or form. |
 | [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm dialog, and CodeMirror (from cdnjs) for `plan.py` with Tab indentation and syntax colours. |
 | [`server/template/`](server/template/) | The minimal valid agreement that "New agreement" starts from. |
@@ -70,6 +75,7 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
    - `GITHUB_TOKEN`: a GitHub token that can push branches and open pull requests on this repository (fine-grained token with Contents and Pull requests read/write, or a bot account's token). Deploy pushes with it.
    - `UI_BOOTSTRAP_ACCOUNTS`: the UI logins to create on first boot, `teddy:lab:<password>,caleb:auditor:<password>`. Remove the variable afterwards.
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
+   - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the logging proxy's shared key from 1Password.
 3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo`, creates the accounts, and copies the box's trust file to `/data/trust.json`.
 4. Open the service URL, log in, and submit each party's public key on a Sign screen, as locally.
 
@@ -80,7 +86,7 @@ To try the container locally against a throwaway bare repository instead of GitH
 ```sh
 docker build -f ui/Dockerfile -t aiab-ui .
 docker run --rm -p 8090:8090 -v /path/to/origin.git:/origin.git -v aiab-data:/data \
-  -e AIAB_REPO=lucid-computing-labs/aiab-introspection -e AIAB_REPO_URL=file:///origin.git \
+  -e AIAB_REPO=Lucid-Computing/aiab-introspection -e AIAB_REPO_URL=file:///origin.git \
   -e AIAB_CHECKOUT_BRANCH=ui-design -e UI_BOOTSTRAP_ACCOUNTS=teddy:lab:lab-pass-123 aiab-ui
 ```
 

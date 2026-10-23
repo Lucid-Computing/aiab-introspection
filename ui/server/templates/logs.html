@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% set active = "logs" %}
+{% block title %}Logs · AIAB agreement{% endblock %}
+{% block main_class %}page--logs{% endblock %}
+{% block content %}
+{% set keep = "&who=" ~ who ~ "&q=" ~ q %}
+<h1>Logs</h1>
+<p class="lead">What the logging proxy recorded, grouped into sessions. A run can take any of these as its input.</p>
+<div class="logs-tools">
+  <form method="get" action="/logs" class="logs-filters">
+    <select name="who" onchange="this.form.submit()"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>
+    <input name="q" value="{{ q }}" placeholder="Search titles">
+    <button class="btn btn--ghost">Search</button>
+  </form>
+  <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><button class="btn btn--ghost" {% if not settings.proxy_key %}disabled{% endif %}>Refresh</button></form>
+</div>
+<p class="logs-status">{{ total_requests }} requests on disk ·
+    {% if not settings.proxy_key %}no proxy key configured (<span class="mono">AIAB_PROXY_KEY</span>), nothing is fetched
+    {% elif fetch.running %}fetching now
+    {% elif fetch.error %}last fetch failed: {{ fetch.error }}
+    {% elif fetch.ago is not none %}fetched {% if fetch.ago < 5 %}just now{% else %}{{ fetch.ago }} s ago{% endif %}, again every {{ fetch.every }} s in the background
+    {% else %}not fetched yet{% endif %}</p>
+
+<div class="logs">
+  <aside class="logs-list">
+    {% for s in shown %}
+    <a class="logs-item {% if current and s.id == current.id %}on{% endif %}" href="/logs?session={{ s.id }}{{ keep }}">
+      <span class="logs-title">{{ s.title }}</span>
+      <span class="logs-meta">{{ s.who }} · {{ s.started_short }} · {{ s.requests | length }} req{% if s.model %} · {{ s.model }}{% endif %}</span>
+    </a>
+    {% else %}
+    <p class="text-muted" style="padding: var(--space-4)">{% if total_requests %}Nothing matches.{% else %}No records on disk yet.{% endif %}</p>
+    {% endfor %}
+  </aside>
+
+  <section class="logs-detail">
+    {% if current and req %}
+    <h2 class="logs-h">{{ current.title }}</h2>
+    <p class="logs-sub">{{ current.who }} · started {{ current.started_short }} · session {{ current.id }}{% if req.raw._source %} · from {{ req.raw._source }}{% endif %}</p>
+
+    <details class="fold fold--plain">
+      <summary>Requests in this session ({{ current.requests | length }})</summary>
+      <ol class="req-list">
+        {% for r in current.requests %}
+        <li><a class="{% if r.id == req.id %}on{% endif %}" href="/logs?session={{ current.id }}&req={{ r.id }}{{ keep }}">{{ loop.index }} · {{ r.when_short }} · {{ r.model or "?" }} · <span class="{% if r.status and r.status < 300 %}ok{% else %}bad{% endif %}">{{ r.status or "?" }}</span>{% if r.duration_s %} · {{ "%.3f" | format(r.duration_s) }}s{% endif %} · {{ r.size_kb }}</a></li>
+        {% endfor %}
+      </ol>
+    </details>
+
+    <p class="req-meta">{% if req.id == current.requests[-1].id %}full transcript{% else %}request {{ current.requests.index(req) + 1 }} of {{ current.requests | length }}{% endif %} · {{ req.when_short }} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · <a class="link" href="/logs/raw/{{ req.id }}" target="_blank" rel="noopener">raw JSON</a></p>
+
+    {% if req.system_text %}
+    <details class="fold"><summary>System prompt ({{ "{:,}".format(req.system_text | length) }} chars)</summary><pre class="fold-text">{{ req.system_text }}</pre></details>
+    {% endif %}
+    {% if req.tool_names %}
+    <details class="fold"><summary>Tools available ({{ req.tool_names | length }})</summary><p class="fold-text mono">{{ req.tool_names | join(", ") }}</p></details>
+    {% endif %}
+
+    {# one block of a message: plain text in full when short, clipped with "show all" when long; other kinds fold #}
+    {% macro block(b, role) %}
+      {% if b.kind == "text" and b.text is long %}
+      <details class="more"><summary><pre class="msg-text msg-text--{{ role }} preview">{{ b.text | preview }}</pre><span class="more-btn" data-open="− show less" data-closed="+ show all · {{ "{:,}".format(b.text | length) }} chars, {{ b.text.count("\n") + 1 }} lines"></span></summary><pre class="msg-text msg-text--{{ role }}">{{ b.text }}</pre></details>
+      {% elif b.kind == "text" %}<pre class="msg-text msg-text--{{ role }}">{{ b.text }}</pre>
+      {% elif b.kind == "error" %}<p class="form-message error" style="margin: 0">{{ b.text }}</p>
+      {% elif b.kind == "thinking" and not b.text %}<p class="msg-note">{{ b.label }}</p>
+      {% else %}<details class="msg-fold msg-fold--{{ b.kind }}"><summary>{{ b.label }}</summary><pre class="msg-text">{{ b.text }}</pre></details>{% endif %}
+    {% endmacro %}
+    {% macro message(m) %}
+      <div class="msg">
+        <div class="msg-role">{{ m.role }}</div>
+        <div class="msg-body">
+          {% if m.role == "system" %}
+          <details class="msg-fold"><summary>system context · {{ "{:,}".format(m.text | length) }} chars</summary><pre class="msg-text">{{ m.text }}</pre></details>
+          {% else %}{% for b in m.blocks %}{{ block(b, m.role) }}{% else %}<p class="text-muted msg-empty">(empty)</p>{% endfor %}{% endif %}
+        </div>
+      </div>
+    {% endmacro %}
+
+    {% set recent = 6 %}
+    <div class="msgs">
+      {% if req.messages | length > recent %}
+      <details class="fold fold--plain earlier">
+        <summary>Earlier in this conversation ({{ req.messages | length - recent }} messages)</summary>
+        {% for m in req.messages[:-recent] %}{{ message(m) }}{% endfor %}
+      </details>
+      {% endif %}
+      {% for m in req.messages[-recent:] %}{{ message(m) }}{% endfor %}
+      <div class="msg msg--reply">
+        <div class="msg-role">assistant<span class="msg-role-sub">this reply{% if req.stop_reason %} · {{ req.stop_reason }}{% endif %}</span></div>
+        <div class="msg-body">
+          {% for b in req.response_blocks %}
+          {% if b.kind == "text" %}<div class="msg-text msg-text--reply md">{{ b.text | md }}</div>
+          {% else %}{{ block(b, "reply") }}{% endif %}
+          {% else %}<p class="text-muted msg-empty">(no reply recorded)</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <p class="text-muted" style="padding: var(--space-6)">Pick a session on the left.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

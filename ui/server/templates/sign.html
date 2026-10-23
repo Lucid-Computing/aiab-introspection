@@ -6,6 +6,21 @@
 <h1>Sign</h1>
 <p class="lead">The digest below is the fingerprint of this version's files. Each party signs that fingerprint with its own private key; the box checks the signature with the public key it holds for that party. The private key never leaves your machine.</p>
 {% if view %}
+{% if key_push is defined and key_push %}
+<div class="notice deploy-result" style="margin-bottom: var(--space-8)">
+  {% if key_push.error %}
+  <p>The {{ key_party }} public key is replaced here, but the pull request for the box's trust file failed: <span class="mono">{{ key_push.error }}</span>.</p>
+  {% elif key_push.unchanged and key_push.branch == settings.deploy_base %}
+  <p>The {{ key_party }} public key is replaced here and already matches the box's trust file on <span class="mono">{{ key_push.branch }}</span>. Nothing to review.</p>
+  {% elif key_push.unchanged %}
+  <p>The {{ key_party }} public key is replaced here. A pull request for it already exists on branch <span class="mono">{{ key_push.branch }}</span>{% if key_push.compare_url %}: <a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">open it</a>{% endif %}.</p>
+  {% else %}
+  <p>The {{ key_party }} public key is replaced here, and a pull request now asks to put it into the box's trust file on <span class="mono">{{ settings.deploy_base }}</span>.
+    {% if key_push.pr_url %}<a class="link" href="{{ key_push.pr_url }}" target="_blank" rel="noopener">{{ key_push.pr_url }}</a>{% elif key_push.compare_url %}<a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">Open the pull request</a>{% else %}Branch <span class="mono">{{ key_push.branch }}</span>{% endif %}.
+    A person reviews and merges it; the box uses the key from its next release.</p>
+  {% endif %}
+</div>
+{% endif %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
 
 <div class="stack">

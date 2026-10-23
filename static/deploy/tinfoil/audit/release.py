@@ -154,7 +154,7 @@ def main():
         parser.error("Invalid instance ID")
     root = Path(__file__).resolve().parents[4]
     baseline = Path(__file__).parent
-    source_repo = "lucid-computing-labs/aiab-introspection"
+    source_repo = "Lucid-Computing/aiab-introspection"
     prior = json.loads((baseline / "release.json").read_text())
     repo = prior["repo"]
     sha = command("git", "rev-parse", "HEAD", cwd=root)
@@ -201,7 +201,7 @@ def main():
         ):
             raise RuntimeError("Live instance differs from approved baseline")
         record("building", status="in_progress")
-        image = "ghcr.io/lucid-computing-labs/aiab-introspection-enclave"
+        image = "ghcr.io/lucid-computing/aiab-introspection-enclave"
         run_id, built_sha = workflow(
             source_repo, "build-image.yml", args.source_ref, args.output, "-f", "image=" + image
         )
