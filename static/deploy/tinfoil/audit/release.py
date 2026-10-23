@@ -212,7 +212,7 @@ def main():
     try:
         current = cp.request("GET", "/api/containers/" + args.instance)
         if (
-            current.get("repo") != repo
+            current.get("repo") != prior.get("control_plane_repo", repo)
             or current.get("domain") != prior["host"]
             or current.get("debug") is not False
             or current.get("disable_cc_mode") is not False

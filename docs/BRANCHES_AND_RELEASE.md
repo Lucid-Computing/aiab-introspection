@@ -58,3 +58,5 @@ tag, and compares the config, trust, manifest and policy digest with the local
 reviewed baseline. On success it records the new config commit and the workflow
 commits all five baseline files together. Never update only release.json after
 deployment: that leaves the next release with inconsistent baseline inputs.
+
+The release `repo` is the exact, case-sensitive GitHub repository identity used by Sigstore verification. After an organization migration, `control_plane_repo` may explicitly pin the old repository alias still stored by Tinfoil; this alias is only used for the control-plane baseline check, never for attestation verification.
