@@ -24,14 +24,27 @@ const base = 'http://127.0.0.1:8103';
       await page.waitForURL(`**/a/${id}/plan?**`);
       const input = page.locator('#chat-input');
       const users = page.locator('.chat-message[data-state]');
+      const starters = page.locator('.chat-starters');
       const endpoint = `**/a/${id}/plan/chat`;
       const send = async text => {
         await input.fill(text);
         await input.press(width === 1280 ? 'Control+Enter' : 'Meta+Enter');
         await page.waitForFunction(() => !document.getElementById('chat-input').disabled);
       };
+      // Seeded, typed and even whitespace-only composer content must never be overwritten.
+      assert(await starters.isHidden());
+      for (const draft of ['A draft I have not sent', ' ']) {
+        await input.fill(draft);
+        assert(await starters.isHidden());
+        await page.locator('[data-chat-starter]').first().evaluate(button => button.click());
+        assert.equal(await input.inputValue(), draft);
+      }
+      await input.fill('');
+      assert(await starters.isVisible());
+      assert(!(await page.locator('#plan-chat').innerText()).includes('bill for'));
       await page.locator('[data-chat-starter]').first().click();
       assert((await input.inputValue()).includes('credential theft'));
+      assert(await starters.isHidden());
       await input.press('Enter');
       assert((await input.inputValue()).endsWith('\n'));
       assert.equal(await users.count(), 0); // Plain Enter never submits.
@@ -103,16 +116,19 @@ const base = 'http://127.0.0.1:8103';
       await page.locator('#chat-stop').click();
       await page.waitForFunction(() => !document.getElementById('chat-input').disabled);
       assert((await page.locator('#chat-status').innerText()).includes('bill for it'));
+      assert((await users.last().evaluate(el => getComputedStyle(el, '::after').content)).includes('No reply received'));
       assert.equal(await input.inputValue(), 'slow request');
       assert.equal(await users.count(), beforeStop + 1);
       await send('Retry as a normal request');
       assert.equal(await users.count(), beforeStop + 1);
+      assert(!(await page.locator('#plan-chat').innerText()).includes('bill for'));
 
       // Expired sessions preserve message and candidate and expose a sign-in link.
       const beforeExpiry = await users.count();
       await page.route(endpoint, route => route.fulfill({status:401, contentType:'application/json', body:'{"error":"expired"}'}));
       await send('Please revise this again');
       assert((await page.locator('#chat-status').innerText()).includes('session expired'));
+      assert((await users.last().evaluate(el => getComputedStyle(el, '::after').content)).includes('No reply received'));
       assert.equal(await input.inputValue(), 'Please revise this again');
       assert.equal(await page.locator('#chat-session a').getAttribute('target'), '_blank');
       assert(await page.locator('#chat-session a').isVisible());
@@ -138,6 +154,7 @@ const base = 'http://127.0.0.1:8103';
       await page.locator('#chat-reset').click();
       assert.equal(await users.count(), 0);
       assert.equal(await input.inputValue(), '');
+      assert(await starters.isVisible());
       assert.deepEqual(errors, []);
       await page.goto(base + '/agreements'); // No warning after clearing the conversation.
       await context.close();

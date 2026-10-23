@@ -10,6 +10,9 @@
   let history = [], events = [], candidate = null, proposal = null;
   let busy = false, controller = null, retryEntry = null;
 
+  function updateStarters() {
+    panel.querySelector(".chat-starters").hidden = busy || !ready || input.value.length > 0;
+  }
   function backup(value) {
     try {
       if (value) sessionStorage.setItem(storageKey, value);
@@ -53,6 +56,7 @@
     byId("chat-stop").hidden = mode !== "chat";
     byId("chat-send").textContent = mode === "chat" ? "Thinking…" : "Send";
     byId("chat-thinking").hidden = mode !== "chat";
+    updateStarters();
   }
   function clearProposal() {
     candidate = proposal = null;
@@ -145,7 +149,7 @@
       renderProposal(data);
       tell(data.validation_error ? "Ask Opus to repair the proposal, or use Revise below." : "", Boolean(data.validation_error));
     } catch (error) {
-      retryEntry.dataset.state = "not-sent";
+      retryEntry.dataset.state = "no-reply";
       tell(error.name === "AbortError"
         ? "Stopped waiting. Your message is ready to retry. The server or Anthropic may still finish the request and bill for it."
         : error.message, true);
@@ -156,6 +160,7 @@
     }
   });
   byId("chat-stop").addEventListener("click", () => controller?.abort());
+  input.addEventListener("input", updateStarters);
   input.addEventListener("keydown", event => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
       event.preventDefault();
@@ -164,7 +169,10 @@
   });
   panel.querySelectorAll("[data-chat-starter]").forEach(button => {
     button.addEventListener("click", () => {
+      // Also guard stale/programmatic clicks: never replace an existing draft message.
+      if (busy || !ready || input.value.length > 0) return;
       input.value = button.dataset.chatStarter;
+      updateStarters();
       input.focus();
     });
   });
@@ -172,6 +180,7 @@
     if (!input.value.trim()) input.value = proposal
       ? "Make this proposal more conservative and explain the tradeoffs."
       : "Repair the structural validation errors in this proposal, preserving the intended behavior.";
+    updateStarters();
     input.focus();
     input.scrollIntoView({block: "nearest"});
   });
@@ -214,6 +223,7 @@
     clearProposal(); tell(""); backup("");
     byId("chat-session").hidden = true;
     input.value = "";
+    updateStarters();
     input.focus();
   });
   const initial = JSON.parse(byId("chat-initial").textContent);

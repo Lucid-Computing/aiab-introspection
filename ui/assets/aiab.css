@@ -452,7 +452,7 @@ pre { max-width: 100%; overflow-x: auto; }
 .plan-chat .diff-added { background: #dcebdd; color: #183e22; }
 .plan-chat .diff-removed { background: #f5dfe0; color: #702226; }
 .plan-chat .chat-event { padding: .75rem; border-left: 3px solid var(--amber); font-size: var(--text-sm); }
-.plan-chat .chat-message[data-state="not-sent"]::after { content: "Not sent · ready to retry"; font-size: var(--text-sm); color: var(--ink-2); }
+.plan-chat .chat-message[data-state="no-reply"]::after { content: "No reply received · ready to retry"; font-size: var(--text-sm); color: var(--ink-2); }
 .plan-chat .chat-message[data-state="sending"]::after { content: "Sending…"; font-size: var(--text-sm); color: var(--ink-2); }
 .plan-chat #chat-file-list { overflow-wrap: anywhere; }
 .plan-chat #chat-thinking { display: flex; gap: .75rem; align-items: center; }
