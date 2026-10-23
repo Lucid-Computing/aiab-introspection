@@ -434,3 +434,11 @@ pre { max-width: 100%; overflow-x: auto; }
   .logs-filters { flex-wrap: wrap; min-width: 0; max-width: 100%; }
   .logs-filters input { width: 100%; }
 }
+/* Plan authoring chat */
+.plan-chat { margin-bottom: var(--space-10); }
+.chat-messages:empty { display: none; }
+.chat-messages { max-height: 28rem; overflow-y: auto; }
+.chat-message { padding: 1rem 0; border-bottom: 1px solid #ddd; }
+.chat-message p { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .5rem; }
+.plan-chat .chat-diff { max-height: 34rem; overflow: auto; white-space: pre; }
+.plan-chat [hidden] { display: none !important; }

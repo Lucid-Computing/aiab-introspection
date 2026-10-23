@@ -7,16 +7,16 @@ import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
+from server import plan_chat, proxylogs, publish, runs
 from server import plan_view as pv
-from server import proxylogs, publish, runs
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
 from server.config import UI_ROOT, Settings, load_settings
@@ -416,8 +416,9 @@ async def new_agreement(request: Request) -> Response:
             request, "new_agreement.html", view=view, error=error, form=form, err="; ".join(errors)
         )
     saved(user_of(request))
+    chat = "&chat=1" if form.get("chat") == "1" else ""
     return back(
-        f"/a/{created}/plan?edit=1", msg=f"New agreement {created}. Code and prompt copied."
+        f"/a/{created}/plan?edit=1{chat}", msg=f"New agreement {created}. Code and prompt copied."
     )
 
 
@@ -567,7 +568,49 @@ async def plan(request: Request, aid: str) -> Response:
         base=f"/a/{aid}",
         aid=aid,
         changes=changes,
+        chat_enabled=bool(settings.anthropic_api_key),
+        chat_initial=(
+            "Create a plan for this question: " + view.config["classification"]["problem"]
+            if view and q.get("chat") == "1"
+            else ""
+        ),
     )
+
+
+@app.post("/a/{aid}/plan/chat")
+@app.post("/a/{aid}/plan/chat/apply")
+async def plan_chat_action(request: Request, aid: str) -> Response:
+    actor = user_of(request)
+    if actor is None:
+        return JSONResponse({"error": "Please log in again."}, status_code=401)
+    target = pv.for_agreement(settings, aid)
+    if target is None:
+        return JSONResponse({"error": "No such agreement."}, status_code=404)
+    origin = request.headers.get("origin")
+    if origin and urlsplit(origin).netloc != request.headers.get("host"):
+        return JSONResponse({"error": "Use chat from this site's plan editor."}, status_code=403)
+    if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
+        return JSONResponse({"error": "Expected a JSON request."}, status_code=415)
+    try:
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > plan_chat.MAX_BODY:
+                raise plan_chat.ChatError("Chat request is too large.", 413)
+        payload = json.loads(body)
+        if not isinstance(payload, dict):
+            raise plan_chat.ChatError("Expected a JSON object.")
+        if request.url.path.endswith("/apply"):
+            digest = plan_chat.apply(target, payload, actor)
+            saved(actor)
+            return JSONResponse({"message": "Changes saved as a draft.", "digest": digest})
+        return JSONResponse(await plan_chat.reply(target, payload.get("messages")))
+    except plan_chat.ChatError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=exc.status)
+    except (ValueError, UnicodeError):
+        return JSONResponse({"error": "Could not read the request or plan."}, status_code=422)
+    except OSError:
+        return JSONResponse({"error": "Could not read or save the plan files."}, status_code=500)
 
 
 @app.post("/a/{aid}/plan/edit")

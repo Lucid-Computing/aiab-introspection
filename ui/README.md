@@ -66,6 +66,29 @@ Does: login per party; the Runs screen that drives the auditor CLI against the l
 
 Does not yet: the dry run (deferred; the static part's `python -m aiab.dryrun` works from the terminal), merging (people and CI do that), GitHub login, comments, the attestation verifier, run submission. The state lives in the agreement folders and the box; the server keeps only login sessions, no database.
 
+## Plan chat
+
+Set `ANTHROPIC_API_KEY` in the backend environment (on Render, in the service's
+Environment settings; locally, in git-ignored `ui/.env`). Plan chat uses
+`claude-opus-5-5`. The key stays on the backend; messages and the current plan
+bundle are sent to Anthropic, including the plan schema and runtime restrictions.
+This authoring model does not change the audit model pinned inside the plan.
+
+Choose **Create with AI** when making an agreement, or use the chat panel on an
+unsigned plan. Send a request, review the file diff, then **Apply to draft** or
+**Discard proposal**. Every proposal is checked with the box's bundle loader
+before preview and again before saving. A proposal cannot apply after the draft
+has changed or acquired a valid signature. Applying records the actor in Changes,
+clears evaluation results for the old version, and uses the existing draft push
+workflow. Signing and deployment remain separate actions.
+
+Conversation history and the pending proposal exist only in the open page's
+memory, and clear on reload, navigation, applying, or **New chat**. A failed
+request keeps the typed message available for retry. Provider errors are shown
+without raw response bodies or credentials.
+
+Run feature checks with `PYTHONPATH=. uv run pytest -q tests` from `ui/`.
+
 ## Deploying on Render
 
 The UI is one Docker container with a persistent disk. [`../render.yaml`](../render.yaml) defines it; [`Dockerfile`](Dockerfile) builds it (from the repository root, filtered by `Dockerfile.dockerignore`); [`docker-entrypoint.sh`](docker-entrypoint.sh) runs on every start.

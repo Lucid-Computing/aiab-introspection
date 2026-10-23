@@ -1,4 +1,4 @@
-"""Environment-driven settings for the agreement UI. No secrets beyond the session key."""
+"""Environment-driven settings for the agreement UI and its backend integrations."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import os
 import secrets
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 UI_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +37,7 @@ class Settings:
     proxy_key: str | None  # the "tester" key for that API; None means the Logs page is read-only
 
     run_plan_dir: Path | None = None
+    anthropic_api_key: str | None = field(default=None, repr=False)
 
     @property
     def deployed_plan_dir(self) -> Path:
@@ -114,6 +115,7 @@ def load_settings() -> Settings:
         logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
         proxy_url=env.get("AIAB_PROXY_URL", TEST_PROXY_URL).rstrip("/"),
         proxy_key=_proxy_key(env.get("AIAB_PROXY_KEY", "")),
+        anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
     )
 
 

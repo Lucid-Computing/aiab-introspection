@@ -5,6 +5,7 @@
 <h1>{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
 <p class="lead">The box runs these four functions in this order. Which records come in is chosen when a run is started, not in the plan.</p>
 {% if view %}
+{% include "plan_chat.html" %}
 <div class="stack" style="margin-bottom: var(--space-10)">
 <details class="info" {% if changes.open %}open{% endif %}>
   <summary>Changes · who did what{% if view.history %} <span class="text-muted">({{ view.history | length }})</span>{% endif %}</summary>
