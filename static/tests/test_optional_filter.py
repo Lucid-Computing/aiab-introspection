@@ -38,3 +38,9 @@ def _drop_function(source: str, name: str) -> str:
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return "".join(lines[: node.lineno - 1]) + "".join(lines[node.end_lineno :])
     raise AssertionError(name)
+
+
+def test_schema_accepts_a_plan_without_input_scope():
+    cfg = json.loads((PLAN_DIR / "plan.json").read_text())
+    cfg.pop("input_scope")
+    validate(cfg, PLAN)  # no AuditError

@@ -90,7 +90,7 @@ docker run --rm -p 8090:8090 -v /path/to/origin.git:/origin.git -v aiab-data:/da
   -e AIAB_CHECKOUT_BRANCH=ui-design -e UI_BOOTSTRAP_ACCOUNTS=teddy:lab:lab-pass-123 aiab-ui
 ```
 
-Environment, for any host: `AIAB_PLAN_DIR` (default `../plan`), `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository Deploy pushes from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for deploy PRs, default the remote's default branch), `AIAB_TRUST_FILE` (default `static/aiab/baked/trust.json`), `AIAB_BOX_URL` (optional), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `UI_ACCOUNTS_FILE` (default `ui/accounts.json`), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
+Environment, for any host: `AIAB_PLAN_DIR` (default `../plan`), `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository Deploy pushes from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for deploy and key PRs, default `production`), `AIAB_TRUST_FILE` (default `static/aiab/baked/trust.json`), `AIAB_BOX_URL` (default the host in the release pins), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `UI_ACCOUNTS_FILE` (default `ui/accounts.json`), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
 
 ## Integration contract with the box (from master, Jon)
 

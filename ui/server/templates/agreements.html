@@ -9,8 +9,8 @@
   <p><strong>{{ deployed }}</strong> is selected for deployment. Branch <span class="mono">{{ pushed.branch }}</span> was already pushed with these exact files, so there is nothing new to push.{% if pushed.compare_url %} <a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Its pull request</a>.{% endif %}</p>
   {% else %}
   <p><strong>{{ deployed }}</strong> is selected for deployment. Branch <span class="mono">{{ pushed.branch }}</span> ({{ pushed.commit }}) is pushed with only the <span class="mono">plan/</span> change.
-    {% if pushed.pr_url %}Pull request: <a class="link" href="{{ pushed.pr_url }}" target="_blank" rel="noopener">{{ pushed.pr_url }}</a>. Merge it when CI is green.
-    {% elif pushed.compare_url %}<a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Open the pull request</a>, then merge it when CI is green.
+    {% if pushed.pr_url %}Pull request: <a class="link" href="{{ pushed.pr_url }}" target="_blank" rel="noopener">{{ pushed.pr_url }}</a>. The signature check runs on it and merges it by itself; the release to the box follows.
+    {% elif pushed.compare_url %}<a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Open the pull request</a>; the signature check merges it by itself and the release to the box follows.
     {% endif %}</p>
   {% endif %}
 </div>
@@ -42,7 +42,7 @@
   <p><strong>The box</strong> ({{ box.url }}) is running
     {% if box.plan_digest %}version <span class="digest">{{ box.plan_digest[7:19] }}…</span>{% if box.plan_matches %}, the one selected for deployment{% else %}, which is not the one selected for deployment{% endif %}{% else %}an unknown version ({{ box.manifest_error or "not reported yet" }}){% endif %}.</p>
   {% else %}
-  <p><strong>The box</strong> is not connected, so nothing is running yet. Start the UI with <span class="mono">AIAB_BOX_URL</span> set to show which version it runs.</p>
+  <p><strong>The box</strong> is not connected: no release pins were found (<span class="mono">AIAB_RELEASE_FILE</span>) and <span class="mono">AIAB_BOX_URL</span> is not set, so the UI does not know its address.</p>
   {% endif %}
   <a class="btn btn--ghost btn--sm" href="/attest">What is running</a>
 </div>

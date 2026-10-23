@@ -97,7 +97,9 @@ PLAN = closed(
         "output_schema": {"type": "object"},
     }
 )
-PLAN["required"] = [k for k in PLAN["required"] if k != "filter"]  # see OPTIONAL_FUNCTIONS
+# Optional blocks: "filter" (see OPTIONAL_FUNCTIONS) and "input_scope" (input is chosen at run
+# time; a plan may still pin agents and a window, and the box then enforces them).
+PLAN["required"] = [k for k in PLAN["required"] if k not in ("filter", "input_scope")]
 FUNCTIONS = {"filter_logs", "build_query", "classify", "metric", "emit_report", "appeal"}
 # filter_logs is optional: input selection moved to run time,
 # so plans without it skip that step.
@@ -226,7 +228,7 @@ def load_bundle(folder: Path, trust: dict, *, signed: bool = True) -> Bundle:
         raise AuditError("invalid_bundle_init")
     if (
         cfg["parties"] != {"lab": "lab", "auditor": "auditor"}
-        or cfg["input_scope"]["logger_key_id"] != "logger"
+        or cfg.get("input_scope", {}).get("logger_key_id", "logger") != "logger"
     ):
         raise AuditError("unapproved_parties")
     if len({trust[k] for k in ("lab_key", "auditor_key", "logger_key")}) != 3:
@@ -235,8 +237,10 @@ def load_bundle(folder: Path, trust: dict, *, signed: bool = True) -> Bundle:
         raise AuditError("unapproved_model")
     if cfg["window"] > cfg["limits"]["max_logs_per_query"]:
         raise AuditError("invalid_limits")
-    scope = cfg["input_scope"]
-    if datetime.fromisoformat(scope["window_start"]) >= datetime.fromisoformat(scope["window_end"]):
+    scope = cfg.get("input_scope")
+    if scope and datetime.fromisoformat(scope["window_start"]) >= datetime.fromisoformat(
+        scope["window_end"]
+    ):
         raise AuditError("invalid_scope")
     prompt = f"prompts/{cfg['classification']['prompt_id']}.txt"
     if prompt not in files or not files[prompt].strip():

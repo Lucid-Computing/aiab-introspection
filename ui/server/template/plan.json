@@ -6,16 +6,6 @@
     "lab": "lab",
     "auditor": "auditor"
   },
-  "input_scope": {
-    "logger_key_id": "logger",
-    "window_start": "2026-10-15T00:00:00Z",
-    "window_end": "2026-10-16T00:00:00Z",
-    "agents": [
-      "agent-a",
-      "agent-b",
-      "agent-c"
-    ]
-  },
   "window": 8,
   "model": {
     "id": "",

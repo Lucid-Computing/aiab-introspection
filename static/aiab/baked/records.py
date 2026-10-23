@@ -1,6 +1,6 @@
 """Versioned record export evidence; native logger integration remains explicit."""
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from aiab.audit.logger import bytes_digest, chain_head
 from aiab.audit.protocol import (
@@ -69,6 +69,20 @@ def export_statement(records, scope, previous_head="sha256:" + "0" * 64, first_s
     }
 
 
+def scope_of(records):
+    """The scope that covers exactly these records: their agents, first to last timestamp.
+
+    Used by a logger (or the stand-in) when the plan carries no input_scope of its own."""
+    times = sorted(datetime.fromisoformat(r["ts"]).astimezone(UTC) for r in records)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    return {
+        "logger_key_id": "logger",
+        "agents": sorted({r["agent_id"] for r in records}),
+        "window_start": times[0].strftime(fmt),
+        "window_end": (times[-1] + timedelta(seconds=1)).strftime(fmt),
+    }
+
+
 def verify(submission, cfg, logger_key):
     records, scope, evidence = (
         submission[k] for k in ("records", "input_scope", "logger_evidence")
@@ -84,16 +98,17 @@ def verify(submission, cfg, logger_key):
             raise AuditError("invalid_logger_evidence")
     except AuditError:
         raise AuditError("invalid_logger_evidence") from None
-    parent = cfg["input_scope"]
     start, end = (datetime.fromisoformat(scope[k]) for k in ("window_start", "window_end"))
-    if (
+    if start >= end or scope["logger_key_id"] != "logger":
+        raise AuditError("scope_mismatch")
+    parent = cfg.get("input_scope")  # optional: a plan may pin agents and a window
+    if parent is not None and (
         not (
             datetime.fromisoformat(parent["window_start"])
             <= start
             < end
             <= datetime.fromisoformat(parent["window_end"])
         )
-        or scope["logger_key_id"] != parent["logger_key_id"]
         or not set(scope["agents"]) <= set(parent["agents"])
     ):
         raise AuditError("scope_mismatch")

@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.protocol import AuditError, canonical, decode, digest, sign_bytes
 from aiab.baked.bundle import file_digest, load_bundle
-from aiab.baked.records import export_statement
+from aiab.baked.records import export_statement, scope_of
 from aiab.baked.records import verify as verify_input
 from aiab.baked.runtime import verify_report
 from aiab.config import read_private_key
@@ -170,7 +170,7 @@ def main(argv=None):
             records = [
                 decode(line) for line in args.records.read_bytes().splitlines() if line.strip()
             ]
-            scope = bundle.config["input_scope"]
+            scope = bundle.config.get("input_scope") or scope_of(records)
             statement = export_statement(records, scope)
             evidence = {
                 "statement": statement,

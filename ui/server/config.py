@@ -97,7 +97,7 @@ def load_settings() -> Settings:
         plan_dir=Path(env.get("AIAB_PLAN_DIR", REPO_ROOT / "plan")).resolve(),
         agreements_dir=Path(env.get("AIAB_AGREEMENTS_DIR", REPO_ROOT / "agreements")).resolve(),
         git_dir=Path(env.get("AIAB_GIT_DIR", REPO_ROOT)).resolve(),
-        deploy_base=env.get("AIAB_DEPLOY_BASE") or None,
+        deploy_base=env.get("AIAB_DEPLOY_BASE") or "production",  # the branch the box is built from
         trust_file=Path(
             env.get("AIAB_TRUST_FILE", STATIC_DIR / "aiab" / "baked" / "trust.json")
         ).resolve(),
@@ -109,9 +109,7 @@ def load_settings() -> Settings:
         demo_keys_dir=Path(
             env.get("AIAB_DEMO_KEYS", Path.home() / ".local/share/aiab-audit-demo")
         ).resolve(),
-        release_file=Path(
-            env.get("AIAB_RELEASE_FILE", STATIC_DIR / "deploy/tinfoil/audit/release.json")
-        ).resolve(),
+        release_file=release_file,
         push_drafts=env.get("AIAB_PUSH_DRAFTS", "").lower() in {"1", "true", "yes"},
         logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
         proxy_url=env.get("AIAB_PROXY_URL", TEST_PROXY_URL).rstrip("/"),

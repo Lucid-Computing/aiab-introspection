@@ -32,7 +32,7 @@
     <div class="card-header">Input</div>
     <div class="card-body">
       <form method="post" action="/runs/start" id="run-form"></form>
-      <p class="explain">Which records go into this run. The plan does not filter any more; you choose here. The box still checks every record against the plan's scope (agents and time window) and refuses a run outside it.</p>
+      <p class="explain">Which records go into this run. You choose here; the plan does not filter. If the plan pins an input scope (agents and a time window), the box still refuses records outside it.</p>
       <div class="sources">
         <div class="src">
           <label class="src-head"><input type="radio" name="source" value="transcript" form="run-form" {% if source != "sessions" %}checked{% endif %}> <span class="src-title">A test transcript</span> <span class="src-sub">from <span class="mono">plan/tests/transcripts/</span>, written to fit the plan's scope</span></label>

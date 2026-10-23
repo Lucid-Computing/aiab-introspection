@@ -130,6 +130,10 @@ Use the checked-in deployment `release.json` for the actual current tag and pins
 `POST /aiab/plans` is disabled for the baked service; changing an agreement requires
 a newly signed bundle and image.
 
+The plan's `input_scope` block is optional (as is `filter`). Without it the box checks each
+record only against the submission's own scope, which the logger derives from the records;
+with it, the submission's scope must also lie inside the plan's.
+
 `POST /aiab/runs` accepts `submission_id`, baked `plan_digest`, `input_scope`,
 `records` and `logger_evidence`. Record shape is fixed in
 `static/aiab/baked/records.py`. The source signature covers the ordered canonical

@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -15,7 +16,7 @@ from aiab.audit.protocol import AuditError, canonical, clone, decode, sign_bytes
 from aiab.baked.bundle import load_bundle
 from aiab.baked.executor import execute
 from aiab.baked.output import capacity, check_schema
-from aiab.baked.records import export_statement, verify
+from aiab.baked.records import export_statement, scope_of, verify
 from aiab.baked.runtime import Runtime, verify_report
 from aiab.dryrun import MockModel
 
@@ -297,3 +298,31 @@ def test_only_named_plan_api_imports_are_admitted(setup, prefix):
     source = source.replace("from typing import Literal", prefix + "from typing import Literal")
     with pytest.raises(AuditError, match="invalid_plan_source"):
         check_source(source)
+
+
+def test_plan_without_input_scope_accepts_any_agent(setup):
+    folder, trust, keys, _, records = setup
+    cfg_path = folder / "plan.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg.pop("input_scope")
+    cfg_path.write_text(json.dumps(cfg))
+    bundle = load_bundle(folder, trust, signed=False)
+    outsiders = [dict(r, agent_id="outsider") for r in records]
+    scope = scope_of(outsiders)
+    statement = export_statement(outsiders, scope)
+    data = {
+        "submission_id": "case-2",
+        "plan_digest": bundle.digest,
+        "input_scope": scope,
+        "records": outsiders,
+        "logger_evidence": {
+            "statement": statement,
+            "signature": base64.b64encode(
+                keys["logger"].sign(sign_bytes("record-export", statement))
+            ).decode(),
+        },
+    }
+    verify(data, bundle.config, trust["logger_key"])  # no AuditError
+    # the same records are still refused by a plan that pins other agents
+    with pytest.raises(AuditError, match="scope_mismatch"):
+        verify(data, setup[3].config, trust["logger_key"])

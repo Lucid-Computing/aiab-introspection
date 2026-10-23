@@ -79,7 +79,7 @@ def main():
             rules=plan_api.FilterRules(
                 keywords=tuple(cfg["filter"]["keywords"]),
                 kinds=tuple(cfg["filter"]["kinds"]),
-                agents=tuple(cfg["input_scope"]["agents"]),
+                agents=tuple(cfg.get("input_scope", {}).get("agents", ())),
             ),
         )
         if (
