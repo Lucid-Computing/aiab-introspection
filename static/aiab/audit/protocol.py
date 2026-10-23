@@ -12,7 +12,21 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from jsonschema import Draft202012Validator, FormatChecker
 
-from aiab.classifier import strict_json_loads
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def strict_json_loads(value: str | bytes) -> Any:
+    def reject_constant(_: str) -> None:
+        raise ValueError("Non-finite JSON number")
+
+    return json.loads(value, object_pairs_hook=_unique_object, parse_constant=reject_constant)
 
 
 class AuditError(ValueError):
