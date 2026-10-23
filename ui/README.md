@@ -126,3 +126,22 @@ Restart after a successful enclave release to pick up its committed pins.
 from `AIAB_PLAN_DIR`, which is the editable draft. When `AIAB_BOX_URL` is unset,
 the status view uses the host in `AIAB_RELEASE_FILE`. The status view is informational;
 the run still verifies attestation through the Tinfoil SDK against pinned measurements.
+
+### Existing live Render service
+
+`https://aiab-ui-latest.onrender.com` is service `srv-db911ck9v7es73e644o0`
+in workspace `tea-db8urpei0phs7393qci0`. This existing service is **image-backed**,
+not Git-backed: pushing `master` or changing `render.yaml` does not deploy it.
+The blueprint above describes a separate Git-backed setup.
+
+The tested UI code from commit `bde6e99` is published privately as
+`ghcr.io/lucid-computing/aiab-ui:bde6e99`, pinned for deployment to
+`sha256:58a021525ab2983344e8f880d73efe7535917ff2fa049ce299b6d81daf22c9b0`.
+Render uses registry credential `Lucid AIAB UI (derpyplops)` to pull it.
+
+For future UI changes, build `ui/Dockerfile` from the repository root, push a new
+commit-tagged image to that repository, then update this service's image digest
+with `render services update <service-id> --image <image@sha256:digest>` and run
+`render deploys create <service-id> --wait`. Confirm the deployment succeeds,
+then test `/runs` through offline report verification. Preserve `/data` and the
+existing service environment; do not replace its disk to refresh a deployment.
