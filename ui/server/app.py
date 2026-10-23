@@ -232,6 +232,7 @@ def back(path: str, *, msg: str | None = None, err: str | None = None) -> Redire
 
 
 def render(request: Request, template: str, **context: Any) -> Response:
+    context.setdefault("chat_enabled", bool(settings.anthropic_api_key))
     context.setdefault("msg", request.query_params.get("msg"))
     context.setdefault("err", request.query_params.get("err"))
     context.update(
@@ -409,6 +410,16 @@ async def new_agreement(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     form = {k: str(v) for k, v in (await request.form()).items()}
+    if form.get("chat") == "1" and not settings.anthropic_api_key:
+        view, error = load_view(settings)
+        return render(
+            request,
+            "new_agreement.html",
+            view=view,
+            error=error,
+            form=form,
+            err="AI creation is unavailable on this server. Create a draft manually instead.",
+        )
     errors, created = pv.new_agreement(settings, form, user_of(request) or {})
     if errors or created is None:
         view, error = load_view(settings)
@@ -602,9 +613,24 @@ async def plan_chat_action(request: Request, aid: str) -> Response:
             raise plan_chat.ChatError("Expected a JSON object.")
         if request.url.path.endswith("/apply"):
             digest = plan_chat.apply(target, payload, actor)
-            saved(actor)
-            return JSONResponse({"message": "Changes saved as a draft.", "digest": digest})
-        return JSONResponse(await plan_chat.reply(target, payload.get("messages")))
+            result = {"message": "Changes saved as a draft.", "digest": digest}
+            try:
+                saved(actor)
+            except (OSError, RuntimeError):
+                # The local transaction succeeded; a background push failure must not
+                # report a failed Apply and invite retrying a now-stale proposal.
+                result["warning"] = (
+                    "Draft saved, but its automatic Git push could not be scheduled."
+                )
+            return JSONResponse(result)
+        return JSONResponse(
+            await plan_chat.reply(
+                target,
+                payload.get("messages"),
+                payload.get("candidate"),
+                payload.get("events"),
+            )
+        )
     except plan_chat.ChatError as exc:
         return JSONResponse({"error": str(exc)}, status_code=exc.status)
     except (ValueError, UnicodeError):

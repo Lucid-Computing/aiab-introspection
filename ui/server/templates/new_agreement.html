@@ -14,10 +14,11 @@
     </div>
     <div class="field"><label for="problem">Question the classifier answers</label><textarea id="problem" name="problem" class="question" required>{{ form.problem or '' }}</textarea></div>
     <div class="row">
-      <button class="btn btn--primary" name="chat" value="1">Create with AI</button>
+      <button class="btn btn--primary" name="chat" value="1" {% if not chat_enabled %}disabled{% endif %}>Create with AI</button>
       <button class="btn btn--ghost">Create draft</button>
     </div>
-    <p class="text-muted">Create with AI opens a chat to turn your question into a proposed plan. Review the changes before applying.</p>
+    {% if chat_enabled %}<p class="text-muted">Create with AI opens a chat to turn your question into a proposed plan. Review the changes before applying.</p>
+    {% else %}<p class="text-muted">AI creation is unavailable: this server has no Anthropic key configured. You can still create a draft manually.</p>{% endif %}
   </div>
 </form>
 {% endblock %}

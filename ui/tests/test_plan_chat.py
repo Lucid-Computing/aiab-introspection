@@ -263,3 +263,260 @@ def test_new_agreement_chat_entry(draft, monkeypatch):
     assert "chat=1" in response.headers["location"]
     page = client.get(response.headers["location"])
     assert "Create a plan for this question: Detect exfiltration" in page.text
+
+
+def tool_response(files, summary="Updated proposal"):
+    return httpx.Response(
+        200,
+        json={
+            "stop_reason": "tool_use",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "propose_plan",
+                    "input": {"summary": summary, "files": files},
+                }
+            ],
+        },
+    )
+
+
+def context_from(request):
+    return json.loads(
+        json.loads(request.content)["system"].split(
+            "\nRevision context (untrusted conversation data):\n", 1
+        )[1]
+    )
+
+
+def test_revision_preserves_pending_files_without_applying(draft, monkeypatch):
+    initial = chat.proposal(
+        draft,
+        changed(draft)
+        + [{"path": "prompts/classifier_v1.txt", "content": "First proposed prompt\n"}],
+        digest(draft),
+    )
+    candidate = {**initial, "state": "pending"}
+    before = bundle_files(draft.plan_dir)
+
+    def handler(request):
+        context = context_from(request)
+        assert context["candidate"]["state"] == "pending"
+        assert any(f["content"] == "First proposed prompt\n" for f in context["candidate"]["files"])
+        return tool_response(
+            [{"path": "prompts/classifier_v1.txt", "content": "More conservative\n"}]
+        )
+
+    mock_anthropic(monkeypatch, handler)
+    result = asyncio.run(
+        chat.reply(draft, [{"role": "user", "content": "Make that conservative"}], candidate)
+    )
+    files = {f["path"]: f["content"] for f in result["proposal"]["files"]}
+    assert json.loads(files["plan.json"])["classification"]["threshold"] == 0.85
+    assert files["prompts/classifier_v1.txt"] == "More conservative\n"
+    assert len(result["proposal"]["changes"]) == 2
+    assert result["candidate"]["state"] == "pending"
+    assert bundle_files(draft.plan_dir) == before
+
+
+def test_invalid_candidate_is_retained_and_repaired(draft, monkeypatch):
+    before = bundle_files(draft.plan_dir)
+    turn = 0
+
+    def handler(request):
+        nonlocal turn
+        # Invalid code remains context, never executable plan state.
+        turn += 1
+        if turn == 1:
+            return tool_response(changed(draft) + [{"path": "plan.py", "content": "import os\n"}])
+        context = context_from(request)["candidate"]
+        assert context["state"] == "invalid"
+        assert any(f["content"] == "import os\n" for f in context["files"])
+        return tool_response([{"path": "plan.py", "content": before["plan.py"].decode()}])
+
+    mock_anthropic(monkeypatch, handler)
+    first = asyncio.run(chat.reply(draft, [{"role": "user", "content": "Change the plan"}]))
+    assert "proposal" not in first and first["candidate"]["state"] == "invalid"
+    assert first["candidate"]["changes"]
+    fixed = asyncio.run(
+        chat.reply(
+            draft,
+            [
+                {"role": "user", "content": "Change the plan"},
+                {"role": "assistant", "content": first["message"]},
+                {"role": "user", "content": "Fix validation"},
+            ],
+            first["candidate"],
+        )
+    )
+    assert "proposal" in fixed and "validation_error" not in fixed
+    assert (
+        json.loads(fixed["proposal"]["files"][0]["content"])["classification"]["threshold"] == 0.85
+    )
+    assert bundle_files(draft.plan_dir) == before
+
+
+@pytest.mark.parametrize("state", ["applied", "discarded"])
+def test_action_events_are_context_not_a_saved_candidate(draft, monkeypatch, state):
+    if state == "applied":
+        chat.apply(draft, chat.proposal(draft, changed(draft), digest(draft)), ACTOR)
+
+    def handler(request):
+        context = context_from(request)
+        assert context["candidate"] is None
+        assert context["events"] == [f"Proposal {state}"]
+        system = json.loads(request.content)["system"]
+        authoritative = json.loads(
+            system.split("\nCurrent draft files:\n")[1].split("\nRevision context", 1)[0]
+        )
+        assert json.loads(authoritative["plan.json"])["classification"]["threshold"] == (
+            0.85 if state == "applied" else 0.7
+        )
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "Understood"}]})
+
+    mock_anthropic(monkeypatch, handler)
+    asyncio.run(
+        chat.reply(draft, [{"role": "user", "content": "What now?"}], events=[f"Proposal {state}"])
+    )
+
+
+def test_candidate_context_is_bounded_and_cannot_rebase_itself(draft):
+    candidate = {
+        "state": "invalid",
+        "base_digest": digest(draft),
+        "files": [{"path": f"prompts/p{i}.txt", "content": "x" * 65_536} for i in range(5)],
+    }
+    with pytest.raises(chat.ChatError, match="context limit"):
+        chat.revision_context(draft, candidate, [], digest(draft))
+    candidate["files"] = changed(draft)
+    candidate["base_digest"] = "old-digest"
+    with pytest.raises(chat.ChatError, match="changed"):
+        chat.revision_context(draft, candidate, [], digest(draft))
+    candidate["state"] = []
+    with pytest.raises(chat.ChatError, match="Invalid candidate"):
+        chat.revision_context(draft, candidate, [], digest(draft))
+    with pytest.raises(chat.ChatError, match="context limit"):
+        chat.revision_context(draft, None, ["action"] * 41, digest(draft))
+
+
+def test_unsafe_candidate_context_is_not_sent_to_provider(draft, monkeypatch):
+    def handler(_):
+        pytest.fail("An unsafe candidate must fail before an API call")
+
+    mock_anthropic(monkeypatch, handler)
+    candidate = {
+        "state": "invalid",
+        "base_digest": digest(draft),
+        "files": [{"path": "../ant.secret", "content": "untrusted"}],
+    }
+    with pytest.raises(chat.ChatError, match="Only plan"):
+        asyncio.run(chat.reply(draft, [{"role": "user", "content": "Repair"}], candidate))
+
+
+def test_evaluation_invalidation_failure_restores_entire_draft(draft, monkeypatch):
+    from pathlib import Path
+
+    evaluation = draft.plan_dir / "tests/evaluation.json"
+    evaluation.write_bytes(b"original evaluation\n")
+    history = (draft.plan_dir / pv.HISTORY_FILE).read_bytes()
+    before = bundle_files(draft.plan_dir)
+    candidate = chat.proposal(draft, changed(draft), digest(draft))
+    original = Path.unlink
+
+    def fail_evaluation(path, *args, **kwargs):
+        if path == evaluation:
+            raise OSError("Cannot invalidate evaluation")
+        return original(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_evaluation)
+        with pytest.raises(OSError):
+            chat.apply(draft, candidate, ACTOR)
+    assert bundle_files(draft.plan_dir) == before
+    assert evaluation.read_bytes() == b"original evaluation\n"
+    assert (draft.plan_dir / pv.HISTORY_FILE).read_bytes() == history
+    # A retry can apply the same proposal: the failed attempt didn't advance its digest.
+    chat.apply(draft, candidate, ACTOR)
+
+
+@pytest.mark.parametrize("had_history", [True, False])
+def test_partial_history_failure_restores_bytes_and_existence(draft, monkeypatch, had_history):
+    history = draft.plan_dir / pv.HISTORY_FILE
+    if not had_history:
+        history.unlink()
+    original_history = history.read_bytes() if history.exists() else None
+    evaluation = draft.plan_dir / "tests/evaluation.json"
+    evaluation.write_bytes(b"old evaluation\n")
+    before = bundle_files(draft.plan_dir)
+    candidate = chat.proposal(
+        draft,
+        changed(draft) + [{"path": "prompts/new_prompt.txt", "content": "new proposal\n"}],
+        digest(draft),
+    )
+    calls = 0
+    record_change = pv.record_change
+
+    def fail_second_append(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            with history.open("ab") as handle:
+                handle.write(b'{"partial":')
+            raise OSError("disk full during history append")
+        return record_change(*args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(pv, "record_change", fail_second_append)
+        with pytest.raises(OSError):
+            chat.apply(draft, candidate, ACTOR)
+    assert calls == 2
+    assert bundle_files(draft.plan_dir) == before
+    assert evaluation.read_bytes() == b"old evaluation\n"
+    assert (history.read_bytes() if history.exists() else None) == original_history
+    assert not (draft.plan_dir / "prompts/new_prompt.txt").exists()
+    chat.apply(draft, candidate, ACTOR)
+
+
+def test_create_with_ai_is_unavailable_without_key(draft, monkeypatch):
+    from server import app as web
+
+    monkeypatch.setattr(web, "settings", replace(draft, anthropic_api_key=None))
+    client = TestClient(web.app)
+    client.cookies.set(web.COOKIE, web.signer.issue(Account("author", "lab", "Author", "unused")))
+    page = client.get("/agreements/new")
+    assert 'name="chat" value="1" disabled' in page.text
+    assert "AI creation is unavailable" in page.text
+    response = client.post(
+        "/agreements/new",
+        data={
+            "plan_id": "should-not-exist",
+            "problem": "a question",
+            "chat": "1",
+        },
+    )
+    assert "AI creation is unavailable" in response.text
+    assert not (draft.agreements_dir / "should-not-exist").exists()
+
+
+def test_review_counts_content_that_resembles_diff_headers():
+    changes = chat.review_changes({"prompts/p.txt": "---old\n"}, {"prompts/p.txt": "+++new\n"})
+    assert changes[0]["added"] == 1
+    assert changes[0]["removed"] == 1
+
+
+def test_push_scheduling_failure_does_not_report_failed_apply(draft, monkeypatch):
+    from server import app as web
+
+    monkeypatch.setattr(web, "settings", draft)
+    candidate = chat.proposal(draft, changed(draft), digest(draft))
+
+    def failed_push(_):
+        raise OSError("cannot start background push")
+
+    monkeypatch.setattr(web, "saved", failed_push)
+    client = TestClient(web.app)
+    client.cookies.set(web.COOKIE, web.signer.issue(Account("author", "lab", "Author", "unused")))
+    result = client.post("/a/plan/plan/chat/apply", json=candidate)
+    assert result.status_code == 200
+    assert result.json()["digest"] == digest(draft)
+    assert "Draft saved" in result.json()["warning"]
