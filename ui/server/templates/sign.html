@@ -17,7 +17,7 @@
   {% else %}
   <p>The {{ key_party }} public key is replaced here, and a pull request now asks to put it into the box's trust file on <span class="mono">{{ settings.deploy_base }}</span>.
     {% if key_push.pr_url %}<a class="link" href="{{ key_push.pr_url }}" target="_blank" rel="noopener">{{ key_push.pr_url }}</a>{% elif key_push.compare_url %}<a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">Open the pull request</a>{% else %}Branch <span class="mono">{{ key_push.branch }}</span>{% endif %}.
-    A person reviews and merges it; the box uses the key from its next release.</p>
+    The check on it merges it by itself, and the release that follows puts the key into the box, a few minutes in all.</p>
   {% endif %}
 </div>
 {% endif %}
