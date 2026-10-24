@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from server import plan_chat, proxylogs, publish, runs
+from server import deploystatus, plan_chat, proxylogs, publish, runs
 from server import plan_view as pv
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
@@ -394,7 +394,24 @@ async def agreements(request: Request) -> Response:
     rows = pv.list_agreements(settings)
     selected = next((r for r in rows if r["id"] == "plan"), None)
     box = await box_status(settings.box_url, selected["digest"] if selected else "")
-    return render(request, "agreements.html", rows=rows, box=box)
+    return render(request, "agreements.html", rows=rows, box=box, **await _deployment(rows, box))
+
+
+async def _deployment(rows: list[dict], box: dict) -> dict:
+    """The selected version's pull request, check and release, for the Agreements page."""
+    chosen = next((r for r in rows if r["selected"] and r["digest"]), None)
+    if chosen is None:
+        return {"deploy": None}
+    state = await deploystatus.status(settings, chosen["digest"], bool(box.get("plan_matches")))
+    if state is None and box.get("plan_matches"):
+        state = {**deploystatus.NO_PR, "label": "deployed · running in the box", "tone": "ok"}
+    return {
+        "deploy": state,
+        "deploy_name": chosen["plan_id"],
+        "deploy_digest": chosen["digest"],
+        "deploy_label": (state or deploystatus.NO_PR)["label"],
+        "deploy_tone": (state or deploystatus.NO_PR)["tone"],
+    }
 
 
 @app.get("/agreements/new")
@@ -662,11 +679,17 @@ async def deploy(request: Request, aid: str) -> Response:
     if redirect:
         return redirect
     actor = user_of(request) or {}
+    view, _ = load_view(target)
+    if view is None or not view.signed_by_both:
+        return back(
+            "/agreements",
+            err=f"{aid} is not signed by both parties, so the signature check on the pull"
+            " request would reject it. Sign it first, then deploy.",
+        )
     problem = pv.deploy_agreement(settings, aid, actor)
     if problem:
         return back("/agreements", err=problem)
-    view, _ = load_view(target)
-    digest = view.digest if view else ""
+    digest = view.digest
     pushed = publish.push_deploy(
         settings.git_dir, target.plan_dir, aid, digest, actor, base=settings.deploy_base
     )
@@ -674,7 +697,15 @@ async def deploy(request: Request, aid: str) -> Response:
     rows = pv.list_agreements(settings)
     selected = next((r for r in rows if r["id"] == "plan"), None)
     box = await box_status(settings.box_url, selected["digest"] if selected else "")
-    return render(request, "agreements.html", rows=rows, box=box, pushed=pushed, deployed=aid)
+    return render(
+        request,
+        "agreements.html",
+        rows=rows,
+        box=box,
+        pushed=pushed,
+        deployed=aid,
+        **await _deployment(rows, box),
+    )
 
 
 @app.post("/a/{aid}/delete")

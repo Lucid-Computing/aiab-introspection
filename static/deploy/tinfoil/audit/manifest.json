@@ -1,7 +1,7 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:bbaee748d9707524d5325cbdf21a07890fef3696a5268b0a43d64d86e5a6a034",
+  "image_digest": "sha256:9388a3be63a3474ad71f6c62f88c0c70aa03c7fd9bc6cad97f30edb6683e42cf",
   "plan_digest": "sha256:2dc44607f318a696c0ddb1f3f300eaa41e37f6e4d14f5ef27f2c62e07906d1f5",
   "plan_id": "bio-demo-001",
   "restrictions": {
