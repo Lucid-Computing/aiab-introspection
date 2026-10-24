@@ -1,0 +1,44 @@
+name: Deploy UI
+on:
+  push:
+    branches: [master]
+    paths: ['ui/**', 'static/aiab/**', 'static/auditor/**', 'static/pyproject.toml', 'static/uv.lock', '.github/workflows/deploy-ui.yml']
+  workflow_dispatch:
+concurrency:
+  group: deploy-ui
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: '0.11.6'
+      - name: Test UI
+        working-directory: ui
+        run: uv run --locked python -m pytest tests -q
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: derpyplops
+          password: ${{ secrets.UI_GHCR_TOKEN }}
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        id: image
+        with:
+          context: .
+          file: ui/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/lucid-computing/aiab-ui:${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/Lucid-Computing/aiab-introspection
+      - name: Deploy image to Render
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_UI_DEPLOY_HOOK }}
+          IMAGE: ghcr.io/lucid-computing/aiab-ui@${{ steps.image.outputs.digest }}
+        run: |
+          test -n "$DEPLOY_HOOK" || { echo 'Set RENDER_UI_DEPLOY_HOOK from the Render service Settings.'; exit 1; }
+          curl --fail --silent --show-error --get --data-urlencode "imgURL=$IMAGE" "$DEPLOY_HOOK"
