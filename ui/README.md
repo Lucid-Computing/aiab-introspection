@@ -180,14 +180,19 @@ in workspace `tea-db8urpei0phs7393qci0`. This existing service is **image-backed
 not Git-backed: pushing `master` or changing `render.yaml` does not deploy it.
 The blueprint above describes a separate Git-backed setup.
 
-The tested UI code from commit `bde6e99` is published privately as
-`ghcr.io/lucid-computing/aiab-ui:bde6e99`, pinned for deployment to
-`sha256:58a021525ab2983344e8f880d73efe7535917ff2fa049ce299b6d81daf22c9b0`.
-Render uses registry credential `Lucid AIAB UI (derpyplops)` to pull it.
+UI changes are built by `.github/workflows/deploy-ui.yml`: test, publish a commit-tagged
+image to `ghcr.io/lucid-computing/aiab-ui`, then trigger Render with its exact digest.
+The workflow runs for UI and shared runtime changes on `master`, or manually via
+Actions → Deploy UI. A successful workflow means Render accepted the deployment;
+check the service's Events for `Live` before testing the website.
 
-For future UI changes, build `ui/Dockerfile` from the repository root, push a new
-commit-tagged image to that repository, then update this service's image digest
-with `render services update <service-id> --image <image@sha256:digest>` and run
-`render deploys create <service-id> --wait`. Confirm the deployment succeeds,
-then test `/runs` through offline report verification. Preserve `/data` and the
+Repository Actions secrets:
+- `UI_GHCR_TOKEN`: package-write token for `derpyplops`, who owns the existing package credential.
+- `RENDER_UI_DEPLOY_HOOK`: this service's secret URL from Settings → Deploy Hook.
+
+Render uses registry credential `Lucid AIAB UI (derpyplops)` to pull the private image.
+For a manual deployment, build `ui/Dockerfile` from the repository root, push a
+commit-tagged image, and run `render deploys create srv-db911ck9v7es73e644o0
+--image <image@sha256:digest> --wait --confirm`. Confirm it reaches `Live`, then test
+plan chat and `/runs` through offline report verification. Preserve `/data` and the
 existing service environment; do not replace its disk to refresh a deployment.
