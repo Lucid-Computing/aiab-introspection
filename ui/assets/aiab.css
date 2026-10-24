@@ -434,3 +434,15 @@ pre { max-width: 100%; overflow-x: auto; }
   .logs-filters { flex-wrap: wrap; min-width: 0; max-width: 100%; }
   .logs-filters input { width: 100%; }
 }
+
+/* ---- deployment steps on the Agreements page ---- */
+.notice--stack { display: block; }
+.notice--stack > p { margin: 0; }
+.dsteps { list-style: none; margin: var(--space-3) 0 0; padding: 0; font-size: var(--text-sm); }
+.dsteps li { padding: var(--space-1) 0 var(--space-1) var(--space-6); position: relative; }
+.dsteps li::before { content: ""; position: absolute; left: 6px; top: 11px; width: 9px; height: 9px; border: 1.5px solid var(--ink-3); border-radius: 50%; background: var(--paper-1); }
+.dsteps li.ok::before { background: var(--ink-1); border-color: var(--ink-1); }
+.dsteps li.now::before { background: var(--amber); border-color: var(--amber-ink); }
+.dsteps li.bad::before { background: var(--destructive); border-color: var(--destructive); }
+.selected-label.ok { color: #2F6B2A; }
+.selected-label.bad { color: var(--destructive); }
