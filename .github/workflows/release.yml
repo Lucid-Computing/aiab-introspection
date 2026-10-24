@@ -23,12 +23,14 @@ on:
         required: false
         type: boolean
         default: false
-  # A merge into production (a plan or a key change, merged by approve-plan.yml or by a
-  # person) starts the release by itself. The pins commit below says [skip ci], so it does
-  # not start another one. The Actions tab button remains for re-runs and dry runs.
+  # A merge into production starts the release by itself whenever it changes anything that
+  # goes into the box image: the plan, the static part (code, trust keys, dependencies, the
+  # Dockerfile and release tooling) or the build's ignore file. UI, docs and workflow edits
+  # never reach the box, so they do not release. The pins commit below says [skip ci], so it
+  # does not start another one. The Actions tab button remains for re-runs and dry runs.
   push:
     branches: [production]
-    paths: ['plan/**', 'static/aiab/**', 'static/auditor/**', 'static/deploy/Dockerfile']
+    paths: ['plan/**', 'static/**', '.dockerignore']
 concurrency:
   group: audit-release
   cancel-in-progress: false
