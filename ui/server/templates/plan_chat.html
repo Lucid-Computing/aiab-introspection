@@ -1,0 +1,45 @@
+<section class="card plan-chat" id="plan-chat" aria-labelledby="chat-title"
+         data-endpoint="{{ base }}/plan/chat" data-ready="{{ 'yes' if chat_enabled and not view.frozen else 'no' }}">
+  <div class="card-body stack">
+    <div class="row"><h2 id="chat-title">Build your plan with AI</h2><span class="badge">Claude Opus 5.5</span></div>
+    <p>Describe a new plan or ask for changes. Refine the proposal together, then apply it when ready.</p>
+    <p class="text-muted">Your messages and plan files are sent to Anthropic. Chat history lasts until you leave this page. Signing and deployment use the existing workflow.</p>
+    {% if not chat_enabled %}<p class="form-message error">Plan chat is not configured on this server.</p>
+    {% elif view.frozen %}<p class="form-message">This version is signed. Use <strong>Edit this plan</strong> to unlock chat edits.</p>{% endif %}
+    <div id="chat-messages" class="chat-messages" role="log" aria-label="Plan conversation" aria-live="polite"></div>
+    <p id="chat-thinking" role="status" hidden><span class="spinner" aria-hidden="true"></span> Opus is thinking about your plan. This can take a couple of minutes.</p>
+    <p id="chat-status" role="status" hidden></p>
+    <p id="chat-session" hidden><a class="link" href="/login" target="_blank" rel="noopener">Sign in in a new tab</a>, then return here and retry. Your message and proposal stay in this tab.</p>
+    <div id="chat-proposal" class="stack" hidden>
+      <h3>Review proposal</h3>
+      <p id="chat-summary"></p>
+      <p><strong id="chat-file-count"></strong><br><span class="mono text-muted" id="chat-file-list"></span></p>
+      <p id="chat-validation" role="status"></p>
+      <div id="chat-files"></div>
+      <div class="row">
+        <button class="btn btn--primary" id="chat-apply" type="button">Apply to draft</button>
+        <button class="btn btn--ghost" id="chat-revise" type="button">Revise</button>
+        <button class="btn btn--ghost" id="chat-discard" type="button">Discard proposal</button>
+      </div>
+    </div>
+    <form id="chat-form" class="stack">
+      <div class="field"><label for="chat-input">Message</label>
+        <textarea id="chat-input" rows="3" maxlength="16000" required placeholder="For example: flag sessions that attempt to access credentials, and add examples to the prompt." {% if not chat_enabled or view.frozen %}disabled{% endif %}></textarea>
+      </div>
+      <p class="text-muted">Enter adds a new line · Ctrl/⌘ + Enter sends. You can ask for revisions before applying.</p>
+      <div class="row chat-starters" aria-label="Suggestions">
+        <button class="btn btn--ghost btn--sm" type="button" data-chat-starter="Create a plan to detect credential theft, with clear positive and negative examples.">Create a classifier</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-chat-starter="Explain what this plan flags and suggest where it might make mistakes.">Explain this plan</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-chat-starter="Make the current proposal, or the saved plan if there is no proposal, more conservative about flagging benign activity. Explain the tradeoffs.">Reduce false positives</button>
+      </div>
+      <div class="row">
+        <button class="btn btn--primary" id="chat-send" {% if not chat_enabled or view.frozen %}disabled{% endif %}>Send</button>
+        <button class="btn btn--ghost" id="chat-stop" type="button" hidden>Stop waiting</button>
+        <button class="btn btn--ghost" id="chat-reset" type="button">New chat</button>
+      </div>
+    </form>
+    <noscript><p>Enable JavaScript to use plan chat.</p></noscript>
+  </div>
+</section>
+<script id="chat-initial" type="application/json">{{ chat_initial | tojson }}</script>
+<script src="/assets/plan-chat.js?v={{ asset_version }}" defer></script>

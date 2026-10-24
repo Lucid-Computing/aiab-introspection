@@ -60,10 +60,11 @@
       form.addEventListener("submit", function (event) {
         if (form.dataset.confirmed) return;
         event.preventDefault();
+        var submitter = event.submitter;
         document.getElementById("confirm-text").textContent = form.dataset.confirm;
         dialog.returnValue = "";
         dialog.addEventListener("close", function () {
-          if (dialog.returnValue === "ok") { form.dataset.confirmed = "1"; form.requestSubmit(); }
+          if (dialog.returnValue === "ok") { form.dataset.confirmed = "1"; form.requestSubmit(submitter); }
         }, { once: true });
         dialog.showModal();
       });

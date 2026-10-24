@@ -66,6 +66,52 @@ Does: login per party; the Runs screen that drives the auditor CLI against the l
 
 Does not yet: the dry run (deferred; the static part's `python -m aiab.dryrun` works from the terminal), merging (people and CI do that), GitHub login, comments, the attestation verifier, run submission. The state lives in the agreement folders and the box; the server keeps only login sessions, no database.
 
+## Plan chat
+
+Set `ANTHROPIC_API_KEY` in the backend environment (on Render, in the service's
+Environment settings; locally, in git-ignored `ui/.env`). Plan chat uses
+`claude-opus-5-5`. The key stays on the backend; messages and the current plan
+bundle are sent to Anthropic, including the plan schema and runtime restrictions.
+This authoring model does not change the audit model pinned inside the plan.
+
+Choose **Create with AI** when making an agreement, or use the chat panel on an
+unsigned plan. AI creation is disabled when the server has no key. Send a request,
+review the summary and expandable file diffs, then **Apply to draft**, **Revise**,
+or **Discard proposal**. You can keep chatting to refine an unapplied proposal,
+including one that failed structural validation. Each request carries at most one
+candidate (34 files, 64 KiB per file, 256 KiB total), with the authoritative draft
+digest. Generated files are never executed during chat. The box's bundle loader
+checks structure before a proposal can be applied, and checks it again on save.
+These checks do not run behavioral tests or establish classifier correctness.
+A proposal cannot apply after the draft
+has changed or acquired a valid signature. Applying records the actor in Changes,
+clears evaluation results for the old version, and uses the existing draft push
+workflow. Apply backs up all touched files, evaluation and history before writing,
+and rolls them back on a save failure, including partial history writes. Signing
+and deployment remain separate actions.
+
+Conversation history and the pending proposal exist only in the open page's
+memory. Applying refreshes the saved plan without clearing chat; applied and
+discarded actions become explicit conversation context. Navigation and **New
+chat** warn before clearing conversation, typed messages or pending proposals.
+Ctrl/Cmd+Enter sends; Enter inserts a newline. Failed requests keep the message
+available for retry without adding duplicate turns. **Stop waiting** cancels the
+browser's wait; the server/provider may still finish and bill the request.
+An expired session exposes a sign-in link in a new tab and backs up only the typed
+message in sessionStorage for recovery after sign-in. Provider errors are shown
+without raw response bodies or credentials.
+
+Run feature checks with `PYTHONPATH=. uv run pytest -q tests` from `ui/`.
+
+The browser regression fixture uses temporary draft files and a mocked Anthropic
+transport; it does not call Anthropic or modify production. From the repository
+root, run `PYTHONPATH=ui uv run --project ui python ui/tests/browser/plan_chat_server.py`.
+In another terminal, run `node ui/tests/browser/plan_chat.cjs` with Playwright on
+Node's module path (or set `PLAYWRIGHT_MODULE` to its installed module directory).
+Chrome defaults to `/usr/bin/google-chrome`; override with `CHROME_PATH`.
+The script covers desktop and mobile interaction, proposal repair and revision,
+retry, cancellation, navigation protection, sign-in recovery, and Apply.
+
 ## Deploying on Render
 
 The UI is one Docker container with a persistent disk. [`../render.yaml`](../render.yaml) defines it; [`Dockerfile`](Dockerfile) builds it (from the repository root, filtered by `Dockerfile.dockerignore`); [`docker-entrypoint.sh`](docker-entrypoint.sh) runs on every start.

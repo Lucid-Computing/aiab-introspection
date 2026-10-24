@@ -16,6 +16,8 @@ services:
       mountPath: /data          # the git checkout, accounts, trust file, runs
       sizeGB: 1
     envVars:
+      - key: ANTHROPIC_API_KEY  # server-side key for plan authoring with Claude Opus 5.5
+        sync: false
       - key: AIAB_REPO
         value: Lucid-Computing/aiab-introspection
       - key: AIAB_CHECKOUT_BRANCH
