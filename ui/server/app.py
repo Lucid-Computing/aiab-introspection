@@ -1053,19 +1053,18 @@ async def set_key(
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
         return back(here, err="You can only replace your own party's public key.")
-    problem = pv.set_public_key(target, party, public_key, user)
-    if problem:
+    public_key = public_key.strip()
+    if problem := pv.check_public_key(public_key):
         return back(here, err=problem)
-    if not settings.deploy_base:
-        return back(
-            here,
-            msg=f"Public key for the {party} replaced here. The box's trust file is unchanged: "
-            "set AIAB_DEPLOY_BASE for the UI to open the pull request.",
-        )
+    if pv.load_trust(settings).get(f"{party}_key") == public_key:
+        return back(here, msg=f"Production already trusts this {party} key. Nothing to submit.")
     pushed = publish.push_key_change(
-        settings.git_dir, party, public_key.strip(), user, base=settings.deploy_base
+        settings.git_dir, party, public_key, user, base=settings.deploy_base
     )
+    if not pushed.error:
+        pv.record_change(target, user, "key", f"public key: {party}", f"submitted {public_key}")
     view, error = load_view(target)
+    keys = await _keys(await box_status(settings.box_url, ""))
     return render(
         request,
         "sign.html",
@@ -1073,6 +1072,7 @@ async def set_key(
         error=error,
         base=f"/a/{aid}",
         aid=aid,
+        keys=keys,
         key_push=pushed,
         key_party=party,
     )

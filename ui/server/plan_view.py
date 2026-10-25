@@ -631,24 +631,15 @@ def delete_agreement(settings: Settings, agreement_id: str) -> str | None:
     return None
 
 
-def set_public_key(
-    settings: Settings, party: str, public_key: str, actor: dict[str, str]
-) -> str | None:
-    """Replace the party's public key in the trust file this UI verifies against."""
+def check_public_key(public_key: str) -> str | None:
+    """A base64 Ed25519 public key, or why it is not one. The trust file itself is never
+    written by the UI: a key changes through a pull request against the deploy branch."""
     import base64
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-    text = public_key.strip()
     try:
-        Ed25519PublicKey.from_public_bytes(base64.b64decode(text, validate=True))
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key.strip(), validate=True))
     except Exception:  # noqa: BLE001 - any decoding or key error means "not a key"
         return "that is not a base64 Ed25519 public key (44 characters, ending in =)"
-    trust = load_trust(settings)
-    previous = trust.get(f"{party}_key")
-    if previous == text:
-        return "that key is already on file"
-    trust[f"{party}_key"] = text
-    settings.trust_file.write_text(json.dumps(trust, indent=2, sort_keys=True) + "\n")
-    record_change(settings, actor, "key", f"public key: {party}", f"{previous} → {text}")
     return None

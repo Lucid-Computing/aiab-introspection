@@ -10,16 +10,13 @@
 {% if key_push is defined and key_push %}
 <div class="notice deploy-result" style="margin-bottom: var(--space-8)">
   {% if key_push.error %}
-  <p>The {{ key_party }} public key is replaced here, but the pull request for the box's trust file failed: <span class="mono">{{ key_push.error }}</span>.</p>
-  {% elif key_push.unchanged and key_push.branch == settings.deploy_base %}
-  <p>The {{ key_party }} public key is replaced here and already matches the box's trust file on <span class="mono">{{ key_push.branch }}</span>. Nothing to review.</p>
-  {% elif key_push.unchanged %}
-  <p>The {{ key_party }} public key is replaced here. A pull request for it already exists on branch <span class="mono">{{ key_push.branch }}</span>{% if key_push.compare_url %}: <a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">open it</a>{% endif %}.</p>
+  <p>The {{ key_party }} key was not submitted: <span class="mono">{{ key_push.error }}</span>.</p>
+  {% elif key_push.unchanged and not key_push.pr_url %}
+  <p>A branch for this {{ key_party }} key already exists (<span class="mono">{{ key_push.branch }}</span>){% if key_push.compare_url %}: <a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">open its pull request</a>{% endif %}. The status line below follows it.</p>
   {% else %}
-  <p>The {{ key_party }} public key is replaced here, and a pull request now asks to put it into the box's trust file on <span class="mono">{{ settings.deploy_base }}</span>.
-    {% if key_push.pr_url %}<a class="link" href="{{ key_push.pr_url }}" target="_blank" rel="noopener">{{ key_push.pr_url }}</a>{% elif key_push.compare_url %}<a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">Open the pull request</a>{% else %}Branch <span class="mono">{{ key_push.branch }}</span>{% endif %}.
-    The check on it merges it by itself, and the release that follows puts the key into the box, a few minutes in all.</p>
+  <p>The {{ key_party }} key is submitted: {% if key_push.pr_url %}<a class="link" href="{{ key_push.pr_url }}" target="_blank" rel="noopener">{{ key_push.pr_url }}</a>{% elif key_push.compare_url %}<a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">open the pull request</a>{% else %}branch <span class="mono">{{ key_push.branch }}</span>{% endif %}. The check merges it within a minute, production trusts it then, the box after the release that follows. The status line below follows it; sign once it says trusted.</p>
   {% endif %}
+</div>
 </div>
 {% endif %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
@@ -58,12 +55,12 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
       <span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{% if s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span>
     </div>
     <div class="card-body">
-      <p class="explain keyline"><span class="text-muted">Public key on file for the {{ party }}</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span></p>
+      <p class="explain keyline"><span class="text-muted">Trusted key for the {{ party }}, on production</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span></p>
       {% set k = keys.parties[party] if keys else None %}
       {% if k %}
-      <p class="explain keyline"><span class="text-muted">On production and in the box</span> <span class="selected-label {{ k.tone }}">{{ k.label }}</span>{% if k.busy %} <span class="spinner spinner--sm"></span>{% endif %}
+      <p class="explain keyline"><span class="text-muted">Status</span> <span class="selected-label {{ k.tone }}">{{ k.label }}</span>{% if k.busy %} <span class="spinner spinner--sm"></span>{% endif %}
         {% if k.pr %}<span class="text-muted" style="font-size: var(--text-xs)">· <a class="link" href="{{ k.pr.url }}" target="_blank" rel="noopener">#{{ k.pr.number }}</a>{% if k.check %} · <a class="link" href="{{ k.check.url }}" target="_blank" rel="noopener">check</a>{% endif %}{% if k.release %} · <a class="link" href="{{ k.release.url }}" target="_blank" rel="noopener">release</a>{% endif %}</span>{% endif %}</p>
-      {% if k.production and k.production != k.ui %}<p class="explain keyline"><span class="text-muted">Production trusts</span> <span class="mono">{{ k.production }}</span></p>{% endif %}
+      {% if k.submitted and k.submitted != k.production %}<p class="explain keyline"><span class="text-muted">Submitted key</span> <span class="mono">{{ k.submitted }}</span></p>{% endif %}
       {% endif %}
       {% if s.status == 'invalid' %}<p class="explain">The stored signature was made for a different version of the plan, or with a different key, so it no longer counts. The {{ party }} needs to sign this version.</p>{% endif %}
       {% if s.signature and s.status == 'ok' %}<p class="explain keyline"><span class="text-muted">{{ "Your signature" if user.party == party else "Signature of the " ~ party }}</span> <span class="mono" style="word-break: break-all">{{ s.signature }}</span></p>{% endif %}
@@ -75,13 +72,13 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
       </form>
       {% else %}
       <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
-        <summary>Your public key</summary>
+        <summary>Submit a new public key</summary>
         <div class="info-body">
-          <p class="explain">The key on file is what this UI and the box check your signatures against. Submit the public key your key pair printed to replace it. It is written to the trust file this UI uses ({{ settings.trust_file.name }}); for the box itself, the same key goes into <span class="mono">static/aiab/baked/trust.json</span> and the image is rebuilt.</p>
+          <p class="explain">Signatures are checked against the key production trusts, shown above: by this UI, by the check on the plan pull request and by the box alike. Submitting a new key opens a pull request that changes it; the check merges it within a minute, and the box takes it at the next release. Sign with the new key once the status line says it is trusted.</p>
           <form method="post" action="{{ base }}/sign/key">
             <input type="hidden" name="party" value="{{ party }}">
             <div class="field"><label for="key-{{ party }}">Public key (base64, 44 characters)</label><input id="key-{{ party }}" name="public_key" class="json" placeholder="the line ending in = that the key command printed" required></div>
-            <p style="margin-top: var(--space-4)"><button class="btn btn--ghost">Use this public key</button></p>
+            <p style="margin-top: var(--space-4)"><button class="btn btn--ghost">Submit this public key</button></p>
           </form>
         </div>
       </details>

@@ -232,6 +232,11 @@ TRUST_PATH = Path("static") / "aiab" / "baked" / "trust.json"
 def push_key_change(
     repo: Path, party: str, public_key: str, actor: dict[str, str], base: str | None = None
 ) -> PushResult:
+    """Open (or refresh) the pull request that makes production trust a party's key.
+
+    One branch per key: keys/<party>-<key8>, always rebuilt from the current base, so a
+    branch left behind by an earlier, closed pull request is simply overwritten and a new
+    pull request opened. The check on it merges it; the release puts the key in the box."""
     result = PushResult()
     base = base or default_branch(repo)
     branch = f"keys/{party}-{public_key[:8].replace('+', '').replace('/', '')}"
@@ -239,13 +244,6 @@ def push_key_change(
     worktree = Path(tempfile.mkdtemp(prefix="aiab-key-"))
     try:
         _git(repo, "fetch", "origin", base)
-        on_remote = bool(_git(repo, "ls-remote", "--heads", "origin", branch))
-        if on_remote:
-            result.unchanged, result.branch = True, branch
-            slug = github_slug(repo)
-            if slug:
-                result.compare_url = f"https://github.com/{slug}/compare/{base}...{branch}?expand=1"
-            return result
         _git(repo, "worktree", "add", "--detach", str(worktree), f"origin/{base}")
         _git(worktree, "checkout", "-q", "-B", branch)
         path = worktree / TRUST_PATH
@@ -264,21 +262,24 @@ def push_key_change(
             f"Trust the {party} public key\n\n{party}_key = {public_key}\nSubmitted by {who}.\n",
         )
         result.commit = _git(worktree, "rev-parse", "--short", "HEAD")
-        _git(worktree, "push", "-u", "origin", branch, timeout=120)
+        _git(worktree, "push", "--force", "-u", "origin", branch, timeout=120)
         result.branch = branch
         slug = github_slug(repo)
         if slug:
             result.compare_url = f"https://github.com/{slug}/compare/{base}...{branch}?expand=1"
-            body = (
-                f"Replaces the {party} public key in `static/aiab/baked/trust.json` with "
-                f"`{public_key}`.\n\nSubmitted by {who}. Changing a party key needs a human "
-                "review; approve-keys.yml checks the format, a person merges. The box picks it "
-                "up at the next release."
-            )
-            result.pr_url = _open_pr(
-                slug, base, branch, f"Trust the {party} public key", body, worktree
-            )
-    except (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+            result.pr_url = _open_pull_request(slug, branch)
+            if result.pr_url:
+                result.unchanged = True  # an open pull request already follows this branch
+            else:
+                body = (
+                    f"Replaces the {party} public key in `static/aiab/baked/trust.json` with "
+                    f"`{public_key}`.\n\nSubmitted by {who}. approve-keys.yml checks the change "
+                    "and merges it; the release that follows puts the key into the box."
+                )
+                result.pr_url = _open_pr(
+                    slug, base, branch, f"Trust the {party} public key", body, worktree
+                )
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
         result.error = str(exc)[-400:]
     finally:
         try:
@@ -290,6 +291,33 @@ def push_key_change(
         except RuntimeError:
             pass
     return result
+
+
+def _open_pull_request(slug: str, branch: str) -> str | None:
+    """The URL of the open pull request for this branch, if the GitHub CLI can tell."""
+    if not shutil.which("gh"):
+        return None
+    done = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            slug,
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "url",
+            "--jq",
+            ".[0].url",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return done.stdout.strip() or None if done.returncode == 0 else None
 
 
 # ---- the checkout follows its remote branch: after a plan merges and the release writes new

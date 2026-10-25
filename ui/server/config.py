@@ -100,8 +100,12 @@ def load_settings() -> Settings:
         agreements_dir=Path(env.get("AIAB_AGREEMENTS_DIR", REPO_ROOT / "agreements")).resolve(),
         git_dir=Path(env.get("AIAB_GIT_DIR", REPO_ROOT)).resolve(),
         deploy_base=env.get("AIAB_DEPLOY_BASE") or "production",  # the branch the box is built from
+        # The keys signatures are checked against: the checkout's trust.json, i.e. the one on
+        # the deploy branch, the same file the plan check and the release use. Never edited
+        # here; a key changes through a pull request. AIAB_TRUST_FILE overrides for dev keys.
         trust_file=Path(
-            env.get("AIAB_TRUST_FILE", STATIC_DIR / "aiab" / "baked" / "trust.json")
+            env.get("AIAB_TRUST_FILE")
+            or Path(env.get("AIAB_GIT_DIR", REPO_ROOT)) / "static" / "aiab" / "baked" / "trust.json"
         ).resolve(),
         box_url=box_url or None,
         accounts_file=Path(env.get("UI_ACCOUNTS_FILE", UI_ROOT / "accounts.json")).resolve(),

@@ -306,16 +306,27 @@ async def keys(
             "check": None,
             "release": None,
         }
-        if trust is not None and ui_key != prod_key:
+        info["submitted"] = None
+        if trust is not None:
             try:
                 async with _client() as client:
                     found = await _pull_request(
                         settings, client, lambda ref, p=party: ref.startswith(f"keys/{p}-")
                     )
+                    if found:
+                        info.update(found)
+                        text = await _get(
+                            client,
+                            f"/repos/{settings.repo}/contents/static/aiab/baked/trust.json",
+                            {"ref": found["pr"]["branch"]},
+                            raw=True,
+                        )
+                        if text:
+                            import json
+
+                            info["submitted"] = json.loads(text).get(f"{party}_key")
             except (httpx.HTTPError, ValueError, KeyError):
-                found = None
-            if found:
-                info.update(found)
+                pass
         info["label"], info["tone"], info["busy"] = _key_summary(info, trust is not None)
         out["parties"][party] = info
     out["ready"] = trust is not None and all(
@@ -326,30 +337,32 @@ async def keys(
 
 
 def _key_summary(info: dict[str, Any], github_ok: bool) -> tuple[str, str, bool]:
-    ui, prod, box = info["ui"], info["production"], info["box"]
+    """One line per party. ``ui`` is the key this UI checks against (the checkout's copy of
+    production's trust file), ``production`` the one on GitHub, ``box`` the box's,
+    ``submitted`` the key in the party's latest pull request."""
+    ui, prod, box, sub = info["ui"], info["production"], info["box"], info["submitted"]
     pr, check, release = info["pr"], info["check"], info["release"]
-    if not ui:
-        return "no key on file here", "bad", False
     if not github_ok:
         return "could not read the trusted keys from GitHub", "bad", False
-    if ui == prod:
-        if box is None:
-            return "trusted on production", "ok", False
-        if box == prod:
-            return "trusted on production and by the box", "ok", False
-        return "trusted on production · the box takes it at the next release", "now", True
-    if pr is None:
-        return "not submitted to production yet · press Use this public key", "bad", False
-    if pr["state"] == "closed":
-        return f"pull request #{pr['number']} was closed · submit again", "bad", False
-    if pr["state"] == "open":
-        if check is None or check["status"] != "completed":
-            return f"pull request #{pr['number']} · checking", "now", True
-        if check["conclusion"] == "success":
-            return f"pull request #{pr['number']} · merging", "now", True
-        return f"pull request #{pr['number']} · the check rejected it", "bad", False
-    if release is None or release["status"] != "completed":
-        return f"pull request #{pr['number']} merged · release running", "now", True
-    if release["conclusion"] != "success":
-        return f"pull request #{pr['number']} merged · the release failed", "bad", False
-    return f"pull request #{pr['number']} merged · production not caught up yet", "now", True
+    if not prod:
+        return "no key trusted on production", "bad", False
+    if pr is not None and sub and sub != prod:
+        short, n = sub[:8] + "…", pr["number"]
+        if pr["state"] == "closed":
+            return f"submission {short} · pull request #{n} was closed", "bad", False
+        if pr["state"] == "open":
+            if check is None or check["status"] != "completed":
+                return f"submission {short} · pull request #{n} · checking", "now", True
+            if check["conclusion"] == "success":
+                return f"submission {short} · pull request #{n} · merging", "now", True
+            return f"submission {short} · pull request #{n} · rejected by the check", "bad", False
+        return f"submission {short} merged · production catching up", "now", True
+    if ui != prod:
+        return "production trusts a newer key · this page catches up within a minute", "now", True
+    if box is None:
+        return "trusted on production", "ok", False
+    if box == prod:
+        return "trusted on production and by the box", "ok", False
+    if release and release["status"] != "completed":
+        return "trusted on production · release running, the box takes it soon", "now", True
+    return "trusted on production · the box takes it at the next release", "now", True

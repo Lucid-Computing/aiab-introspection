@@ -41,14 +41,12 @@ if [ -z "$(git -C "$DATA/repo" status --porcelain)" ]; then
 else
   echo "note: unsaved changes in $DATA/repo, not pulling or switching"
 fi
-if [ ! -f "$DATA/trust.json" ]; then
-  cp /app/static/aiab/baked/trust.json "$DATA/trust.json"
-fi
 if [ -n "${LAB_TOKEN:-}" ]; then printf '%s\n' "$LAB_TOKEN" > "$DATA/demo-keys/lab.token"; fi
 if [ -n "${LOGGER_KEY:-}" ]; then printf '%s\n' "$LOGGER_KEY" > "$DATA/demo-keys/logger.key"; fi
 
 export AIAB_GIT_DIR="$DATA/repo" AIAB_PLAN_DIR="$DATA/repo/plan" AIAB_AGREEMENTS_DIR="$DATA/repo/agreements"
-export AIAB_TRUST_FILE="$DATA/trust.json" UI_ACCOUNTS_FILE="$DATA/accounts.json"
+export UI_ACCOUNTS_FILE="$DATA/accounts.json"
+# The trust file is the checkout's static/aiab/baked/trust.json (production's); not copied.
 export AIAB_RUNS_DIR="$DATA/runs" AIAB_DEMO_KEYS="$DATA/demo-keys" AIAB_LOGS_DIR="$DATA/logs"
 # Runs use an independent production snapshot. Unsaved drafts must neither block release
 # updates nor remove the signatures needed to run the already-deployed plan.
