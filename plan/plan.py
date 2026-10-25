@@ -1,7 +1,8 @@
 """Demo plan: bio-research classifier over multi-log queries.
 
 The static runtime calls these functions in a fixed order (design spec, section 3.1):
-filter_logs -> build_query -> classify (per query) -> metric -> emit_report.
+build_query -> classify (per query) -> metric -> emit_report. Which records come in is
+chosen at run time; the box hands every record in scope to build_query.
 This module may import only dataclasses, typing and aiab.plan_api. It has no network,
 file, clock or randomness access and must be deterministic for the same inputs.
 """
@@ -10,26 +11,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from aiab.plan_api import FilterRules, LogRecord, QueryInput, Verdict, run_llm
-
-
-def filter_logs(logs: list[LogRecord], *, rules: FilterRules) -> list[LogRecord]:
-    """Keep records of the allowed kinds and agents.
-
-    With keywords set, keep only records that mention at least one of them.
-    """
-    kept: list[LogRecord] = []
-    for record in logs:
-        if record.kind not in rules.kinds:
-            continue
-        if rules.agents is not None and record.agent_id not in rules.agents:
-            continue
-        if rules.keywords:
-            text = record.content.lower()
-            if not any(keyword.lower() in text for keyword in rules.keywords):
-                continue
-        kept.append(record)
-    return kept
+from aiab.plan_api import LogRecord, QueryInput, Verdict, run_llm
 
 
 def build_query(logs: list[LogRecord], *, window: int) -> list[QueryInput]:
