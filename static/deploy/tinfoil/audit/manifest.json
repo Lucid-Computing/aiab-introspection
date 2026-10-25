@@ -1,9 +1,9 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:9388a3be63a3474ad71f6c62f88c0c70aa03c7fd9bc6cad97f30edb6683e42cf",
-  "plan_digest": "sha256:2dc44607f318a696c0ddb1f3f300eaa41e37f6e4d14f5ef27f2c62e07906d1f5",
-  "plan_id": "bio-demo-001",
+  "image_digest": "sha256:a8ccda733a1df66839a224cab02b4a594ebe67d843d0fb3b74f120bedcfae044",
+  "plan_digest": "sha256:f6a59d42446d1c178a10de50a39326442d2030b9649e149f5713edaa654f4bf9",
+  "plan_id": "bio-2",
   "restrictions": {
     "version": "0.1.0",
     "plan_imports": {
@@ -74,8 +74,8 @@
     "temperature": 0
   },
   "parties": {
-    "lab_key": "Hsl+EjlxPEl+1LCwK5jf0wtkoXH0hEr0griYb4z0T+M=",
-    "auditor_key": "W+pEfqYhX6UU5+03rL7DbRm7pqsHdiTqXina5NBhEHQ=",
+    "lab_key": "NwLqPU+Vf5hvvgre7uL+J7a5DAHqLqsfeEQfiaaXjWE=",
+    "auditor_key": "+ToJseBN/Le0twep1nTt8H+6uxcgujldtDzXe1bx0SA=",
     "logger_key": "HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg="
   },
   "report_schema": "aiab-report/v3",
