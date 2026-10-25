@@ -608,7 +608,7 @@ async def runs_index(request: Request) -> Response:
     totals = {
         "records": sum(i["records"] for i in sessions),
         "kb": round(sum(i["kb"] for i in sessions), 1),
-        "fits": sum(1 for i in sessions if not i["notes"]),
+        "refused": sum(1 for i in sessions if i["notes"]),
     }
     return render(
         request,

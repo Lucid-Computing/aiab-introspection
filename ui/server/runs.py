@@ -163,7 +163,14 @@ def preflight(settings: Settings) -> dict:
         if not (settings.demo_keys_dir / name).is_file():
             missing.append(f"{name} in {settings.demo_keys_dir}")
     if release and plan_digest and release.get("plan_digest") != plan_digest:
-        missing.append("deployed plan digest differs from release pins")
+        # The pins say which box to expect; the box is verified against them. They are
+        # written by the release that deploys the plan, so this means that release did
+        # not finish, or has not run yet.
+        missing.append(
+            f"the release pins ({release.get('tag', '?')}) are older than the deployed plan,"
+            " so the box cannot be verified against them; the next release records new"
+            " pins (a push to production starts one)"
+        )
     return {"release": release, "missing": missing, "ok": not missing, "plan_digest": plan_digest}
 
 

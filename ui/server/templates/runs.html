@@ -13,7 +13,7 @@
       <table class="kv">
         <tr><th>Box</th><td class="mono">{{ pre.release.host }}</td></tr>
         <tr><th>Release</th><td class="mono">{{ pre.release.tag }} · plan {{ pre.release.plan_digest[:19] }}…</td></tr>
-        <tr><th>Deployed plan here</th><td class="mono">{{ plan_digest or ("does not load: " ~ (plan_error or "unknown reason")) }}{% if plan_digest and pre.release.plan_digest != plan_digest %} <span class="badge badge--danger">differs from the release, step 2 will refuse</span>{% endif %}</td></tr>
+        <tr><th>Deployed plan here</th><td class="mono">{{ plan_digest or ("does not load: " ~ (plan_error or "unknown reason")) }}{% if plan_digest and pre.release.plan_digest != plan_digest %} <span class="badge badge--danger">the release pins are behind</span>{% endif %}</td></tr>
         <tr><th>Ready</th><td>{% if pre.ok %}<span class="badge badge--ok">yes</span>{% else %}<ul class="plain">{% for m in pre.missing %}<li class="bad">{{ m }}</li>{% endfor %}</ul>{% endif %}</td></tr>
       </table>
       {% else %}<p class="form-message error">Release pins not found: {{ pre.missing | join(", ") }}</p>{% endif %}
@@ -40,7 +40,7 @@
     <div class="card-header">Input</div>
     <div class="card-body">
       <form method="post" action="/runs/start" id="run-form"></form>
-      <p class="explain">Which recorded sessions go into this run. You choose here; the plan does not filter. If the plan pins an input scope (agents and a time window), the box still refuses records outside it.</p>
+      <p class="explain">Which recorded sessions go into this run. You choose here; the plan does not filter.{% if scope %} This plan pins an input scope (agents and a time window); the box refuses records outside it.{% endif %}</p>
       <div class="sources">
         <div class="src">
           <label class="src-head"><input type="hidden" name="source" value="sessions" form="run-form"><span class="src-title">Recorded sessions</span> <span class="src-sub">from the <a class="link" href="/logs">Logs</a> page, as the proxy recorded them{% if not all_count %} · none on disk yet{% endif %}</span></label>
@@ -56,19 +56,19 @@
           </form>
           <p class="pick-sum">
             <label class="choice"><input type="checkbox" onchange="for (const c of document.querySelectorAll('.sess input')) c.checked = this.checked"> select all shown</label>
-            <span>{{ sessions | length }} of {{ all_count }} session(s) shown · {{ totals.records }} records · {{ totals.kb }} KB · {{ totals.fits }} fit the plan's scope</span>
+            <span>{{ sessions | length }} of {{ all_count }} session(s) shown · {{ totals.records }} records · {{ totals.kb }} KB{% if totals.refused %} · {{ totals.refused }} outside the plan's scope{% endif %}</span>
           </p>
           {% for item in sessions %}
-          <label class="sess {% if item.notes %}sess--refused{% else %}sess--fits{% endif %}">
+          <label class="sess{% if item.notes %} sess--refused{% endif %}">
             <input type="checkbox" name="session" value="{{ item.session.id }}" form="run-form" {% if item.session.id in picked %}checked{% endif %}>
             <span><span class="sess-title">{{ item.session.title }}</span>
               <span class="sess-meta">{{ item.session.who }} · {{ item.session.started_short }} · {{ item.session.requests | length }} req · {{ item.records }} records · {{ item.kb }} KB</span>
               {% for n in item.notes %}<span class="sess-warn">the box would refuse: {{ n }}</span>{% endfor %}</span>
-            <span class="tag {% if item.notes %}tag--refused{% else %}tag--fits{% endif %}">{% if item.notes %}refused{% else %}fits{% endif %}</span>
+            {% if item.notes %}<span class="tag tag--refused">outside scope</span>{% endif %}
           </label>
           {% else %}<p class="text-muted" style="margin-left: var(--space-6)">No session in this window.</p>
           {% endfor %}
-          {% if scope and totals.fits == 0 and sessions %}
+          {% if scope and sessions and totals.refused == sessions | length %}
           <p class="scope-note">The deployed plan allows agents <span class="mono">{{ scope.agents | join(", ") }}</span> between <span class="mono">{{ scope.window_start[:10] }}</span> and <span class="mono">{{ scope.window_end[:10] }}</span>. The recorded sessions come from <span class="mono">{{ whos | join(", ") }}</span>. To run on real logs, widen the plan's input scope (Plan → Settings), have both parties sign, and deploy.</p>
           {% endif %}
           {% endif %}
