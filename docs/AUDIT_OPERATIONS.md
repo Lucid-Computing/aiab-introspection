@@ -97,12 +97,13 @@ PYTHONPATH=. uv run python deploy/tinfoil/audit/release.py \
   --output /private/release-attempt --execute
 ```
 
-The coordinator requires local HEAD to match the requested remote ref, verifies the
-existing instance matches the baseline, requires successful CI and matching clean
-build digests, checks source/config commit identity, publishes config with an atomic
-git push, measures the tagged config, updates the instance, verifies expected live
-release/policy and runs synthetic acceptance. `attempt.json` records stages and the
-previous/target release; success is recorded only at the end. New release files are
+The coordinator requires local HEAD to match the requested remote ref, requires
+successful CI and matching clean build digests, checks that the build is from the
+source commit and that the built plan is the signed one, publishes config with an
+atomic git push, measures the tagged config, updates the instance and verifies the
+expected live release/policy and health. It does not compare the running instance or
+the config repository with the recorded release first. `attempt.json` records stages
+and the previous/target release; success is recorded only at the end. New release files are
 written into the attempt directory for review and then committed back to the source
 repository; they are not silently written into an independently edited checkout.
 

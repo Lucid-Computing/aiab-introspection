@@ -1,8 +1,8 @@
-# Put a reviewed build live: run the release procedure (static/deploy/tinfoil/audit/release.py)
+# Put what is on production live: run the release procedure (static/deploy/tinfoil/audit/release.py)
 # from CI instead of an operator's laptop. Started by a merge into production, then:
 # build-image.yml on the production branch, measured config pushed to the public config repo,
-# Tinfoil told to run the new tag, live identity and readiness verified, and the
-# new release pins committed back to production.
+# Tinfoil told to run the new tag, the live box asked for its identity and health, and the
+# new release pins committed back to production so the UI and clients know what runs.
 #
 # Repository secrets:
 #   TINFOIL_API_KEY    Lucid's Tinfoil control-plane key (what ~/.tinfoil/config.json holds)
@@ -73,13 +73,24 @@ jobs:
       - name: Choose the tag
         id: tag
         env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
           REQUESTED: ${{ inputs.tag }}
         run: |
           if [ -n "$REQUESTED" ]; then
             TAG="$REQUESTED"
           else
-            CURRENT=$(python3 -c "import json; print(json.load(open('static/deploy/tinfoil/audit/release.json'))['tag'])")
-            TAG=$(python3 -c "import sys; a,b,c=sys.argv[1][1:].split('.'); print(f'v{a}.{b}.{int(c)+1}')" "$CURRENT")
+            # The patch after the highest tag the config repository already has. Tags are
+            # never reused, and the repository's own record can lag the box (a run that
+            # deployed but did not finish), so the record is only the fallback.
+            CONFIG_REPO=$(python3 -c "import json; print(json.load(open('static/deploy/tinfoil/audit/release.json'))['repo'])")
+            TAG=$(gh api "repos/$CONFIG_REPO/tags" --paginate --jq '.[].name' | python3 -c "
+          import json, re, sys
+          pattern = re.compile(r'^v(\d+)\.(\d+)\.(\d+)$')
+          tags = [tuple(map(int, m.groups())) for m in map(pattern.match, sys.stdin.read().split()) if m]
+          if not tags:
+              tags = [tuple(map(int, pattern.match(json.load(open('static/deploy/tinfoil/audit/release.json'))['tag']).groups()))]
+          a, b, c = max(tags)
+          print(f'v{a}.{b}.{c + 1}')")
           fi
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -99,10 +110,18 @@ jobs:
             $EXECUTE --source-ref production --tag "${{ steps.tag.outputs.tag }}" \
             --key-directory "$RUNNER_TEMP/keys" --output "$RUNNER_TEMP/release-out"
       - name: Commit the new release pins to production
-        if: ${{ inputs.dry_run != true }}
+        # Runs even when the health check after the deploy failed: release.py writes
+        # release.json only once the box has been redeployed, so if that file exists the live
+        # box changed and the repository records it. The UI and the clients read these pins
+        # to know which box to expect.
+        if: ${{ !cancelled() && inputs.dry_run != true }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
         run: |
+          if [ ! -f "$RUNNER_TEMP/release-out/release.json" ]; then
+            echo "No deployment happened in this run; nothing to record." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           cp "$RUNNER_TEMP/release-out/release.json" static/deploy/tinfoil/audit/release.json
           for file in tinfoil-config.yml trust.json manifest.json policy-digest.txt; do
             cp "$RUNNER_TEMP/release-out/config/$file" "static/deploy/tinfoil/audit/$file"

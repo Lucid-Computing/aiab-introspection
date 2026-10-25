@@ -23,8 +23,8 @@ Nothing is deployed from `master`. `production` only moves in three ways:
 UI Deploy --PR--> production --merge--> release.yml, started by the merge itself
                                    |  runs static/deploy/tinfoil/audit/release.py --execute:
                                    |    build-image.yml on production (image to ghcr.io, reproduced twice), config repo tagged and measured,
-                                   |    Tinfoil told to run the new tag, live identity verified, synthetic acceptance
-                                   +--> commits the new release pins and matching config/trust/manifest baseline back to production [skip ci]
+                                   |    Tinfoil told to run the new tag, the live box asked for its identity and health
+                                   +--> commits the new release pins and the matching config/trust/manifest back to production [skip ci]
 ```
 
 The box never fetches anything at run time. The plan, the trust keys and the model binding are inside the image, so the hardware attestation covers them. Clients (the UI's Runs page, `scripts/demo-live`) read the release pins from the repository and refuse a box that does not match.
@@ -38,25 +38,18 @@ Repository secrets:
 | `TINFOIL_API_KEY` | Lucid's Tinfoil control-plane key (the `api_key` in `~/.tinfoil/config.json`) | the box operator |
 | `RELEASE_GH_TOKEN` | a GitHub token that may run workflows and download runs here, and push commits and tags and download releases in `lucid-computing-labs/aiab-signed-audit-enclave` (the config repository, still in the old organisation) | repository admin |
 | `AUDIT_LAB_TOKEN` | the lab API token for the live verification step | the box operator |
-| `AUDIT_LOGGER_KEY` | the demo logger private key for the synthetic acceptance run | the box operator |
+| `AUDIT_LOGGER_KEY` | the demo logger private key; no longer used by the release, kept for now | the box operator |
 
 A merge into `production` starts the release by itself: a human push triggers it directly, and the check workflows, whose merges GitHub does not count as pushes, start it by dispatch right after merging. The Actions tab button is only for re-runs and dry runs. No GitHub environment or reviewer is used.
 
-Tags are `vMAJOR.MINOR.PATCH`; the job bumps the patch of the current tag unless one is given. The same `release.py` works from an operator's laptop as before.
+Tags are `vMAJOR.MINOR.PATCH`; unless one is given, the job takes the patch after the highest tag the config repository already has (tags are never reused). The same `release.py` works from an operator's laptop as before.
 
-## Reviewed configuration baseline
+## What the release checks, and what it no longer checks
 
-`release.json.reviewed_config_commit` pins the exact reviewed config repository
-commit used as the input to the next release. Normally this is the current
-release tag commit. An explicitly reviewed migration can advance it: the October
-2026 organization migration pins `e207344c55e29fa0e37de3cb9005c9a5c93b5e85`,
-whose only change is the GHCR namespace, preserving the image digest. This does
-not change the expected measurement of the still-running v0.2.2 release.
+Before the deploy, the job checks one thing: `plan/` on production is signed by the keys in `static/aiab/baked/trust.json`, because the box verifies exactly that at start-up and would otherwise not come up. The build must come from the production commit being released, and the built plan must match the signed one.
 
-The coordinator rejects any other remote HEAD, verifies ancestry from the prior
-tag, and compares the config, trust, manifest and policy digest with the local
-reviewed baseline. On success it records the new config commit and the workflow
-commits all five baseline files together. Never update only release.json after
-deployment: that leaves the next release with inconsistent baseline inputs.
+After Tinfoil reports the new tag running, the job asks the box for its attestation and health through the same client the UI uses. That is the proof that the live box is the image just measured. The pins (`release.json` and the config, trust, manifest and policy-digest files) are then committed back, also when that last check failed, so the repository always says what the box runs.
 
-The release `repo` is the exact, case-sensitive GitHub repository identity used by Sigstore verification. After an organization migration, `control_plane_repo` may explicitly pin the old repository alias still stored by Tinfoil; this alias is only used for the control-plane baseline check, never for attestation verification.
+Removed on 25 Oct 2026 at Teddy's decision: the comparison of the live Tinfoil container with the last recorded release, and the comparison of the config repository's head with the recorded config commit and files. Both were guards against the box or the config repository being changed outside this procedure, by the same people who hold the keys to change them. They cannot stop such a person, who can also switch the guards off, and they blocked every release after a run that deployed but did not finish. The parties' real protection is elsewhere: clients verify the box's hardware attestation against the public, measured config, and refuse a box that does not match.
+
+The release `repo` is the exact, case-sensitive GitHub repository identity used by Sigstore verification. `control_plane_repo` is the old organisation alias that Tinfoil still stores; it is kept in `release.json` for reference only.

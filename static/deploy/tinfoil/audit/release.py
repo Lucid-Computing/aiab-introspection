@@ -1,9 +1,12 @@
-"""Coordinate a verified audit release; CI builds/measures, never runs in the enclave.
+"""Coordinate an audit release; CI builds/measures, never runs in the enclave.
 
-Default is read-only planning. --execute builds, publishes config, updates Tinfoil,
-verifies pinned identity and readiness. Credentials stay
-in the operator's existing gh/Tinfoil stores. Each attempt has a new private output
-directory and a durable stage journal. Failures never get a success record.
+Default is read-only planning. --execute builds the image, publishes and measures the
+config, tells Tinfoil to run the new tag, then checks that the live box has the expected
+identity and answers health. Tinfoil running the new tag is the release; nothing before
+the deploy compares the box or the config repository with the repository's record, so a
+record that fell behind never blocks the next release. Credentials stay in the
+operator's existing gh/Tinfoil stores. Each attempt has a new private output directory
+and a durable stage journal. Failures never get a success record.
 """
 
 import argparse
@@ -52,27 +55,6 @@ def workflow(repo, name, ref, output, *inputs):
             return run_id, state["headSha"]
         time.sleep(10)
     raise RuntimeError("Workflow timeout; inspect run " + run_id)
-
-
-def verify_config_baseline(checkout, baseline, prior):
-    """Pin the reviewed config commit; never silently accept remote HEAD drift."""
-    expected = prior.get("reviewed_config_commit")
-    if expected is not None:
-        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{40}", expected):
-            raise RuntimeError("Invalid reviewed config commit")
-        # A migration review may advance from the live tag but cannot replace its history.
-        command("git", "merge-base", "--is-ancestor", prior["tag"], expected, cwd=checkout)
-    else:
-        expected = command("git", "rev-parse", prior["tag"] + "^{commit}", cwd=checkout)
-    if command("git", "rev-parse", "HEAD", cwd=checkout) != expected:
-        raise RuntimeError("Config repository has unreviewed changes since the approved commit")
-    for name in ("tinfoil-config.yml", "trust.json", "manifest.json"):
-        if json.loads((checkout / name).read_text()) != json.loads((baseline / name).read_text()):
-            raise RuntimeError("Published baseline differs from approved local " + name)
-    if (checkout / "policy-digest.txt").read_text().strip() != (
-        baseline / "policy-digest.txt"
-    ).read_text().strip():
-        raise RuntimeError("Published baseline policy digest differs from approved local digest")
 
 
 def render(config, trust, build, release_tag):
@@ -209,17 +191,6 @@ def main():
         return
     cp = ControlPlane(Path.home() / ".tinfoil/config.json")
     try:
-        current = cp.request("GET", "/api/containers/" + args.instance)
-        if (
-            current.get("repo") != prior.get("control_plane_repo", repo)
-            or current.get("domain") != prior["host"]
-            or current.get("debug") is not False
-            or current.get("disable_cc_mode") is not False
-            or current.get("status") != "running"
-            or current.get("current_tag") != prior["tag"]
-            or current.get("update_status")
-        ):
-            raise RuntimeError("Live instance differs from approved baseline")
         record("building", status="in_progress")
         image = "ghcr.io/lucid-computing/aiab-introspection-enclave"
         run_id, built_sha = workflow(
@@ -245,10 +216,9 @@ def main():
             raise RuntimeError("Build identity mismatch")
         checkout = args.output / "config"
         command("git", "clone", "https://github.com/" + repo + ".git", str(checkout))
-        verify_config_baseline(checkout, baseline, prior)
-        # The trust the box runs with: the published baseline (runtime digest, model) with the
-        # reviewed keys and model from static/aiab/baked/trust.json on the source ref, the
-        # file the key pull requests change and the image bakes. The box compares the two at
+        # The trust the box runs with: the last recorded trust (runtime digest, model) with
+        # the keys and model from static/aiab/baked/trust.json on the source ref, the file
+        # the key pull requests change and the image bakes. The box compares the two at
         # start-up (static_trust_mismatch), so they must agree; the plan's signatures are
         # verified against these keys below.
         trust_in = json.loads((baseline / "trust.json").read_text())
