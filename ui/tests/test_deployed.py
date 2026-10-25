@@ -37,10 +37,19 @@ def test_snapshot_updates_without_touching_dirty_drafts(tmp_path):
 
 
 def test_run_uses_signed_production_not_unsigned_draft(tmp_path, monkeypatch):
+    # The frozen demo plan stands in for a released production plan: the repository's own
+    # plan/ and release pins change with every deploy and are not test data.
     root = Path(__file__).resolve().parents[2]
+    fixture = root / "static/tests/fixtures/demo-plan"
+    pins = json.loads((root / "static/deploy/tinfoil/audit/release.json").read_text())
+    from aiab.baked.bundle import bundle_files, file_digest
+
+    pins["plan_digest"] = file_digest(bundle_files(fixture))
+    (tmp_path / "pins.json").write_text(json.dumps(pins))
     monkeypatch.setenv("AIAB_PLAN_DIR", str(tmp_path / "unsigned"))
-    monkeypatch.setenv("AIAB_RUN_PLAN_DIR", str(root / "plan"))
-    monkeypatch.setenv("AIAB_RELEASE_FILE", str(root / "static/deploy/tinfoil/audit/release.json"))
+    monkeypatch.setenv("AIAB_RUN_PLAN_DIR", str(fixture))
+    monkeypatch.setenv("AIAB_TRUST_FILE", str(fixture / "trust.json"))
+    monkeypatch.setenv("AIAB_RELEASE_FILE", str(tmp_path / "pins.json"))
     monkeypatch.delenv("AIAB_BOX_URL", raising=False)
     settings = load_settings()
     for name in ("lab.token", "logger.key"):

@@ -880,7 +880,12 @@ async def deploy(request: Request, aid: str) -> Response:
 
     threading.Thread(target=push, name=f"deploy-{aid}", daemon=True).start()
     saved(actor)  # the deploy is recorded in the agreement's change log
-    return await _agreements_page(request, deployed_name=plan_id, deploy_started=True)
+    # Redirect, so that a refresh re-reads the page instead of re-sending the form.
+    return back(
+        "/agreements",
+        msg=f"{plan_id} is being deployed: the branch is pushed and the pull request opened,"
+        " then the check merges it and the release follows. The deployment line follows it.",
+    )
 
 
 @app.post("/a/{aid}/delete")
@@ -1112,18 +1117,12 @@ async def set_key(
     pushed = publish.push_key_change(
         settings.git_dir, party, public_key, user, base=settings.deploy_base
     )
-    if not pushed.error:
-        pv.record_change(target, user, "key", f"public key: {party}", f"submitted {public_key}")
-    view, error = load_view(target)
-    keys = await _keys(await box_status(settings.box_url, ""))
-    return render(
-        request,
-        "sign.html",
-        view=view,
-        error=error,
-        base=f"/a/{aid}",
-        aid=aid,
-        keys=keys,
-        key_push=pushed,
-        key_party=party,
+    if pushed.error:
+        return back(here, err=f"The {party} key was not submitted: {pushed.error}")
+    pv.record_change(target, user, "key", f"public key: {party}", f"submitted {public_key}")
+    where = pushed.pr_url or pushed.compare_url or f"branch {pushed.branch}"
+    return back(
+        here,
+        msg=f"The {party} key is submitted ({where}). The check merges it within a minute and"
+        " production trusts it then; the status line follows it. Sign once it says trusted.",
     )

@@ -247,11 +247,15 @@ def main():
         checkout = args.output / "config"
         command("git", "clone", "https://github.com/" + repo + ".git", str(checkout))
         verify_config_baseline(checkout, baseline, prior)
+        # The trust the box runs with: the published baseline (runtime digest, model) with the
+        # reviewed keys and model from static/aiab/baked/trust.json on the source ref, the
+        # file the key pull requests change and the image bakes. The box compares the two at
+        # start-up (static_trust_mismatch), so they must agree; the plan's signatures are
+        # verified against these keys below.
+        trust_in = json.loads((baseline / "trust.json").read_text())
+        trust_in.update(json.loads((root / "static/aiab/baked/trust.json").read_text()))
         config, trust, manifest = render(
-            json.loads((checkout / "tinfoil-config.yml").read_text()),
-            json.loads((baseline / "trust.json").read_text()),
-            build,
-            args.tag,
+            json.loads((checkout / "tinfoil-config.yml").read_text()), trust_in, build, args.tag
         )
         for name, value in (
             ("tinfoil-config.yml", config),

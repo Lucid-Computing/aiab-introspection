@@ -2,40 +2,22 @@
 {% block title %}Agreements · AIAB agreement{% endblock %}
 {% block head %}{% if busy or (keys and keys.busy) %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
-{% if deploy_started is defined and deploy_started %}
-<div class="notice deploy-result" style="margin-bottom: var(--space-8)">
-  <p><strong>{{ deployed_name }}</strong> is being deployed: the branch is being pushed and the pull request opened. The deployment line below follows it; this page refreshes itself.</p>
-</div>
-{% endif %}
-{% if pushed is defined and pushed %}
-<div class="notice deploy-result" style="margin-bottom: var(--space-8)">
-  {% if pushed.error %}
-  <p><strong>{{ deployed_name }}</strong>: pushing the deploy branch failed: <span class="mono">{{ pushed.error }}</span>. Nothing was deployed.</p>
-  {% elif pushed.unchanged %}
-  <p><strong>{{ deployed_name }}</strong>: branch <span class="mono">{{ pushed.branch }}</span> already holds these exact files, so there is nothing new to push.{% if pushed.compare_url %} <a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Its pull request</a>.{% endif %}</p>
-  {% else %}
-  <p><strong>{{ deployed_name }}</strong> is on its way: branch <span class="mono">{{ pushed.branch }}</span> ({{ pushed.commit }}) is pushed with only the <span class="mono">plan/</span> change.
-    {% if pushed.pr_url %}Pull request: <a class="link" href="{{ pushed.pr_url }}" target="_blank" rel="noopener">{{ pushed.pr_url }}</a>. The signature check runs on it and merges it by itself; the release to the box follows. Progress is shown below.
-    {% elif pushed.compare_url %}<a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Open the pull request</a>; the signature check merges it by itself and the release to the box follows.
-    {% endif %}</p>
-  {% endif %}
-</div>
-{% endif %}
 <div class="row" style="justify-content: space-between; margin-bottom: var(--space-6)"><h1 style="margin: 0">Agreements</h1><a class="btn btn--primary" href="/agreements/new">New agreement</a></div>
 <table class="table">
   <thead><tr><th>Agreement</th><th>Version</th><th>State</th><th></th></tr></thead>
   <tbody>
   <tr class="selected">
-    <td><strong>{{ deployed.plan_id }}</strong><br>{% if deployed.trusted %}<span class="selected-label ok">deployed</span>{% else %}<span class="selected-label bad">deployed · not signed by the trusted keys</span>{% endif %}{% if box.configured and box.plan_digest and not box.plan_matches %}<br><span class="text-muted" style="font-size: var(--text-xs)">the box still runs {{ box.plan_digest[7:15] }}…</span>{% endif %}</td>
-    <td>{% if deployed.digest %}<span class="digest">{{ deployed.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
-    <td>{% if deployed.error %}does not load: <span class="mono">{{ deployed.error }}</span>{% elif not deployed.trusted %}the keys changed: nothing valid runs until a plan signed with them is deployed{% else %}read only · <span class="mono">plan/</span>{% endif %}</td>
+    <td><strong>{% if deployed.trusted %}{{ deployed.plan_id }}{% else %}nothing deployed{% endif %}</strong><br>{% if deployed.trusted %}<span class="selected-label ok">deployed</span>{% else %}<span class="selected-label bad">the keys changed · {{ deployed.plan_id }} is no longer valid</span>{% endif %}{% if deployed.trusted and box.configured and box.plan_digest and not box.plan_matches %}<br><span class="text-muted" style="font-size: var(--text-xs)">the box still runs {{ box.plan_digest[7:15] }}…</span>{% endif %}</td>
+    <td>{% if deployed.digest and deployed.trusted %}<span class="digest">{{ deployed.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
+    <td>{% if deployed.error %}does not load: <span class="mono">{{ deployed.error }}</span>{% elif not deployed.trusted %}sign a plan with the trusted keys and deploy it{% else %}read only · <span class="mono">plan/</span>{% endif %}</td>
     <td class="actions"><a class="btn btn--ghost btn--sm" href="/a/plan/plan">Open</a></td>
   </tr>
   {% for r in rows %}
   <tr>
     <td><strong>{{ r.plan_id }}</strong><br>
-      {% if r.deploying %}<span class="selected-label {{ r.deploying.tone }}">{{ r.deploying.label }}</span>
-      {% elif r.running %}<span class="selected-label ok">deployed</span>
+      {% if r.deploying and r.deploying.busy %}<span class="selected-label {{ r.deploying.tone }}">{{ r.deploying.label }}</span>
+      {% elif r.deploying %}<span class="selected-label {{ r.deploying.tone }}">{{ r.deploying.label }}</span>
+      {% elif r.selected and deployed.trusted %}<span class="text-muted">agreements/{{ r.id }} · same version as deployed</span>
       {% else %}<span class="text-muted">agreements/{{ r.id }}</span>{% endif %}
       {% if r.editor %}<br><span class="text-muted" style="font-size: var(--text-xs)">{{ r.editor.user }} ({{ r.editor.party }}) is editing since {{ r.editor.since | hhmm }}</span>{% endif %}</td>
     <td>{% if r.digest %}<span class="digest">{{ r.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
@@ -45,7 +27,7 @@
       {% set frozen = r.deploying and r.deploying.busy %}
       <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm" {% if frozen %}disabled title="being deployed"{% elif r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Edit</button></form>
       {% if frozen %}<button class="btn btn--ghost btn--sm" disabled title="being deployed">Sign</button>{% else %}<a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/sign">Sign</a>{% endif %}
-      {% set why = ("deploying " ~ current.name ~ " now") if busy else ("fix the plan first" if (r.error or r.issue) else ("sign it first" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("already running in the box" if r.running else ("being edited" if r.editor else ""))))) %}
+      {% set why = ("deploying " ~ current.name ~ " now") if busy else ("fix the plan first" if (r.error or r.issue) else ("sign it first" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("already deployed" if (r.selected and deployed.trusted) else ("being edited" if r.editor else ""))))) %}
       <form method="post" action="/a/{{ r.id }}/deploy" class="inline" data-busy="Deploying {{ r.plan_id }}: making the branch and pushing it. A few seconds." data-confirm="This deploys {{ r.plan_id }}: a branch with only this plan is pushed and a pull request opened; the signature check merges it and the box is released with it. Continue?"><button class="btn btn--primary btn--sm" {% if why %}disabled title="{{ why }}"{% endif %}>Deploy</button></form>
       <form method="post" action="/a/{{ r.id }}/delete" class="inline" data-confirm="Delete {{ r.plan_id }}? The folder agreements/{{ r.id }} and its history are removed; a deployed copy in plan/ stays. This cannot be undone."><button class="btn btn--ghost btn--sm" {% if frozen %}disabled title="being deployed"{% elif r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Delete</button></form>
     </td>

@@ -7,18 +7,6 @@
 <h1>Sign</h1>
 <p class="lead">The digest below is the fingerprint of this version's files. Each party signs that fingerprint with its own private key; the box checks the signature with the public key it holds for that party. The private key never leaves your machine.</p>
 {% if view %}
-{% if key_push is defined and key_push %}
-<div class="notice deploy-result" style="margin-bottom: var(--space-8)">
-  {% if key_push.error %}
-  <p>The {{ key_party }} key was not submitted: <span class="mono">{{ key_push.error }}</span>.</p>
-  {% elif key_push.unchanged and not key_push.pr_url %}
-  <p>A branch for this {{ key_party }} key already exists (<span class="mono">{{ key_push.branch }}</span>){% if key_push.compare_url %}: <a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">open its pull request</a>{% endif %}. The status line below follows it.</p>
-  {% else %}
-  <p>The {{ key_party }} key is submitted: {% if key_push.pr_url %}<a class="link" href="{{ key_push.pr_url }}" target="_blank" rel="noopener">{{ key_push.pr_url }}</a>{% elif key_push.compare_url %}<a class="link" href="{{ key_push.compare_url }}" target="_blank" rel="noopener">open the pull request</a>{% else %}branch <span class="mono">{{ key_push.branch }}</span>{% endif %}. The check merges it within a minute and production trusts it then; the box takes it with the next plan you sign with it and deploy. The status line below follows it; sign once it says trusted.</p>
-  {% endif %}
-</div>
-</div>
-{% endif %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
 
 <div class="stack">
