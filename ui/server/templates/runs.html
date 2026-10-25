@@ -17,6 +17,14 @@
         <tr><th>Credentials</th><td>{% if pre.ok %}<span class="badge badge--ok">lab.token and logger.key found</span>{% else %}{% for m in pre.missing %}<span class="badge badge--danger">missing {{ m }}</span><br>{% endfor %}{% endif %}</td></tr>
       </table>
       {% else %}<p class="form-message error">Release pins not found: {{ pre.missing | join(", ") }}</p>{% endif %}
+      <details class="info" style="margin-top: var(--space-4)">
+        <summary>Check the box independently (attestation)</summary>
+        <div class="info-body">
+          <p class="explain">The manifest is what the box says about itself. Attestation is the hardware's signed statement of the same thing. The auditor's own check, from <span class="mono">static/</span>, with values approved independently, never copied from the box:</p>
+<pre class="cmd">uv run python -m auditor.baked --folder ../plan pin-identity --release deploy/tinfoil/audit/release.json \
+    --token-file /absolute/path/auditor.token --output /tmp/anchor.json</pre>
+        </div>
+      </details>
       {% if not pre.ok %}
       <details class="info" style="margin-top: var(--space-4)">
         <summary>Where the credentials come from</summary>
@@ -32,16 +40,10 @@
     <div class="card-header">Input</div>
     <div class="card-body">
       <form method="post" action="/runs/start" id="run-form"></form>
-      <p class="explain">Which records go into this run. You choose here; the plan does not filter. If the plan pins an input scope (agents and a time window), the box still refuses records outside it.</p>
+      <p class="explain">Which recorded sessions go into this run. You choose here; the plan does not filter. If the plan pins an input scope (agents and a time window), the box still refuses records outside it.</p>
       <div class="sources">
         <div class="src">
-          <label class="src-head"><input type="radio" name="source" value="transcript" form="run-form" {% if source != "sessions" %}checked{% endif %}> <span class="src-title">A test transcript</span> <span class="src-sub">from <span class="mono">plan/tests/transcripts/</span>, written to fit the plan's scope</span></label>
-          <div class="pick">
-            {% for t in transcripts %}<label class="choice"><input type="radio" name="transcript" value="{{ t }}" form="run-form" {% if loop.first %}checked{% endif %}> <span class="mono">{{ t }}</span></label>{% endfor %}
-          </div>
-        </div>
-        <div class="src">
-          <label class="src-head"><input type="radio" name="source" value="sessions" form="run-form" {% if source == "sessions" %}checked{% endif %} {% if not all_count %}disabled{% endif %}> <span class="src-title">Recorded sessions</span> <span class="src-sub">from the <a class="link" href="/logs">Logs</a> page, as the proxy recorded them{% if not all_count %} · none on disk yet{% endif %}</span></label>
+          <label class="src-head"><input type="hidden" name="source" value="sessions" form="run-form"><span class="src-title">Recorded sessions</span> <span class="src-sub">from the <a class="link" href="/logs">Logs</a> page, as the proxy recorded them{% if not all_count %} · none on disk yet{% endif %}</span></label>
           {% if all_count %}
           <form method="get" action="/runs" class="window">
             <input type="hidden" name="source" value="sessions">

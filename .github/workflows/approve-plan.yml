@@ -38,14 +38,32 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
           uv sync --project static --locked
           PYTHONPATH=static static/.venv/bin/python static/deploy/check_plan_pr.py --base "$BASE_SHA" --head "$HEAD_SHA"
-      - name: Merge only the verified head under repository protection
+      - name: Put the verified plan on top of production as it is now, then merge
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
+          # Production may have moved since the pull request was opened (a release wrote new
+          # pins, another plan or a key landed). The newest production always wins: the
+          # verified plan/ is re-created on its tip, checked again there, and that is merged.
+          git fetch --quiet origin "$BASE_REF"
+          TIP=$(git rev-parse FETCH_HEAD)
+          if [ "$TIP" != "$BASE_SHA" ]; then
+            echo "production moved from $BASE_SHA to $TIP; re-basing the plan on it"
+            git checkout --quiet --detach "$TIP"
+            git rm -r --quiet plan
+            git checkout --quiet "$HEAD_SHA" -- plan
+            git -c user.name="AIAB plan check" -c user.email="aiab-plan-check@users.noreply.github.com" \
+              commit --quiet -m "Deploy plan (same files, re-based on production $TIP)"
+            HEAD_SHA=$(git rev-parse HEAD)
+            PYTHONPATH=static static/.venv/bin/python static/deploy/check_plan_pr.py --base "$TIP" --head "$HEAD_SHA"
+            git push --quiet --force origin "HEAD:refs/heads/$HEAD_REF"
+            BASE_SHA=$TIP
+          fi
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BASE_REF" --jq .object.sha)" = "$BASE_SHA"
           gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --match-head-commit "$HEAD_SHA" --squash
           # The merge is a push to production; release.yml picks it up and runs the build itself.

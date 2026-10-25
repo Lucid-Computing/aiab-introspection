@@ -497,14 +497,25 @@ def for_agreement(settings: Settings, agreement_id: str) -> Settings | None:
     return replace(settings, plan_dir=folder)
 
 
+def deployed_plan(settings: Settings) -> dict[str, Any]:
+    """The deploy slot, plan/: what was deployed, read only. Changes reach it only through a
+    merged plan pull request and a pull of the checkout, never through this UI."""
+    try:
+        view = load_plan_view(settings)
+        return {"plan_id": view.plan_id, "digest": view.digest, "state": view.state, "error": None}
+    except Exception as exc:  # noqa: BLE001 - a broken deploy slot is shown, not raised
+        return {"plan_id": "plan", "digest": None, "state": None, "error": str(exc)}
+
+
 def list_agreements(settings: Settings) -> list[dict[str, Any]]:
-    """The deploy slot first, then every folder under agreements/."""
+    """Every folder under agreements/, the editable ones. The deploy slot is not an
+    agreement; see deployed_plan()."""
     rows = []
     try:
         selected = file_digest(bundle_files(settings.plan_dir))
     except AuditError:
         selected = None
-    candidates = [("plan", settings.plan_dir)]
+    candidates = []
     if settings.agreements_dir.is_dir():
         candidates += [(f.name, f) for f in sorted(settings.agreements_dir.iterdir()) if f.is_dir()]
     for agreement_id, _folder in candidates:
@@ -517,8 +528,9 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "digest": view.digest,
                     "state": view.state,
                     "signed": view.signed_by_both,
-                    "selected": agreement_id == "plan" or view.digest == selected,
+                    "selected": view.digest == selected,  # same files as the deploy slot
                     "error": None,
+                    "issue": view.issue,
                 }
             )
         except Exception as exc:  # noqa: BLE001 - one broken folder must not hide the others
@@ -529,13 +541,11 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "digest": None,
                     "state": f"does not load: {type(exc).__name__}",
                     "signed": False,
-                    "selected": agreement_id == "plan",
+                    "selected": False,
                     "error": str(exc),
+                    "issue": None,
                 }
             )
-    # The deploy slot is listed on its own only when no agreement folder is its source.
-    if any(r["id"] != "plan" and r["selected"] for r in rows):
-        rows = [r for r in rows if r["id"] != "plan"]
     return rows
 
 
@@ -608,20 +618,6 @@ def new_agreement(
     return [], plan_id
 
 
-def deploy_agreement(settings: Settings, agreement_id: str, actor: dict[str, str]) -> str | None:
-    """Select an agreement for deployment: copy its folder into plan/, the baked folder."""
-    from server.publish import copy_into_plan
-
-    source_settings = for_agreement(settings, agreement_id)
-    if source_settings is None or agreement_id == "plan":
-        return "unknown agreement"
-    copy_into_plan(source_settings.plan_dir, settings.plan_dir)  # same copy the push uses
-    record_change(
-        source_settings, actor, "deploy", "deployment", "selected for deployment: copied into plan/"
-    )
-    return None
-
-
 def delete_agreement(settings: Settings, agreement_id: str) -> str | None:
     """Remove an agreement folder; never the deploy slot or the agreement it was made from."""
     import shutil
@@ -631,14 +627,7 @@ def delete_agreement(settings: Settings, agreement_id: str) -> str | None:
     target = for_agreement(settings, agreement_id)
     if target is None:
         return "unknown agreement"
-    try:
-        selected = file_digest(bundle_files(settings.plan_dir))
-        own = file_digest(bundle_files(target.plan_dir))
-    except AuditError:
-        selected, own = None, None
-    if selected and own == selected:
-        return "this agreement is selected for deployment; deploy another one first"
-    shutil.rmtree(target.plan_dir)
+    shutil.rmtree(target.plan_dir)  # the deployed copy, if any, stays in plan/ and in git
     return None
 
 

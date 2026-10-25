@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -289,3 +290,25 @@ def push_key_change(
         except RuntimeError:
             pass
     return result
+
+
+# ---- the checkout follows its remote branch: after a plan merges and the release writes new
+#      pins, the deployed plan shown on the Agreements page is current within a minute.
+
+
+def start_auto_pull(repo: Path, every: int = 60) -> None:
+    """Fast-forward the checkout to its remote branch, every ``every`` seconds, only when
+    nothing is modified locally (agreement drafts are git-ignored, so normally nothing is)."""
+
+    def loop() -> None:
+        while True:
+            try:
+                if not _git(repo, "status", "--porcelain"):
+                    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+                    _git(repo, "fetch", "--quiet", "origin", branch)
+                    _git(repo, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
+            except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
+                log.warning("auto-pull: %s", str(exc)[-200:])
+            time.sleep(every)
+
+    threading.Thread(target=loop, daemon=True, name="auto-pull").start()

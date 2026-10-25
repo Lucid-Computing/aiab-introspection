@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% set active = "agreements" %}
 {% block title %}Sign · AIAB agreement{% endblock %}
+{% block head %}{% if keys and keys.busy %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/agreements" class="link">← Agreements</a>{% if view %} · <a href="{{ base }}/plan" class="link">{{ view.plan_id }}</a>{% endif %}</p>
 <h1>Sign</h1>
@@ -58,6 +59,12 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
     </div>
     <div class="card-body">
       <p class="explain keyline"><span class="text-muted">Public key on file for the {{ party }}</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span></p>
+      {% set k = keys.parties[party] if keys else None %}
+      {% if k %}
+      <p class="explain keyline"><span class="text-muted">On production and in the box</span> <span class="selected-label {{ k.tone }}">{{ k.label }}</span>{% if k.busy %} <span class="spinner spinner--sm"></span>{% endif %}
+        {% if k.pr %}<span class="text-muted" style="font-size: var(--text-xs)">· <a class="link" href="{{ k.pr.url }}" target="_blank" rel="noopener">#{{ k.pr.number }}</a>{% if k.check %} · <a class="link" href="{{ k.check.url }}" target="_blank" rel="noopener">check</a>{% endif %}{% if k.release %} · <a class="link" href="{{ k.release.url }}" target="_blank" rel="noopener">release</a>{% endif %}</span>{% endif %}</p>
+      {% if k.production and k.production != k.ui %}<p class="explain keyline"><span class="text-muted">Production trusts</span> <span class="mono">{{ k.production }}</span></p>{% endif %}
+      {% endif %}
       {% if s.status == 'invalid' %}<p class="explain">The stored signature was made for a different version of the plan, or with a different key, so it no longer counts. The {{ party }} needs to sign this version.</p>{% endif %}
       {% if s.signature and s.status == 'ok' %}<p class="explain keyline"><span class="text-muted">{{ "Your signature" if user.party == party else "Signature of the " ~ party }}</span> <span class="mono" style="word-break: break-all">{{ s.signature }}</span></p>{% endif %}
       {% if user.party == party %}

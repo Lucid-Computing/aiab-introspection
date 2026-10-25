@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote, urlsplit
 
@@ -15,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from server import deploystatus, plan_chat, proxylogs, publish, runs
+from server import deploystatus, editing, plan_chat, proxylogs, publish, runs
 from server import plan_view as pv
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
@@ -29,7 +31,12 @@ signer = SessionSigner(settings.session_secret)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of the proxy fresh
+    asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
+    refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
+    if settings.auto_pull:
+        publish.start_auto_pull(settings.git_dir)  # the deployed plan shown is the merged one
     yield
+    refresher.cancel()
 
 
 app = FastAPI(
@@ -133,6 +140,9 @@ def md(text: str) -> Markup:
 
 
 templates.env.filters["preview"] = preview
+templates.env.filters["hhmm"] = lambda t: __import__("time").strftime(
+    "%H:%M", __import__("time").localtime(t)
+)
 templates.env.filters["md"] = md
 templates.env.tests["long"] = is_long
 CHANGE_KINDS = {  # filter name -> history "kind" values it covers
@@ -252,6 +262,33 @@ def saved(actor: dict[str, str] | None) -> None:
         publish.schedule_drafts_push(settings.git_dir, actor)
 
 
+_locks: dict[str, asyncio.Lock] = {}
+
+
+def _lock(aid: str) -> asyncio.Lock:
+    """Saves on one agreement happen one at a time: read the version, check it, write."""
+    return _locks.setdefault(aid, asyncio.Lock())
+
+
+def _held(aid: str, actor: dict) -> str | None:
+    """Someone else is editing: a save from anyone else is refused."""
+    other = editing.blocked_by(aid, actor)
+    return editing.describe(other) + ". Your change was not saved." if other else None
+
+
+def _stale(view: pv.PlanView, expect: str) -> str | None:
+    """Several people edit the same agreement: a save made from a page that showed an
+    older version is refused instead of silently overwriting the newer one."""
+    if not expect or not view.digest or expect == view.digest:
+        return None
+    last = view.history[0] if view.history else None
+    who = f" by {last['user']} ({last['party']})" if last else ""
+    return (
+        f"Someone else changed this agreement{who} since you opened the page, so your"
+        " change was not saved. Reload, look at the new version, then apply your change."
+    )
+
+
 def load_view(target: Settings) -> tuple[pv.PlanView | None, str | None]:
     try:
         return pv.load_plan_view(target), None
@@ -259,10 +296,21 @@ def load_view(target: Settings) -> tuple[pv.PlanView | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
-def agreement(request: Request, aid: str) -> tuple[Settings | None, Response | None]:
-    """Resolve an agreement id, or the redirect to send instead."""
+READ_ONLY = (
+    "The deployed plan is read only: it is what the box runs. Edit, sign and deploy the"
+    " agreement it was made from, under agreements/."
+)
+
+
+def agreement(
+    request: Request, aid: str, write: bool = False
+) -> tuple[Settings | None, Response | None]:
+    """Resolve an agreement id, or the redirect to send instead. With ``write``, the deploy
+    slot (id "plan") is refused: every change happens in an agreement folder."""
     if user_of(request) is None:
         return None, to_login(request)
+    if write and aid == "plan":
+        return None, back("/agreements", err=READ_ONLY)
     target = pv.for_agreement(settings, aid)
     if target is None:
         return None, back("/agreements", err=f"No agreement called {aid}")
@@ -391,27 +439,76 @@ async def logs_sync(request: Request) -> Response:
 async def agreements(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
+    return await _agreements_page(request)
+
+
+async def _agreements_page(request: Request, **extra) -> Response:
+    """Agreements (editable, under agreements/), the deployed plan (read only, plan/), the
+    box, and the deployment in flight if there is one."""
+    deployed = pv.deployed_plan(settings)
+    box = await box_status(settings.box_url, deployed.get("digest") or "")
     rows = pv.list_agreements(settings)
-    selected = next((r for r in rows if r["id"] == "plan"), None)
-    box = await box_status(settings.box_url, selected["digest"] if selected else "")
-    return render(request, "agreements.html", rows=rows, box=box, **await _deployment(rows, box))
+    box_digest = (box.get("manifest") or {}).get("plan_digest")
+    current, keys = await asyncio.gather(_current_deployment(box), _keys(box))
+    for r in rows:
+        r["editor"] = editing.holder(r["id"])
+        r["running"] = bool(r["digest"]) and r["digest"] == box_digest
+        r["deploying"] = bool(current) and current["digest"] == r["digest"] and current["state"]
+    return render(
+        request,
+        "agreements.html",
+        rows=rows,
+        deployed=deployed,
+        box=box,
+        keys=keys,
+        current=current,
+        busy=bool(current and current["state"] and current["state"]["busy"]),
+        **extra,
+    )
 
 
-async def _deployment(rows: list[dict], box: dict) -> dict:
-    """The selected version's pull request, check and release, for the Agreements page."""
-    chosen = next((r for r in rows if r["selected"] and r["digest"]), None)
-    if chosen is None:
-        return {"deploy": None}
-    state = await deploystatus.status(settings, chosen["digest"], bool(box.get("plan_matches")))
-    if state is None and box.get("plan_matches"):
-        state = {**deploystatus.NO_PR, "label": "deployed · running in the box", "tone": "ok"}
-    return {
-        "deploy": state,
-        "deploy_name": chosen["plan_id"],
-        "deploy_digest": chosen["digest"],
-        "deploy_label": (state or deploystatus.NO_PR)["label"],
-        "deploy_tone": (state or deploystatus.NO_PR)["tone"],
-    }
+def _deploy_marker() -> Path:
+    return settings.agreements_dir / ".deploying.json"
+
+
+def _remember_deploy(aid: str, plan_id: str, digest: str) -> None:
+    """The deployment in flight, so every visitor's page can follow it."""
+    try:
+        settings.agreements_dir.mkdir(parents=True, exist_ok=True)
+        _deploy_marker().write_text(
+            json.dumps({"id": aid, "name": plan_id, "digest": digest}), encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+async def _current_deployment(box: dict) -> dict | None:
+    """The last deployment started from this UI, with its live state from GitHub.
+    None when there was none, or when its pull request was closed without merging."""
+    try:
+        marker = json.loads(_deploy_marker().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    box_digest = (box.get("manifest") or {}).get("plan_digest")
+    state = await deploystatus.status(settings, marker["digest"], marker["digest"] == box_digest)
+    if state and state["pr"]["state"] == "closed":
+        return None
+    return {**marker, "state": state}
+
+
+def _ui_keys() -> dict[str, str | None]:
+    """The party keys this UI verifies signatures against (its trust file)."""
+    try:
+        trust = json.loads(settings.trust_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        trust = {}
+    return {party: trust.get(f"{party}_key") for party in PARTIES}
+
+
+async def _keys(box: dict) -> dict:
+    """Each party's key here, on production and in the box, with a verdict."""
+    manifest = box.get("manifest") or {}
+    return await deploystatus.keys(settings, _ui_keys(), manifest.get("parties"))
 
 
 @app.get("/agreements/new")
@@ -487,7 +584,6 @@ async def runs_index(request: Request) -> Response:
         request,
         "runs.html",
         pre=pre,
-        transcripts=runs.transcripts(settings),
         sessions=sessions,
         all_count=len(all_sessions),
         whos=whos,
@@ -519,7 +615,7 @@ async def runs_start(request: Request) -> Response:
         return back("/runs", err="Cannot start: " + "; ".join(pre["missing"]))
     form = await request.form()
     try:
-        if form.get("source") == "sessions":
+        if True:  # the input is always recorded sessions; test transcripts are gone
             chosen = set(form.getlist("session"))
             picked = [
                 s for s in proxylogs.sessions(proxylogs.load_records(settings)) if s.id in chosen
@@ -529,8 +625,6 @@ async def runs_start(request: Request) -> Response:
             records = proxylogs.to_box_records([r for s in picked for r in s.requests])
             label = f"{len(picked)} recorded session(s), {len(records)} records"
             run_id = runs.start_run(settings, user, records=records, label=label)
-        else:
-            run_id = runs.start_run(settings, user, transcript=str(form.get("transcript", "")))
     except (ValueError, OSError) as exc:
         return back("/runs", err=str(exc))
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
@@ -548,11 +642,8 @@ async def run_page(request: Request, run_id: str) -> Response:
 
 @app.get("/attest")
 async def attest(request: Request) -> Response:
-    if user_of(request) is None:
-        return to_login(request)
-    view, error = load_view(settings)
-    box = await box_status(settings.box_url, view.digest if view else "")
-    return render(request, "attest.html", view=view, error=error, box=box)
+    """The box's details now live on the Agreements page."""
+    return RedirectResponse("/agreements", status_code=303)
 
 
 @app.get("/plan")
@@ -570,7 +661,7 @@ async def plan(request: Request, aid: str) -> Response:
         return redirect
     view, error = load_view(target)
     q = request.query_params
-    edit = q.get("edit") == "1"
+    edit, editor = _edit_mode(request, aid, q.get("edit") == "1")
     # The change log can get long: filter by party or kind, show ten at a time.
     who, kind, show_all = q.get("who", ""), q.get("kind", ""), q.get("changes") == "all"
     history = view.history if view else []
@@ -590,6 +681,7 @@ async def plan(request: Request, aid: str) -> Response:
     return render(
         request,
         "plan.html",
+        editor=editor,
         view=view,
         error=error,
         edit=edit,
@@ -629,7 +721,12 @@ async def plan_chat_action(request: Request, aid: str) -> Response:
         if not isinstance(payload, dict):
             raise plan_chat.ChatError("Expected a JSON object.")
         if request.url.path.endswith("/apply"):
-            digest = plan_chat.apply(target, payload, actor)
+            if aid == "plan":
+                raise plan_chat.ChatError(READ_ONLY, 403)
+            if other := editing.blocked_by(aid, actor):
+                raise plan_chat.ChatError(editing.describe(other) + ".", 409)
+            async with _lock(aid):
+                digest = plan_chat.apply(target, payload, actor)
             result = {"message": "Changes saved as a draft.", "digest": digest}
             try:
                 saved(actor)
@@ -658,10 +755,14 @@ async def plan_chat_action(request: Request, aid: str) -> Response:
 
 @app.post("/a/{aid}/plan/edit")
 async def start_editing(request: Request, aid: str) -> Response:
-    """Entering edit mode removes existing signatures: the next save is a new version."""
-    target, redirect = agreement(request, aid)
+    """Entering edit mode takes the agreement for this person and removes existing
+    signatures: the next save is a new version."""
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
+    other = editing.acquire(aid, user_of(request) or {})
+    if other:
+        return back(f"/a/{aid}/plan", err=editing.describe(other) + ". Try again later.")
     removed = pv.delete_signatures(target, user_of(request))
     saved(user_of(request))
     note = f" {removed} signature file(s) removed." if removed else ""
@@ -672,45 +773,74 @@ async def start_editing(request: Request, aid: str) -> Response:
     return back(f"{where}?edit=1", msg="Editing. Every save makes a new version." + note)
 
 
+@app.post("/a/{aid}/plan/finish")
+async def finish_editing(request: Request, aid: str) -> Response:
+    """Give the agreement back so someone else can edit it."""
+    _, redirect = agreement(request, aid, write=True)
+    if redirect:
+        return redirect
+    editing.release(aid, user_of(request) or {})
+    return back(f"/a/{aid}/plan", msg="Finished editing.")
+
+
 @app.post("/a/{aid}/deploy")
 async def deploy(request: Request, aid: str) -> Response:
     """Select for deployment: copy into plan/, push a plan-only branch, open the pull request."""
-    target, redirect = agreement(request, aid)
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
     actor = user_of(request) or {}
-    view, _ = load_view(target)
-    if view is None or not view.signed_by_both:
+    view, error = load_view(target)
+    if view is None:
+        return back("/agreements", err=f"{aid} does not load: {error}. Fix it first.")
+    if view.issue:
+        return back(
+            "/agreements",
+            err=f"The box would reject {aid}: {view.issue} ({view.issue_where}). Fix it first.",
+        )
+    if not view.signed_by_both:
         return back(
             "/agreements",
             err=f"{aid} is not signed by both parties, so the signature check on the pull"
             " request would reject it. Sign it first, then deploy.",
         )
-    problem = pv.deploy_agreement(settings, aid, actor)
-    if problem:
-        return back("/agreements", err=problem)
+    box = await box_status(settings.box_url, "")
+    keys = await _keys(box)
+    if not keys["ready"]:
+        why = "; ".join(f"{p}: {i['label']}" for p, i in keys["parties"].items())
+        return back(
+            "/agreements",
+            err="The signatures would not verify on production, because the keys are not"
+            f" trusted there yet ({why}). Submit the keys on the Sign screen and wait.",
+        )
+    current = await _current_deployment(box)
+    if (
+        current
+        and current["state"]
+        and current["state"]["busy"]
+        and current["digest"] != view.digest
+    ):
+        return back(
+            "/agreements",
+            err=f"{current['name']} is being deployed right now ({current['state']['label']})."
+            " Wait for it to finish before deploying another plan.",
+        )
+    if editing.holder(aid):
+        return back("/agreements", err=editing.describe(editing.holder(aid)) + ". Deploy later.")
+    pv.record_change(target, actor, "deploy", "deployment", "pushed for deployment")
     digest = view.digest
     pushed = publish.push_deploy(
         settings.git_dir, target.plan_dir, aid, digest, actor, base=settings.deploy_base
     )
+    if not pushed.error:
+        _remember_deploy(aid, view.plan_id, digest)
     saved(actor)  # the deploy is recorded in the agreement's change log
-    rows = pv.list_agreements(settings)
-    selected = next((r for r in rows if r["id"] == "plan"), None)
-    box = await box_status(settings.box_url, selected["digest"] if selected else "")
-    return render(
-        request,
-        "agreements.html",
-        rows=rows,
-        box=box,
-        pushed=pushed,
-        deployed=aid,
-        **await _deployment(rows, box),
-    )
+    return await _agreements_page(request, pushed=pushed, deployed_name=view.plan_id)
 
 
 @app.post("/a/{aid}/delete")
 async def delete_agreement(request: Request, aid: str) -> Response:
-    target, redirect = agreement(request, aid)
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
     problem = pv.delete_agreement(settings, aid)
@@ -729,7 +859,7 @@ async def plan_step(request: Request, aid: str, name: str) -> Response:
     step = view.step(name) if view else None
     if view and step is None:
         return back(f"/a/{aid}/plan", err=f"No step named {name}")
-    edit = request.query_params.get("edit") == "1"
+    edit, editor = _edit_mode(request, aid, request.query_params.get("edit") == "1")
     return render(
         request,
         "step.html",
@@ -737,66 +867,102 @@ async def plan_step(request: Request, aid: str, name: str) -> Response:
         error=error,
         step=step,
         edit=edit,
+        editor=editor,
         base=f"/a/{aid}",
         aid=aid,
     )
 
 
+def _edit_mode(request: Request, aid: str, wanted: bool) -> tuple[bool, dict | None]:
+    """Edit mode belongs to the lease holder. Returns (edit, the other holder or None)."""
+    if aid == "plan":
+        return False, None
+    actor = user_of(request) or {}
+    other = editing.blocked_by(aid, actor)
+    if other:
+        return False, other
+    if wanted and editing.acquire(aid, actor):
+        return False, editing.holder(aid)
+    return wanted, None
+
+
 @app.post("/a/{aid}/plan/step/{name}/settings")
 async def save_settings(request: Request, aid: str, name: str) -> Response:
-    target, redirect = agreement(request, aid)
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
-    view, error = load_view(target)
-    here = f"/a/{aid}/plan/step/{name}?edit=1"
-    if view is None:
-        return back(f"/a/{aid}/plan", err=error or "plan does not load")
-    if view.frozen:
-        return back(here, err=FROZEN)
-    form = {k: str(v) for k, v in (await request.form()).items()}
-    errors = pv.save_step_settings(target, name, form, user_of(request) or {})
-    if errors:
-        return back(here, err="; ".join(errors))
-    saved(user_of(request))
-    return back(here, msg="Settings saved. This is a new version.")
+    async with _lock(aid):
+        view, error = load_view(target)
+        here = f"/a/{aid}/plan/step/{name}?edit=1"
+        if view is None:
+            return back(f"/a/{aid}/plan", err=error or "plan does not load")
+        if view.frozen:
+            return back(here, err=FROZEN)
+        form = {k: str(v) for k, v in (await request.form()).items()}
+        if held := _held(aid, user_of(request) or {}):
+            return back(here, err=held)
+        if stale := _stale(view, form.pop("expect", "")):
+            return back(here, err=stale)
+        errors = pv.save_step_settings(target, name, form, user_of(request) or {})
+        if errors:
+            return back(here, err="; ".join(errors))
+        saved(user_of(request))
+        return back(here, msg="Settings saved. This is a new version.")
 
 
 @app.post("/a/{aid}/plan/step/{name}/code")
-async def save_code(request: Request, aid: str, name: str, source: str = Form(...)) -> Response:
-    target, redirect = agreement(request, aid)
+async def save_code(
+    request: Request, aid: str, name: str, source: str = Form(...), expect: str = Form("")
+) -> Response:
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
-    view, error = load_view(target)
-    here = f"/a/{aid}/plan/step/{name}?edit=1"
-    if view is None:
-        return back(f"/a/{aid}/plan", err=error or "plan does not load")
-    if view.frozen:
-        return back(here, err=FROZEN)
-    problem = pv.save_function(target, name, source, user_of(request) or {})
-    if problem:
-        return back(here, err=problem)
-    saved(user_of(request))
-    return back(here, msg=f"{name}() saved. This is a new version.")
+    async with _lock(aid):
+        view, error = load_view(target)
+        here = f"/a/{aid}/plan/step/{name}?edit=1"
+        if view is None:
+            return back(f"/a/{aid}/plan", err=error or "plan does not load")
+        if view.frozen:
+            return back(here, err=FROZEN)
+        if held := _held(aid, user_of(request) or {}):
+            return back(here, err=held)
+        if stale := _stale(view, expect):
+            return back(here, err=stale)
+        problem = pv.save_function(target, name, source, user_of(request) or {})
+        if problem:
+            return back(here, err=problem)
+        saved(user_of(request))
+        return back(here, msg=f"{name}() saved. This is a new version.")
 
 
 @app.post("/a/{aid}/plan/prompt/{prompt_id}")
 async def save_prompt(
-    request: Request, aid: str, prompt_id: str, text: str = Form(...), step: str = Form("classify")
+    request: Request,
+    aid: str,
+    prompt_id: str,
+    text: str = Form(...),
+    step: str = Form("classify"),
+    expect: str = Form(""),
 ) -> Response:
-    target, redirect = agreement(request, aid)
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
-    view, error = load_view(target)
-    here = f"/a/{aid}/plan/step/{step}?edit=1"
-    if view is None:
-        return back(f"/a/{aid}/plan", err=error or "plan does not load")
-    if view.frozen:
-        return back(here, err=FROZEN)
-    problem = pv.save_prompt(target, prompt_id, text, user_of(request) or {})
-    if problem:
-        return back(here, err=problem)
-    saved(user_of(request))
-    return back(here, msg="Prompt saved. This is a new version.")
+    async with _lock(aid):
+        view, error = load_view(target)
+        here = f"/a/{aid}/plan/step/{step}?edit=1"
+        if view is None:
+            return back(f"/a/{aid}/plan", err=error or "plan does not load")
+        if view.frozen:
+            return back(here, err=FROZEN)
+        if held := _held(aid, user_of(request) or {}):
+            return back(here, err=held)
+        if stale := _stale(view, expect):
+            return back(here, err=stale)
+        problem = pv.save_prompt(target, prompt_id, text, user_of(request) or {})
+        if problem:
+            return back(here, err=problem)
+        saved(user_of(request))
+        return back(here, msg="Prompt saved. This is a new version.")
 
 
 @app.get("/a/{aid}/plan/bundle.zip")
@@ -823,11 +989,14 @@ async def plan_bundle(request: Request, aid: str) -> Response:
 
 @app.get("/a/{aid}/sign")
 async def sign(request: Request, aid: str) -> Response:
-    target, redirect = agreement(request, aid)
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
     view, error = load_view(target)
-    return render(request, "sign.html", view=view, error=error, base=f"/a/{aid}", aid=aid)
+    keys = await _keys(await box_status(settings.box_url, ""))
+    return render(
+        request, "sign.html", view=view, error=error, base=f"/a/{aid}", aid=aid, keys=keys
+    )
 
 
 @app.post("/a/{aid}/sign/upload")
@@ -838,7 +1007,7 @@ async def sign_upload(
     signature: Annotated[str, Form()] = "",
 ) -> Response:
     # The default keeps an empty paste from being a 422; the browser sends "" for an empty box.
-    target, redirect = agreement(request, aid)
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
     user = user_of(request)
@@ -857,7 +1026,7 @@ async def sign_upload(
 @app.post("/a/{aid}/sign/remove")
 async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()]) -> Response:
     """Re-sign: remove your own signature for this version, then the paste form comes back."""
-    target, redirect = agreement(request, aid)
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
     user = user_of(request)
@@ -877,7 +1046,7 @@ async def set_key(
     party: Annotated[str, Form()],
     public_key: Annotated[str, Form()] = "",
 ) -> Response:
-    target, redirect = agreement(request, aid)
+    target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
     user = user_of(request)

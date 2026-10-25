@@ -45,7 +45,7 @@ STEPS = (
     (
         "export",
         "Sign the test export",
-        "Takes the chosen transcript and signs it with the demo logger key, standing in for "
+        "Takes the chosen records and signs them with the demo logger key, standing in for "
         "the real logger. The box will refuse records without this evidence.",
     ),
     (
@@ -149,8 +149,6 @@ def preflight(settings: Settings) -> dict:
     for name in ("lab.token", "logger.key"):
         if not (settings.demo_keys_dir / name).is_file():
             missing.append(f"{name} in {settings.demo_keys_dir}")
-    if not transcripts(settings):
-        missing.append(f"a transcript in {settings.deployed_plan_dir / 'tests/transcripts'}")
     if release and plan_digest and release.get("plan_digest") != plan_digest:
         missing.append("deployed plan digest differs from release pins")
     return {"release": release, "missing": missing, "ok": not missing, "plan_digest": plan_digest}

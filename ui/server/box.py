@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
 import httpx
@@ -19,11 +21,20 @@ async def _get_json(base_url: str, path: str) -> tuple[dict[str, Any] | None, st
         return None, type(exc).__name__
 
 
+_recent: dict[str, tuple[float, tuple]] = {}
+
+
 async def box_status(base_url: str | None, local_digest: str) -> dict[str, Any]:
     if not base_url:
         return {"configured": False}
-    manifest, manifest_error = await _get_json(base_url, "/aiab/manifest")
-    health, health_error = await _get_json(base_url, "/aiab/health")
+    hit = _recent.get(base_url)
+    if hit and time.monotonic() - hit[0] < 10:
+        (manifest, manifest_error), (health, health_error) = hit[1]
+    else:
+        (manifest, manifest_error), (health, health_error) = await asyncio.gather(
+            _get_json(base_url, "/aiab/manifest"), _get_json(base_url, "/aiab/health")
+        )
+        _recent[base_url] = (time.monotonic(), ((manifest, manifest_error), (health, health_error)))
     box_plan = (manifest or {}).get("plan_digest")
     return {
         "configured": True,

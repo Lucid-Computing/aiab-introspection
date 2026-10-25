@@ -32,6 +32,7 @@ class Settings:
     demo_keys_dir: Path  # lab.token and logger.key for the live box, never in the repo
     release_file: Path  # the release pins the live box must match
     push_drafts: bool  # push agreement folders to the checkout's branch after each save
+    auto_pull: bool  # fast-forward the checkout to its remote branch every minute when clean
     logs_dir: Path  # downloaded proxy log segments, one folder
     proxy_url: str  # the logging proxy's address (its /_logs download API)
     proxy_key: str | None  # the "tester" key for that API; None means the Logs page is read-only
@@ -112,6 +113,7 @@ def load_settings() -> Settings:
         ).resolve(),
         release_file=release_file,
         push_drafts=env.get("AIAB_PUSH_DRAFTS", "").lower() in {"1", "true", "yes"},
+        auto_pull=env.get("AIAB_AUTO_PULL", "").lower() in {"1", "true", "yes"},
         logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
         proxy_url=env.get("AIAB_PROXY_URL", TEST_PROXY_URL).rstrip("/"),
         proxy_key=_proxy_key(env.get("AIAB_PROXY_KEY", "")),

@@ -220,11 +220,12 @@ def test_provider_errors_do_not_leak_key(draft, monkeypatch):
 
 
 def test_routes_require_login_origin_json_and_explicit_apply(draft, monkeypatch):
+    # The deploy slot (id "plan") is read only; chat edits an agreement folder.
     from server import app as web
 
     monkeypatch.setattr(web, "settings", draft)
     client = TestClient(web.app)
-    url = "/a/plan/plan/chat"
+    url = "/a/chat-test/plan/chat"
     assert client.post(url, json={}).status_code == 401
     cookie = web.signer.issue(Account("author", "lab", "Author", "unused"))
     client.cookies.set(web.COOKIE, cookie)
@@ -240,7 +241,7 @@ def test_routes_require_login_origin_json_and_explicit_apply(draft, monkeypatch)
         ).status_code
         == 413
     )
-    page = client.get("/a/plan/plan?edit=1")
+    page = client.get("/a/chat-test/plan?edit=1")
     assert page.status_code == 200 and "Apply to draft" in page.text
     assert "test-only-key" not in page.text
     candidate = chat.proposal(draft, changed(draft), digest(draft))
@@ -516,7 +517,7 @@ def test_push_scheduling_failure_does_not_report_failed_apply(draft, monkeypatch
     monkeypatch.setattr(web, "saved", failed_push)
     client = TestClient(web.app)
     client.cookies.set(web.COOKIE, web.signer.issue(Account("author", "lab", "Author", "unused")))
-    result = client.post("/a/plan/plan/chat/apply", json=candidate)
+    result = client.post("/a/chat-test/plan/chat/apply", json=candidate)
     assert result.status_code == 200
     assert result.json()["digest"] == digest(draft)
     assert "Draft saved" in result.json()["warning"]

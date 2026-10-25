@@ -1,12 +1,19 @@
-"""Where a deployment stands, read from GitHub: the pull request, its signature check, the
-release that follows the merge. The box's own state comes from box.py.
+"""Where things stand on GitHub and in the box, so the UI never claims more than it knows.
 
-Public repositories answer without a token, but only 60 times an hour per address, so the
-answer is cached for a short while and a token is used when one is around (GITHUB_TOKEN on
-the server, `gh auth token` on a laptop)."""
+Two questions, both answered from GitHub's API plus the box's manifest:
+
+* a plan version selected for deployment: its pull request, the signature check, the
+  release that follows the merge, and whether the box runs it (``status``);
+* a party's public key: the key this UI holds, the key production trusts, the key the box
+  trusts, and the pull request in between (``keys``).
+
+Public repositories answer without a token, but only 60 times an hour per address, so
+answers are cached for a short while and a token is used when one is around
+(GITHUB_TOKEN on the server, `gh auth token` on a laptop)."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import time
@@ -19,7 +26,13 @@ from server.config import Settings
 API = "https://api.github.com"
 RELEASE_WORKFLOW = "Release to the live box"
 TTL_SECONDS = 20
-_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_cache: dict[tuple, tuple[float, Any]] = {}
+
+# Every GitHub answer is kept and served at once; when it is older than TTL_SECONDS it is
+# refreshed behind the page, and a background loop refreshes stale answers on its own, so
+# a page load never waits for GitHub after the first time.
+_answers: dict[tuple, tuple[float, Any]] = {}
+_refreshing: set[tuple] = set()
 
 
 def _token() -> str | None:
@@ -33,97 +46,176 @@ def _token() -> str | None:
         return None
 
 
-async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None):
-    response = await client.get(API + path, params=params)
-    return response.json() if response.status_code == 200 else None
+def _client() -> httpx.AsyncClient:
+    headers = {"Accept": "application/vnd.github+json"}
+    token = _token()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return httpx.AsyncClient(timeout=6.0, headers=headers)
+
+
+async def _fetch(path: str, params: dict | None, raw: bool):
+    headers = {"Accept": "application/vnd.github.raw+json"} if raw else None
+    async with _client() as client:
+        response = await client.get(API + path, params=params, headers=headers)
+    if response.status_code != 200:
+        return None
+    return response.text if raw else response.json()
+
+
+async def _refresh(key: tuple, path: str, params: dict | None, raw: bool) -> None:
+    if key in _refreshing:
+        return
+    _refreshing.add(key)
+    try:
+        _answers[key] = (time.monotonic(), await _fetch(path, params, raw))
+    except (httpx.HTTPError, ValueError):
+        pass
+    finally:
+        _refreshing.discard(key)
+
+
+async def _get(client, path: str, params: dict | None = None, raw=False):
+    """The cached answer when there is one (refreshing it behind the page if it is old),
+    otherwise the live answer. ``client`` is unused and kept for the call sites."""
+    key = (path, tuple(sorted((params or {}).items())), raw)
+    hit = _answers.get(key)
+    if hit is None:
+        await _refresh(key, path, params, raw)
+        hit = _answers.get(key)
+        return hit[1] if hit else None
+    if time.monotonic() - hit[0] > TTL_SECONDS:
+        asyncio.ensure_future(_refresh(key, path, params, raw))
+    return hit[1]
+
+
+async def warm_up(settings: Settings) -> None:
+    """Fetch what every Agreements page needs, so the first load is fast too."""
+    if not settings.repo:
+        return
+    try:
+        await production_trust(settings)
+        await _get(
+            None,
+            f"/repos/{settings.repo}/pulls",
+            {"state": "all", "sort": "updated", "direction": "desc", "per_page": 40},
+        )
+    except (httpx.HTTPError, ValueError):
+        pass
+
+
+async def refresh_loop(every: float = 15.0) -> None:
+    """Keep every answer a page has ever asked for fresh, so pages load from memory."""
+    while True:
+        await asyncio.sleep(every)
+        now = time.monotonic()
+        for key, (at, _) in list(_answers.items()):
+            if now - at > TTL_SECONDS:
+                path, params, raw = key
+                await _refresh(key, path, dict(params), raw)
+
+
+def freshness() -> float | None:
+    """Seconds since the oldest answer on the page was fetched, or None before the first."""
+    if not _answers:
+        return None
+    return time.monotonic() - min(at for at, _ in _answers.values())
+
+
+def _run(run: dict) -> dict[str, Any]:
+    return {"status": run["status"], "conclusion": run["conclusion"], "url": run["html_url"]}
+
+
+async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) -> dict | None:
+    """The newest pull request whose head branch satisfies ``matches``, with its check run
+    (the pull_request or pull_request_target workflow on its head) and, once merged, the
+    release run that followed on the base branch."""
+    prs = (
+        await _get(
+            client,
+            f"/repos/{settings.repo}/pulls",
+            {"state": "all", "sort": "updated", "direction": "desc", "per_page": 40},
+        )
+        or []
+    )
+    pr = next((p for p in prs if matches(p["head"]["ref"])), None)
+    if pr is None:
+        return None
+    merged_at = pr.get("merged_at")
+    out: dict[str, Any] = {
+        "pr": {
+            "number": pr["number"],
+            "url": pr["html_url"],
+            "state": "merged" if merged_at else pr["state"],
+            "base": pr["base"]["ref"],
+            "branch": pr["head"]["ref"],
+        },
+        "check": None,
+        "release": None,
+    }
+    runs = (
+        await _get(
+            client,
+            f"/repos/{settings.repo}/actions/runs",
+            {"head_sha": pr["head"]["sha"], "per_page": 5},
+        )
+        or {}
+    )
+    check = next(
+        (
+            r
+            for r in runs.get("workflow_runs", [])
+            if r["event"] in ("pull_request", "pull_request_target")
+        ),
+        None,
+    )
+    if check:
+        out["check"] = _run(check)
+    if merged_at:
+        runs = (
+            await _get(
+                client,
+                f"/repos/{settings.repo}/actions/runs",
+                {"branch": pr["base"]["ref"], "event": "push", "per_page": 10},
+            )
+            or {}
+        )
+        release = next(
+            (
+                r
+                for r in runs.get("workflow_runs", [])
+                if r["name"] == RELEASE_WORKFLOW and r["created_at"] >= merged_at
+            ),
+            None,
+        )
+        if release:
+            out["release"] = _run(release)
+    return out
+
+
+# ---- a plan version ----------------------------------------------------------------------
 
 
 async def status(settings: Settings, digest: str, box_matches: bool) -> dict[str, Any] | None:
     """The deployment of one plan version, or None when no pull request exists for it."""
     if not digest or not settings.repo:
         return None
-    key = (settings.repo, digest)
-    hit = _cache.get(key)
-    if hit and hit[0] > time.monotonic():
-        return hit[1]
     suffix = "-" + digest[7:15]  # Deploy names its branch plan/<name>-<digest8>
-    headers = {"Accept": "application/vnd.github+json"}
-    token = _token()
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    out: dict[str, Any] = {"pr": None, "check": None, "release": None, "error": None}
+    out: dict[str, Any] | None = None
     try:
-        async with httpx.AsyncClient(timeout=6.0, headers=headers) as client:
-            prs = (
-                await _get(
-                    client,
-                    f"/repos/{settings.repo}/pulls",
-                    {"state": "all", "sort": "updated", "direction": "desc", "per_page": 30},
-                )
-                or []
+        async with _client() as client:
+            out = await _pull_request(
+                settings, client, lambda ref: ref.startswith("plan/") and ref.endswith(suffix)
             )
-            pr = next(
-                (
-                    p
-                    for p in prs
-                    if p["head"]["ref"].startswith("plan/") and p["head"]["ref"].endswith(suffix)
-                ),
-                None,
-            )
-            if pr is None:
-                _cache[key] = (time.monotonic() + TTL_SECONDS, out)
-                return None
-            merged_at = pr.get("merged_at")
-            out["pr"] = {
-                "number": pr["number"],
-                "url": pr["html_url"],
-                "state": "merged" if merged_at else pr["state"],
-                "base": pr["base"]["ref"],
-            }
-            runs = (
-                await _get(
-                    client,
-                    f"/repos/{settings.repo}/actions/runs",
-                    {"head_sha": pr["head"]["sha"], "per_page": 5},
-                )
-                or {}
-            )
-            check = next(
-                (r for r in runs.get("workflow_runs", []) if r["event"] == "pull_request_target"),
-                None,
-            )
-            if check:
-                out["check"] = _run(check)
-            if merged_at:
-                runs = (
-                    await _get(
-                        client,
-                        f"/repos/{settings.repo}/actions/runs",
-                        {"branch": pr["base"]["ref"], "event": "push", "per_page": 10},
-                    )
-                    or {}
-                )
-                release = next(
-                    (
-                        r
-                        for r in runs.get("workflow_runs", [])
-                        if r["name"] == RELEASE_WORKFLOW and r["created_at"] >= merged_at
-                    ),
-                    None,
-                )
-                if release:
-                    out["release"] = _run(release)
     except (httpx.HTTPError, ValueError, KeyError) as exc:
-        out["error"] = type(exc).__name__
+        out = {"pr": None, "check": None, "release": None, "error": type(exc).__name__}
+    if out is None or out.get("pr") is None:
+        return None
+    out.setdefault("error", None)
     out["box_matches"] = box_matches
     out["busy"] = _busy(out)
     out["label"], out["tone"] = _summary(out)
-    _cache[key] = (time.monotonic() + TTL_SECONDS, out)
     return out
-
-
-def _run(run: dict) -> dict[str, Any]:
-    return {"status": run["status"], "conclusion": run["conclusion"], "url": run["html_url"]}
 
 
 def _busy(out: dict[str, Any]) -> bool:
@@ -162,3 +254,102 @@ def _summary(out: dict[str, Any]) -> tuple[str, str]:
 
 
 NO_PR = {"label": "selected · no pull request found", "tone": "bad", "busy": False}
+
+
+# ---- the parties' keys --------------------------------------------------------------------
+
+
+async def production_trust(settings: Settings) -> dict[str, Any] | None:
+    """trust.json as it is on the deploy base branch: the keys the plan check verifies
+    signatures against, and the keys the next release puts into the box."""
+    text = None
+    try:
+        async with _client() as client:
+            text = await _get(
+                client,
+                f"/repos/{settings.repo}/contents/static/aiab/baked/trust.json",
+                {"ref": settings.deploy_base},
+                raw=True,
+            )
+    except httpx.HTTPError:
+        pass
+    try:
+        import json
+
+        return json.loads(text) if text else None
+    except ValueError:
+        return None
+
+
+async def keys(
+    settings: Settings, ui_keys: dict[str, str | None], box_keys: dict[str, str] | None
+) -> dict[str, Any]:
+    """Per party: the key this UI holds, the key production trusts, the key the box trusts,
+    the pull request in between, and a one-line verdict. ``ready`` says whether every
+    party's key is trusted on production, i.e. a plan signed with these keys passes the
+    check on its pull request."""
+    trust = await production_trust(settings)
+    out: dict[str, Any] = {
+        "parties": {},
+        "ready": False,
+        "busy": False,
+        "github": trust is not None,
+    }
+    for party, ui_key in ui_keys.items():
+        prod_key = (trust or {}).get(f"{party}_key")
+        box_key = (box_keys or {}).get(f"{party}_key")
+        info: dict[str, Any] = {
+            "ui": ui_key,
+            "production": prod_key,
+            "box": box_key,
+            "pr": None,
+            "check": None,
+            "release": None,
+        }
+        if trust is not None and ui_key != prod_key:
+            try:
+                async with _client() as client:
+                    found = await _pull_request(
+                        settings, client, lambda ref, p=party: ref.startswith(f"keys/{p}-")
+                    )
+            except (httpx.HTTPError, ValueError, KeyError):
+                found = None
+            if found:
+                info.update(found)
+        info["label"], info["tone"], info["busy"] = _key_summary(info, trust is not None)
+        out["parties"][party] = info
+    out["ready"] = trust is not None and all(
+        p["ui"] and p["ui"] == p["production"] for p in out["parties"].values()
+    )
+    out["busy"] = any(p["busy"] for p in out["parties"].values())
+    return out
+
+
+def _key_summary(info: dict[str, Any], github_ok: bool) -> tuple[str, str, bool]:
+    ui, prod, box = info["ui"], info["production"], info["box"]
+    pr, check, release = info["pr"], info["check"], info["release"]
+    if not ui:
+        return "no key on file here", "bad", False
+    if not github_ok:
+        return "could not read the trusted keys from GitHub", "bad", False
+    if ui == prod:
+        if box is None:
+            return "trusted on production", "ok", False
+        if box == prod:
+            return "trusted on production and by the box", "ok", False
+        return "trusted on production · the box takes it at the next release", "now", True
+    if pr is None:
+        return "not submitted to production yet · press Use this public key", "bad", False
+    if pr["state"] == "closed":
+        return f"pull request #{pr['number']} was closed · submit again", "bad", False
+    if pr["state"] == "open":
+        if check is None or check["status"] != "completed":
+            return f"pull request #{pr['number']} · checking", "now", True
+        if check["conclusion"] == "success":
+            return f"pull request #{pr['number']} · merging", "now", True
+        return f"pull request #{pr['number']} · the check rejected it", "bad", False
+    if release is None or release["status"] != "completed":
+        return f"pull request #{pr['number']} merged · release running", "now", True
+    if release["conclusion"] != "success":
+        return f"pull request #{pr['number']} merged · the release failed", "bad", False
+    return f"pull request #{pr['number']} merged · production not caught up yet", "now", True

@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Agreements · AIAB agreement{% endblock %}
-{% block head %}{% if deploy and deploy.busy %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
+{% block head %}{% if busy or (keys and keys.busy) %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
 {% if pushed is defined and pushed %}
 <div class="notice deploy-result" style="margin-bottom: var(--space-8)">
   {% if pushed.error %}
-  <p><strong>{{ deployed }}</strong> is selected for deployment and copied into <span class="mono">plan/</span>, but pushing it failed: <span class="mono">{{ pushed.error }}</span>. Commit and push <span class="mono">plan/</span> by hand.</p>
+  <p><strong>{{ deployed_name }}</strong>: pushing the deploy branch failed: <span class="mono">{{ pushed.error }}</span>. Nothing was deployed.</p>
   {% elif pushed.unchanged %}
-  <p><strong>{{ deployed }}</strong> is selected for deployment. Branch <span class="mono">{{ pushed.branch }}</span> was already pushed with these exact files, so there is nothing new to push.{% if pushed.compare_url %} <a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Its pull request</a>.{% endif %}</p>
+  <p><strong>{{ deployed_name }}</strong>: branch <span class="mono">{{ pushed.branch }}</span> already holds these exact files, so there is nothing new to push.{% if pushed.compare_url %} <a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Its pull request</a>.{% endif %}</p>
   {% else %}
-  <p><strong>{{ deployed }}</strong> is selected for deployment. Branch <span class="mono">{{ pushed.branch }}</span> ({{ pushed.commit }}) is pushed with only the <span class="mono">plan/</span> change.
-    {% if pushed.pr_url %}Pull request: <a class="link" href="{{ pushed.pr_url }}" target="_blank" rel="noopener">{{ pushed.pr_url }}</a>. The signature check runs on it and merges it by itself; the release to the box follows.
+  <p><strong>{{ deployed_name }}</strong> is on its way: branch <span class="mono">{{ pushed.branch }}</span> ({{ pushed.commit }}) is pushed with only the <span class="mono">plan/</span> change.
+    {% if pushed.pr_url %}Pull request: <a class="link" href="{{ pushed.pr_url }}" target="_blank" rel="noopener">{{ pushed.pr_url }}</a>. The signature check runs on it and merges it by itself; the release to the box follows. Progress is shown below.
     {% elif pushed.compare_url %}<a class="link" href="{{ pushed.compare_url }}" target="_blank" rel="noopener">Open the pull request</a>; the signature check merges it by itself and the release to the box follows.
     {% endif %}</p>
   {% endif %}
@@ -20,43 +20,46 @@
 <table class="table">
   <thead><tr><th>Agreement</th><th>Version</th><th>State</th><th></th></tr></thead>
   <tbody>
+  <tr class="selected">
+    <td><strong>{{ deployed.plan_id }}</strong><br><span class="selected-label ok">deployed</span>{% if box.configured and box.plan_digest and not box.plan_matches %}<br><span class="text-muted" style="font-size: var(--text-xs)">the box still runs {{ box.plan_digest[7:15] }}…</span>{% endif %}</td>
+    <td>{% if deployed.digest %}<span class="digest">{{ deployed.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
+    <td>{% if deployed.error %}does not load: <span class="mono">{{ deployed.error }}</span>{% else %}read only · <span class="mono">plan/</span>{% endif %}</td>
+    <td class="actions"><a class="btn btn--ghost btn--sm" href="/a/plan/plan">Open</a></td>
+  </tr>
   {% for r in rows %}
-  <tr{% if r.selected %} class="selected"{% endif %}>
-    <td><strong>{{ r.plan_id }}</strong>{% if r.selected %}<br><span class="selected-label {{ deploy_tone }}">{{ deploy_label }}</span>{% elif r.id != "plan" %}<br><span class="text-muted">agreements/{{ r.id }}</span>{% endif %}</td>
+  <tr>
+    <td><strong>{{ r.plan_id }}</strong><br>
+      {% if r.deploying %}<span class="selected-label {{ r.deploying.tone }}">{{ r.deploying.label }}</span>
+      {% elif r.running %}<span class="selected-label ok">deployed</span>
+      {% else %}<span class="text-muted">agreements/{{ r.id }}</span>{% endif %}
+      {% if r.editor %}<br><span class="text-muted" style="font-size: var(--text-xs)">{{ r.editor.user }} ({{ r.editor.party }}) is editing since {{ r.editor.since | hhmm }}</span>{% endif %}</td>
     <td>{% if r.digest %}<span class="digest">{{ r.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
     <td>{{ r.state }}</td>
     <td class="actions">
       <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/plan">Open</a>
-      <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm">Edit</button></form>
+      <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm" {% if r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Edit</button></form>
       <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/sign">Sign</a>
-      {% if r.id != "plan" and not r.selected %}
-      <form method="post" action="/a/{{ r.id }}/deploy" class="inline" data-busy="Deploying {{ r.plan_id }}: copying it into plan/, making the branch and pushing it. A few seconds." data-confirm="This selects {{ r.plan_id }} for deployment: its files replace plan/, a branch with that change is pushed, and a pull request is opened for you to merge. Continue?"><button class="btn btn--primary btn--sm" {% if not r.signed %}disabled title="Sign it first: the signature check would reject it"{% endif %}>Deploy</button></form>{% if not r.signed %}<span class="text-muted" style="font-size: var(--text-xs)">sign first</span>{% endif %}
-      <form method="post" action="/a/{{ r.id }}/delete" class="inline" data-confirm="Delete {{ r.plan_id }}? The folder agreements/{{ r.id }} and its history are removed. This cannot be undone."><button class="btn btn--ghost btn--sm">Delete</button></form>
-      {% endif %}
+      {% set why = ("deploying " ~ current.name ~ " now") if busy else ("fix the plan first" if (r.error or r.issue) else ("sign it first" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("already running in the box" if r.running else ("being edited" if r.editor else ""))))) %}
+      <form method="post" action="/a/{{ r.id }}/deploy" class="inline" data-busy="Deploying {{ r.plan_id }}: making the branch and pushing it. A few seconds." data-confirm="This deploys {{ r.plan_id }}: a branch with only this plan is pushed and a pull request opened; the signature check merges it and the box is released with it. Continue?"><button class="btn btn--primary btn--sm" {% if why %}disabled title="{{ why }}"{% endif %}>Deploy</button></form>
+      <form method="post" action="/a/{{ r.id }}/delete" class="inline" data-confirm="Delete {{ r.plan_id }}? The folder agreements/{{ r.id }} and its history are removed; a deployed copy in plan/ stays. This cannot be undone."><button class="btn btn--ghost btn--sm" {% if r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Delete</button></form>
     </td>
   </tr>
+  {% else %}
+  <tr><td colspan="4" class="text-muted">No agreements yet. New agreement makes one from the template or as a copy of the deployed plan.</td></tr>
   {% endfor %}
   </tbody>
 </table>
-<div class="notice" style="margin-top: var(--space-8)">
-  {% if box.configured %}
-  <p><strong>The box</strong> ({{ box.url }}) is running
-    {% if box.plan_digest %}version <span class="digest">{{ box.plan_digest[7:19] }}…</span>{% if box.plan_matches %}, the one selected for deployment{% else %}, which is not the one selected for deployment{% endif %}{% else %}an unknown version ({{ box.manifest_error or "not reported yet" }}){% endif %}.</p>
-  {% else %}
-  <p><strong>The box</strong> is not connected: no release pins were found (<span class="mono">AIAB_RELEASE_FILE</span>) and <span class="mono">AIAB_BOX_URL</span> is not set, so the UI does not know its address.</p>
-  {% endif %}
-  <a class="btn btn--ghost btn--sm" href="/attest">What is running</a>
-</div>
-{% if deploy and deploy.pr %}
-<div class="notice notice--stack" style="margin-top: var(--space-4)">
-  <p><strong>Deployment</strong> of {{ deploy_name }} <span class="digest">{{ deploy_digest[7:19] }}…</span>: <span class="selected-label {{ deploy_tone }}">{{ deploy_label }}</span>{% if deploy.busy %} <span class="badge"><span class="spinner spinner--sm"></span> this page refreshes itself</span>{% endif %}{% if deploy.error %} <span class="text-muted">(GitHub did not answer: {{ deploy.error }})</span>{% endif %}</p>
+
+{% if current and current.state %}
+<div class="notice notice--stack" style="margin-top: var(--space-8)">
+  {% set d = current.state %}{% set pr = d.pr %}{% set check = d.check %}{% set rel = d.release %}
+  <p style="margin-top: var(--space-4)"><strong>Deployment</strong> of {{ current.name }} <span class="digest">{{ current.digest[7:19] }}…</span>: <span class="selected-label {{ d.tone }}">{{ d.label }}</span>{% if d.busy %} <span class="badge"><span class="spinner spinner--sm"></span> this page refreshes itself</span>{% endif %}{% if d.error %} <span class="text-muted">(GitHub did not answer: {{ d.error }})</span>{% endif %}</p>
   <ol class="dsteps">
-    {% set pr = deploy.pr %}{% set check = deploy.check %}{% set rel = deploy.release %}
-    <li class="{% if pr.state == 'merged' %}ok{% elif pr.state == 'closed' %}bad{% else %}now{% endif %}">Pull request <a class="link" href="{{ pr.url }}" target="_blank" rel="noopener">#{{ pr.number }}</a> into <span class="mono">{{ pr.base }}</span>: {{ pr.state }}{% if pr.base != "production" %} <span class="bad">· wrong branch, nothing will check or merge it; close it and deploy again</span>{% endif %}</li>
+    <li class="{% if pr.state == 'merged' %}ok{% elif pr.state == 'closed' %}bad{% else %}now{% endif %}">Pull request <a class="link" href="{{ pr.url }}" target="_blank" rel="noopener">#{{ pr.number }}</a> into <span class="mono">{{ pr.base }}</span>: {{ pr.state }}{% if pr.base != "production" %} <span class="bad">· wrong branch, nothing will check or merge it</span>{% endif %}</li>
     <li class="{% if check and check.conclusion == 'success' %}ok{% elif check and check.status == 'completed' %}bad{% elif check %}now{% endif %}">Signature check: {% if check %}{% if check.status != 'completed' %}running{% elif check.conclusion == 'success' %}passed, merged by itself{% else %}<span class="bad">failed</span>{% endif %} · <a class="link" href="{{ check.url }}" target="_blank" rel="noopener">log</a>{% elif pr.state == 'open' %}waiting for it to start{% else %}—{% endif %}</li>
     <li class="{% if rel and rel.conclusion == 'success' %}ok{% elif rel and rel.status == 'completed' %}bad{% elif rel %}now{% endif %}">Release to the box: {% if rel %}{% if rel.status != 'completed' %}running, a few minutes{% elif rel.conclusion == 'success' %}done{% else %}<span class="bad">failed</span>{% endif %} · <a class="link" href="{{ rel.url }}" target="_blank" rel="noopener">log</a>{% elif pr.state == 'merged' %}waiting for it to start{% else %}after the merge{% endif %}</li>
-    <li class="{% if deploy.box_matches %}ok{% endif %}">The box: {% if deploy.box_matches %}runs this version{% else %}still runs the previous version{% endif %}</li>
+    <li class="{% if d.box_matches %}ok{% endif %}">The box: {% if d.box_matches %}runs this version{% else %}still runs the previous version{% endif %}</li>
   </ol>
+  {% endif %}
 </div>
-{% endif %}
 {% endblock %}
