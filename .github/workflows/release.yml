@@ -23,9 +23,11 @@ on:
         required: false
         type: boolean
         default: false
-  # A merge into production starts the release by itself whenever it changes anything that
-  # goes into the box image: the plan, the static part (code, trust keys, dependencies, the
-  # Dockerfile and release tooling) or the build's ignore file. UI, docs and workflow edits
+  # A push to production starts the release whenever it changes anything that goes into the
+  # box image: the plan, the static part (code, trust keys, dependencies, the Dockerfile and
+  # release tooling) or the build's ignore file. Merges made by approve-plan.yml and
+  # approve-keys.yml do not count as pushes here (GitHub's rule for the workflow token), so
+  # those workflows start this one by dispatch after merging. UI, docs and workflow edits
   # never reach the box, so they do not release. The pins commit below says [skip ci], so it
   # does not start another one. The Actions tab button remains for re-runs and dry runs.
   push:
@@ -60,6 +62,14 @@ jobs:
           printf '{"controlplane_url":"https://api.tinfoil.sh","api_key":"%s"}\n' "$TINFOIL_API_KEY" > ~/.tinfoil/config.json
           printf '%s\n' "$AUDIT_LAB_TOKEN" > "$RUNNER_TEMP/keys/lab.token"
           printf '%s\n' "$AUDIT_LOGGER_KEY" > "$RUNNER_TEMP/keys/logger.key"
+      - name: The plan on production must be signed with the keys production trusts
+        working-directory: static
+        run: |
+          # The box verifies these signatures at start-up with the same trust entry. If they
+          # do not match, a release would leave the box unable to start, so stop here.
+          uv sync --locked
+          uv run --locked python -m auditor.baked --folder ../plan --trust aiab/baked/trust.json verify \
+            || { echo "::error::plan/ on production is not signed by the keys in static/aiab/baked/trust.json. Sign the plan with the trusted keys and deploy it; that deploy releases both together."; exit 1; }
       - name: Choose the tag
         id: tag
         env:

@@ -21,9 +21,9 @@
   <thead><tr><th>Agreement</th><th>Version</th><th>State</th><th></th></tr></thead>
   <tbody>
   <tr class="selected">
-    <td><strong>{{ deployed.plan_id }}</strong><br><span class="selected-label ok">deployed</span>{% if box.configured and box.plan_digest and not box.plan_matches %}<br><span class="text-muted" style="font-size: var(--text-xs)">the box still runs {{ box.plan_digest[7:15] }}…</span>{% endif %}</td>
+    <td><strong>{{ deployed.plan_id }}</strong><br>{% if deployed.trusted %}<span class="selected-label ok">deployed</span>{% else %}<span class="selected-label bad">deployed · not signed by the trusted keys</span>{% endif %}{% if box.configured and box.plan_digest and not box.plan_matches %}<br><span class="text-muted" style="font-size: var(--text-xs)">the box still runs {{ box.plan_digest[7:15] }}…</span>{% endif %}</td>
     <td>{% if deployed.digest %}<span class="digest">{{ deployed.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
-    <td>{% if deployed.error %}does not load: <span class="mono">{{ deployed.error }}</span>{% else %}read only · <span class="mono">plan/</span>{% endif %}</td>
+    <td>{% if deployed.error %}does not load: <span class="mono">{{ deployed.error }}</span>{% elif not deployed.trusted %}the keys changed: nothing valid runs until a plan signed with them is deployed{% else %}read only · <span class="mono">plan/</span>{% endif %}</td>
     <td class="actions"><a class="btn btn--ghost btn--sm" href="/a/plan/plan">Open</a></td>
   </tr>
   {% for r in rows %}

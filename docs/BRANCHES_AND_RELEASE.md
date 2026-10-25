@@ -14,7 +14,7 @@ Nothing is deployed from `master`. `production` only moves in three ways:
 
 1. **Agreement drafts** (`agreements/<name>/`): they live on the UI server's disk only and are git-ignored; nothing reaches GitHub until a plan is deployed. Several people edit them in the same UI, and a save made from an older version is refused rather than overwriting a newer one. (Decided 24 Oct 2026; `AIAB_PUSH_DRAFTS=1` still pushes drafts to the checkout's branch for anyone who wants that backup.)
 2. **The deployed plan** (`plan/`): Deploy in the UI pushes `plan/<name>-<digest8>` and opens a pull request against `production` (`AIAB_DEPLOY_BASE=production`). CI (`approve-plan.yml`, which only watches pull requests into `production`) checks that only `plan/` changed and that both signatures verify against `production`'s `static/aiab/baked/trust.json`, then merges it. No person clicks.
-3. **A party's public key** (`static/aiab/baked/trust.json`): when a party submits a public key on the Sign screen, the UI opens a pull request `keys/<party>-…` against `production` that changes only that file. `approve-keys.yml` checks it is well-formed and that nothing else changed, then merges it, and the release that follows puts the key into the box. Decided 24 Oct 2026 by Teddy: no human merge for now; when a real auditor is on board, require the other party's review of that file. The keys cannot ride along in a plan pull request: the plan check refuses anything outside `plan/`, and the keys cannot live inside the plan, since the plan is the thing they validate.
+3. **A party's public key** (`static/aiab/baked/trust.json`): when a party submits a public key on the Sign screen, the UI opens a pull request `keys/<party>-…` against `production` that changes only that file. `approve-keys.yml` checks it is well-formed and that nothing else changed, then merges it. The key reaches the box with the next plan deploy: the box verifies the baked plan's signatures against its trust entry at start-up, so a key and a plan signed with it must arrive together, and `release.yml` refuses to run when `plan/` on production is not signed by the keys in `trust.json`. Decided 24 Oct 2026 by Teddy: no human merge for now; when a real auditor is on board, require the other party's review of that file. The keys cannot ride along in a plan pull request: the plan check refuses anything outside `plan/`, and the keys cannot live inside the plan, since the plan is the thing they validate.
 4. **Box code** (`static/`): merged from `master` when a change is confirmed, like cutting a release.
 
 ## From a merge on `production` to the live box
@@ -40,7 +40,7 @@ Repository secrets:
 | `AUDIT_LAB_TOKEN` | the lab API token for the live verification step | the box operator |
 | `AUDIT_LOGGER_KEY` | the demo logger private key for the synthetic acceptance run | the box operator |
 
-A merge into `production` starts the release by itself; the Actions tab button is only for re-runs and dry runs. No GitHub environment or reviewer is used.
+A merge into `production` starts the release by itself: a human push triggers it directly, and the check workflows, whose merges GitHub does not count as pushes, start it by dispatch right after merging. The Actions tab button is only for re-runs and dry runs. No GitHub environment or reviewer is used.
 
 Tags are `vMAJOR.MINOR.PATCH`; the job bumps the patch of the current tag unless one is given. The same `release.py` works from an operator's laptop as before.
 

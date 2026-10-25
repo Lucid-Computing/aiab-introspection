@@ -136,11 +136,24 @@ def preflight(settings: Settings) -> dict:
     missing = []
     plan_digest = None
     try:
+        # Against the keys production trusts now. After a key change the deployed plan is
+        # signed by keys that are no longer trusted: nothing may run until a plan signed
+        # with the new keys is deployed.
         bundle = load_bundle(
-            settings.deployed_plan_dir, json.loads(BOX_TRUST.read_text()), signed=True
+            settings.deployed_plan_dir,
+            json.loads(settings.trust_file.read_text(encoding="utf-8")),
+            signed=True,
         )
         plan_digest = bundle.digest
-    except (OSError, ValueError, AuditError) as exc:
+    except AuditError as exc:
+        if str(exc) == "invalid_signature":
+            missing.append(
+                "the deployed plan is not signed by the keys production trusts (the keys"
+                " changed): sign a plan with the trusted keys and deploy it"
+            )
+        else:
+            missing.append("signed deployed plan: " + str(exc))
+    except (OSError, ValueError) as exc:
         missing.append("signed deployed plan: " + str(exc))
     if settings.release_file.is_file():
         release = json.loads(settings.release_file.read_text(encoding="utf-8"))

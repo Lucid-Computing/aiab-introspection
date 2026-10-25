@@ -502,9 +502,28 @@ def deployed_plan(settings: Settings) -> dict[str, Any]:
     merged plan pull request and a pull of the checkout, never through this UI."""
     try:
         view = load_plan_view(settings)
-        return {"plan_id": view.plan_id, "digest": view.digest, "state": view.state, "error": None}
     except Exception as exc:  # noqa: BLE001 - a broken deploy slot is shown, not raised
-        return {"plan_id": "plan", "digest": None, "state": None, "error": str(exc)}
+        return {
+            "plan_id": "plan",
+            "digest": None,
+            "state": None,
+            "error": str(exc),
+            "trusted": False,
+        }
+    # Signed by the keys production trusts now? After a key change this turns false, and the
+    # box's plan counts as invalid until a plan signed with the new keys is deployed.
+    try:
+        load_bundle(settings.plan_dir, load_trust(settings), signed=True)
+        trusted = True
+    except (OSError, ValueError, AuditError):
+        trusted = False
+    return {
+        "plan_id": view.plan_id,
+        "digest": view.digest,
+        "state": view.state,
+        "error": None,
+        "trusted": trusted,
+    }
 
 
 def list_agreements(settings: Settings) -> list[dict[str, Any]]:

@@ -84,7 +84,7 @@
       <p class="explain">Six steps: verify the plan, attest the box, sign the chosen records with the stand-in logger key, send them in, wait for the signed report, verify it offline.</p>
       <p><button class="btn btn--primary" form="run-form">Start the run</button></p>
       {% else %}
-      <p><button class="btn btn--primary" disabled>Start the run</button> <span class="text-muted">Add the two credentials first; the button is off until they are found.</span></p>
+      <p><button class="btn btn--primary" disabled>Start the run</button> <span class="text-muted">Off until this is fixed: {{ pre.missing | join("; ") }}.</span></p>
       {% endif %}
     </div>
   </div>

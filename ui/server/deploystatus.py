@@ -176,7 +176,7 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
             await _get(
                 client,
                 f"/repos/{settings.repo}/actions/runs",
-                {"branch": pr["base"]["ref"], "event": "push", "per_page": 10},
+                {"branch": pr["base"]["ref"], "per_page": 15},
             )
             or {}
         )
@@ -365,4 +365,8 @@ def _key_summary(info: dict[str, Any], github_ok: bool) -> tuple[str, str, bool]
         return "trusted on production and by the box", "ok", False
     if release and release["status"] != "completed":
         return "trusted on production · release running, the box takes it soon", "now", True
-    return "trusted on production · the box takes it at the next release", "now", True
+    return (
+        "trusted on production · the box takes it with the next plan deployed and signed with it",
+        "ok",
+        False,
+    )
