@@ -28,10 +28,17 @@ class PushResult:
     unchanged: bool = False  # the base branch already has this exact agreement
 
 
+log = logging.getLogger("aiab.publish")
+
+
 def _git(repo: Path, *args: str, timeout: int = 120) -> str:
+    started = time.monotonic()
     done = subprocess.run(
         ["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=timeout
     )
+    took = time.monotonic() - started
+    if took > 5 or done.returncode:  # a slow or failing step is what a server log should show
+        log.warning("git %s: %.1fs, exit %d", " ".join(args[:2]), took, done.returncode)
     if done.returncode != 0:
         raise RuntimeError((done.stderr or done.stdout).strip()[-400:] or f"git {args[0]} failed")
     return done.stdout.strip()
@@ -173,7 +180,6 @@ def push_deploy(
 # ---- agreement drafts: pushed to the checkout's own branch, so the server disk is never the
 #      only copy. Drafts are not baked and CI does not check them, so a plain push is right.
 
-log = logging.getLogger("aiab.drafts")
 _drafts_lock = threading.Lock()
 _drafts_timer: threading.Timer | None = None
 DRAFTS_DELAY = 5.0  # seconds; several quick saves become one commit

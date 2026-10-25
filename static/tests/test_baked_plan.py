@@ -26,8 +26,10 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture
 def setup(tmp_path):
     folder = tmp_path / "plan"
-    shutil.copytree(ROOT / "plan", folder)
-    trust = decode((ROOT / "static/aiab/baked/trust.json").read_bytes())
+    fixture = Path(__file__).resolve().parent / "fixtures" / "demo-plan"  # frozen demo plan
+    shutil.copytree(fixture, folder)
+    (folder / "trust.json").unlink()  # the fixture's trust file is not part of a plan folder
+    trust = decode((fixture / "trust.json").read_bytes())
     keys = {role: Ed25519PrivateKey.generate() for role in ("lab", "auditor", "logger")}
     for role, key in keys.items():
         trust[role + "_key"] = base64.b64encode(key.public_key().public_bytes_raw()).decode()

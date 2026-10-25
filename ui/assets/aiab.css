@@ -470,3 +470,4 @@ pre { max-width: 100%; overflow-x: auto; }
 .dsteps li.bad::before { background: var(--destructive); border-color: var(--destructive); }
 .selected-label.ok { color: #2F6B2A; }
 .selected-label.bad { color: var(--destructive); }
+ul.plain { list-style: none; margin: 0; padding: 0; } ul.plain li { padding: 2px 0; font-size: var(--text-sm); }

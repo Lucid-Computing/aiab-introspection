@@ -8,7 +8,7 @@ import pytest
 from aiab.audit.protocol import AuditError, validate
 from aiab.baked.bundle import PLAN, check_source
 
-PLAN_DIR = Path(__file__).resolve().parents[2] / "plan"
+PLAN_DIR = Path(__file__).resolve().parent / "fixtures" / "demo-plan"  # frozen demo plan
 
 
 def test_schema_accepts_a_plan_without_filter():

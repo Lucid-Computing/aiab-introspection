@@ -13,8 +13,8 @@
       <table class="kv">
         <tr><th>Box</th><td class="mono">{{ pre.release.host }}</td></tr>
         <tr><th>Release</th><td class="mono">{{ pre.release.tag }} · plan {{ pre.release.plan_digest[:19] }}…</td></tr>
-        <tr><th>Deployed plan here</th><td class="mono">{{ plan_digest or "does not load" }}{% if plan_digest and pre.release.plan_digest != plan_digest %} <span class="badge badge--danger">differs from the release, step 2 will refuse</span>{% endif %}</td></tr>
-        <tr><th>Credentials</th><td>{% if pre.ok %}<span class="badge badge--ok">lab.token and logger.key found</span>{% else %}{% for m in pre.missing %}<span class="badge badge--danger">missing {{ m }}</span><br>{% endfor %}{% endif %}</td></tr>
+        <tr><th>Deployed plan here</th><td class="mono">{{ plan_digest or ("does not load: " ~ (plan_error or "unknown reason")) }}{% if plan_digest and pre.release.plan_digest != plan_digest %} <span class="badge badge--danger">differs from the release, step 2 will refuse</span>{% endif %}</td></tr>
+        <tr><th>Ready</th><td>{% if pre.ok %}<span class="badge badge--ok">yes</span>{% else %}<ul class="plain">{% for m in pre.missing %}<li class="bad">{{ m }}</li>{% endfor %}</ul>{% endif %}</td></tr>
       </table>
       {% else %}<p class="form-message error">Release pins not found: {{ pre.missing | join(", ") }}</p>{% endif %}
       <details class="info" style="margin-top: var(--space-4)">

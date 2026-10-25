@@ -45,7 +45,10 @@
     var busy = document.getElementById("busy");
     document.querySelectorAll("form[data-busy]").forEach(function (form) {
       form.addEventListener("submit", function (event) {
+        // A form that also confirms submits twice: once to open the dialog (cancelled
+        // here), once for real after "Continue". Only the real one shows the spinner.
         if (event.defaultPrevented || !busy) return;
+        if (form.dataset.confirm && !form.dataset.confirmed) return;
         document.getElementById("busy-text").textContent = form.dataset.busy;
         busy.hidden = false;
       });

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -467,16 +468,26 @@ async def _agreements_page(request: Request, **extra) -> Response:
     )
 
 
+async def _in_flight(aid: str) -> str | None:
+    """Why this agreement may not be touched right now: it is being deployed."""
+    current = await _current_deployment(await box_status(settings.box_url, ""))
+    if current and current["id"] == aid and current["state"] and current["state"]["busy"]:
+        return f"{current['name']} is being deployed ({current['state']['label']}); wait for it."
+    return None
+
+
 def _deploy_marker() -> Path:
     return settings.agreements_dir / ".deploying.json"
 
 
-def _remember_deploy(aid: str, plan_id: str, digest: str) -> None:
-    """The deployment in flight, so every visitor's page can follow it."""
+def _remember_deploy(aid: str, plan_id: str, digest: str, phase: str = "pushed", **more) -> None:
+    """The deployment in flight, so every visitor's page can follow it. ``phase`` is
+    pushing (the branch is on its way), pushed (GitHub takes over) or failed."""
     try:
         settings.agreements_dir.mkdir(parents=True, exist_ok=True)
         _deploy_marker().write_text(
-            json.dumps({"id": aid, "name": plan_id, "digest": digest}), encoding="utf-8"
+            json.dumps({"id": aid, "name": plan_id, "digest": digest, "phase": phase, **more}),
+            encoding="utf-8",
         )
     except OSError:
         pass
@@ -490,8 +501,27 @@ async def _current_deployment(box: dict) -> dict | None:
     except (OSError, ValueError):
         return None
     box_digest = (box.get("manifest") or {}).get("plan_digest")
+    phase = marker.get("phase", "pushed")
+    if phase == "pushing":
+        state = {"pr": None, "label": "deploying · pushing the branch", "tone": "now", "busy": True}
+        return {**marker, "state": state}
+    if phase == "failed":
+        state = {
+            "pr": None,
+            "label": "deploy failed · " + (marker.get("error") or "the push failed")[:160],
+            "tone": "bad",
+            "busy": False,
+        }
+        return {**marker, "state": state}
     state = await deploystatus.status(settings, marker["digest"], marker["digest"] == box_digest)
-    if state and state["pr"]["state"] == "closed":
+    if state is None:
+        state = {
+            "pr": None,
+            "label": "deploying · waiting for GitHub to show the pull request",
+            "tone": "now",
+            "busy": True,
+        }
+    elif state["pr"]["state"] == "closed":
         return None
     return {**marker, "state": state}
 
@@ -594,6 +624,7 @@ async def runs_index(request: Request) -> Response:
         scope=runs.plan_scope(settings),
         runs=runs.list_runs(settings),
         plan_digest=pre["plan_digest"],
+        plan_error=next((m for m in pre["missing"] if "deployed plan" in m), None),
     )
 
 
@@ -760,6 +791,8 @@ async def start_editing(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
+    if busy := await _in_flight(aid):
+        return back(f"/a/{aid}/plan", err=busy)
     other = editing.acquire(aid, user_of(request) or {})
     if other:
         return back(f"/a/{aid}/plan", err=editing.describe(other) + ". Try again later.")
@@ -829,13 +862,25 @@ async def deploy(request: Request, aid: str) -> Response:
         return back("/agreements", err=editing.describe(editing.holder(aid)) + ". Deploy later.")
     pv.record_change(target, actor, "deploy", "deployment", "pushed for deployment")
     digest = view.digest
-    pushed = publish.push_deploy(
-        settings.git_dir, target.plan_dir, aid, digest, actor, base=settings.deploy_base
-    )
-    if not pushed.error:
-        _remember_deploy(aid, view.plan_id, digest)
+    # The push takes seconds to a minute (fetch, branch, push, pull request). It runs behind
+    # the page: the page answers at once and its deployment strip follows the marker file.
+    _remember_deploy(aid, view.plan_id, digest, phase="pushing")
+    agreement_dir, plan_id = target.plan_dir, view.plan_id
+
+    def push() -> None:
+        pushed = publish.push_deploy(
+            settings.git_dir, agreement_dir, aid, digest, actor, base=settings.deploy_base
+        )
+        if pushed.error:
+            _remember_deploy(aid, plan_id, digest, phase="failed", error=pushed.error)
+        else:
+            _remember_deploy(
+                aid, plan_id, digest, phase="pushed", pr_url=pushed.pr_url, branch=pushed.branch
+            )
+
+    threading.Thread(target=push, name=f"deploy-{aid}", daemon=True).start()
     saved(actor)  # the deploy is recorded in the agreement's change log
-    return await _agreements_page(request, pushed=pushed, deployed_name=view.plan_id)
+    return await _agreements_page(request, deployed_name=plan_id, deploy_started=True)
 
 
 @app.post("/a/{aid}/delete")
@@ -843,6 +888,8 @@ async def delete_agreement(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
+    if busy := await _in_flight(aid):
+        return back("/agreements", err=busy)
     problem = pv.delete_agreement(settings, aid)
     if problem:
         return back("/agreements", err=problem)
@@ -1012,6 +1059,8 @@ async def sign_upload(
         return redirect
     user = user_of(request)
     here = f"/a/{aid}/sign"
+    if busy := await _in_flight(aid):
+        return back(here, err=busy)
     if user is None or party != user["party"]:
         return back(here, err="Paste only your own party's signature.")
     if not signature.strip():
@@ -1031,6 +1080,8 @@ async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()])
         return redirect
     user = user_of(request)
     here = f"/a/{aid}/sign"
+    if busy := await _in_flight(aid):
+        return back(here, err=busy)
     if user is None or party != user["party"]:
         return back(here, err="You can only remove your own signature.")
     if not pv.remove_signature(target, party, user):
