@@ -1,7 +1,7 @@
 # Put a reviewed build live: run the release procedure (static/deploy/tinfoil/audit/release.py)
 # from CI instead of an operator's laptop. Started by a merge into production, then:
 # build-image.yml on the production branch, measured config pushed to the public config repo,
-# Tinfoil told to run the new tag, live identity verified, synthetic acceptance run, and the
+# Tinfoil told to run the new tag, live identity and readiness verified, and the
 # new release pins committed back to production.
 #
 # Repository secrets:
@@ -9,7 +9,7 @@
 #   RELEASE_GH_TOKEN   a token that may run workflows and download runs in this repository and
 #                      push commits/tags and download releases in the public config repository
 #   AUDIT_LAB_TOKEN    the lab API token, for the live verification step
-#   AUDIT_LOGGER_KEY   the demo logger private key, for the synthetic acceptance run
+#   AUDIT_LOGGER_KEY   the demo logger private key (no longer used by the release; kept for now)
 name: Release to the live box
 on:
   workflow_dispatch:

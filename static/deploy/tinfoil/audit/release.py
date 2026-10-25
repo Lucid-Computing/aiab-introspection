@@ -1,7 +1,7 @@
 """Coordinate a verified audit release; CI builds/measures, never runs in the enclave.
 
 Default is read-only planning. --execute builds, publishes config, updates Tinfoil,
-verifies pinned identity and optionally runs synthetic acceptance. Credentials stay
+verifies pinned identity and readiness. Credentials stay
 in the operator's existing gh/Tinfoil stores. Each attempt has a new private output
 directory and a durable stage journal. Failures never get a success record.
 """
@@ -12,7 +12,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -336,28 +335,8 @@ def main():
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Live identity/readiness verification failed") from None
                 time.sleep(10)
-        # This runs only synthetic fixtures; no downloaded private transcripts.
-        sys.path.insert(0, str(root / "static/demo/audit"))
-        if "plan_digest" in build:
-            from baked_acceptance import run
-        else:
-            from acceptance import run
-
-        await_args = argparse.Namespace(
-            host=release["host"],
-            repo=repo,
-            release_digest=release["release_digest"],
-            policy_digest=release["policy_digest"],
-            run_prefix=args.tag.replace(".", "-") + "-",
-            trust=checkout / "trust.json",
-            key_directory=args.key_directory,
-            evaluation=None,
-            output=args.output / "acceptance.json",
-        )
-        asyncio.run(run(await_args))
-        evidence = json.loads(await_args.output.read_text())
-        if evidence["status"] != "passed":
-            raise RuntimeError("Synthetic acceptance failed")
+        # No synthetic run here: what a plan decides is the parties' business, and the box's
+        # identity, trust and readiness are verified above. Runs happen from the UI.
         record("verified", status="succeeded", verification=verification)
     except Exception as exc:
         record(

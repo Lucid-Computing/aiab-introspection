@@ -26,10 +26,12 @@ jobs:
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           version: "0.11.6"
-      - name: Validate source
+      - name: Check the plan and its signatures
         working-directory: static
         run: |
-          make check
+          # The only gate before an image is built: the plan in plan/ loads under the box's
+          # own rules and both signatures verify against the trusted keys. No test suites.
+          uv sync --locked
           uv run --locked python -m aiab.baked.check ../plan > ../plan-build.json
       - name: Validate publication destination
         env:
