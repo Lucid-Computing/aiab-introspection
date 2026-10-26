@@ -141,15 +141,18 @@ export default function App() {
         </header>
 
         <main className={`work work--${view}${state.selected ? " has-sel" : ""}`}>
-          {showGraph && <Palette plan={plan} layout={state.layout} dispatch={dispatch} />}
+          {/* In split view the inspector takes the palette's column while a node is selected. */}
+          {showGraph &&
+            (view === "split" && state.selected ? (
+              <aside className="side side--left">
+                <Inspector plan={plan} selected={state.selected} issues={issues} dispatch={dispatch} />
+              </aside>
+            ) : (
+              <Palette plan={plan} layout={state.layout} dispatch={dispatch} />
+            ))}
           {showGraph && (
             <section className="graph">
               <Canvas state={state} dispatch={dispatch} issues={issues} bad={bad} />
-              {view === "split" && state.selected && (
-                <div className="insp-float">
-                  <Inspector plan={plan} selected={state.selected} issues={issues} dispatch={dispatch} />
-                </div>
-              )}
             </section>
           )}
           {showCode && <CodePane state={state} dispatch={dispatch} lint={located} />}

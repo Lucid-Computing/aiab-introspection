@@ -41,6 +41,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .work { display: grid; min-height: 0; overflow: hidden; }
 .work--graph { grid-template-columns: 220px 1fr 400px; }
 .work--split { grid-template-columns: 200px minmax(0, 1fr) minmax(420px, 42%); }
+.work--split.has-sel { grid-template-columns: 380px minmax(0, 1fr) minmax(420px, 38%); }
+.side--left { border-left: none; border-right: var(--border-ink); }
 .work--code { grid-template-columns: minmax(0, 1fr); }
 .work > * { min-height: 0; min-width: 0; }
 .graph { position: relative; height: 100%; }
@@ -128,7 +130,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .insp-issues li.warning { color: var(--ink-2); }
 .insp-foot { padding-top: var(--space-3); border-top: var(--border-hairline); }
 .insp-foot .danger { border-color: var(--destructive); }
-.insp-float { position: absolute; top: 8px; right: 8px; bottom: 8px; width: 380px; overflow-y: auto; background: var(--paper-1); border: var(--border-ink); box-shadow: var(--shadow-offset); z-index: 5; }
 .ok-line { color: var(--amber-ink); font-size: var(--text-sm); }
 .f { display: flex; flex-direction: column; gap: 4px; }
 .f-label { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-2); font-weight: 500; }
