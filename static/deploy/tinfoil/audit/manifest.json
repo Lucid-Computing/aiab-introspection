@@ -1,9 +1,9 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:a8ccda733a1df66839a224cab02b4a594ebe67d843d0fb3b74f120bedcfae044",
-  "plan_digest": "sha256:f6a59d42446d1c178a10de50a39326442d2030b9649e149f5713edaa654f4bf9",
-  "plan_id": "bio-2",
+  "image_digest": "sha256:ce0590e586b3008e4c5cf3af2f744b931d0fcce1b58b8c013711cc712331b227",
+  "plan_digest": "sha256:dd9ba1383d6829dd675e1f805fe7914edac1bffc7148b556d03c4ad36ab40a1f",
+  "plan_id": "rsi-test",
   "restrictions": {
     "version": "0.1.0",
     "plan_imports": {
