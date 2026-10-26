@@ -44,8 +44,9 @@ and the YAML are two projections of it:
 | `src/components/` | Toolbar (`App.tsx`), palette, canvas, node view, inspector, code pane, simulate dialog. |
 
 Connections are input bindings on the consuming node, `inputs: { name: "<node>.<output>" }`,
-so one output can feed several nodes and Run Python / Run LLM / Final Report can take several
-named inputs. Code edits that do not parse, fail the schema, or break the graph (unknown
+so one output can feed several nodes and Run Python / Run LLM can take several named inputs.
+The Final Report is a sink with exactly one input, `result`; its fields are the shape it
+releases, each read from that input. Code edits that do not parse, fail the schema, or break the graph (unknown
 ids, dangling references, cycles) are not applied: the graph keeps the last valid plan and
 the code pane lists the errors by line.
 

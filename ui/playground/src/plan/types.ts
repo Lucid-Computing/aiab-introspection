@@ -127,8 +127,8 @@ export const RunLlmNode = z.strictObject({
 export const ReportField = z.strictObject({
   name: ident,
   type: FieldType,
-  /** "<input>.<path>", e.g. "verdict.flagged" or "bio.proportion.physics". */
-  from: z.string().min(1),
+  /** Path in the report's input, e.g. "flagged" or "proportion.physics". Defaults to `name`. */
+  from: z.string().min(1).optional(),
   description: z.string().optional(),
 });
 export type ReportField = z.infer<typeof ReportField>;

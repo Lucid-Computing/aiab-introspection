@@ -1,7 +1,7 @@
 /** Problems in a well-formed plan. Shown on nodes and in the issue list; never blocking edits. */
 import { LOG_SOURCES } from "./mockLogs";
 import { acceptedTypes, accepts, inputType } from "./ports";
-import { assignable, resolveReportPath } from "./report";
+import { assignable, fieldPath, resolveReportPath } from "./report";
 import type { Issue, Plan } from "./types";
 import { upstream } from "./validate";
 
@@ -88,14 +88,15 @@ export function lintPlan(plan: Plan): Issue[] {
         break;
       }
       case "final_report": {
-        if (!Object.keys(n.inputs).length) err(n.id, at(i, "inputs"), `${n.id}: connect the results to report`);
+        if (!n.inputs.result) err(n.id, at(i, "inputs"), `${n.id}: connect the one result to release`);
         if (!n.config.fields.length) err(n.id, at(i, "config", "fields"), `${n.id}: the report has no fields`);
         n.config.fields.forEach((f, k) => {
           const p = at(i, "config", "fields", k);
-          const r = resolveReportPath(plan, n, f.from);
-          if (!r.ok) err(n.id, [...p, "from"], `${n.id}.${f.name}: ${r.message}`);
-          else if (!assignable(f.type, r.type))
-            err(n.id, [...p, "type"], `${n.id}.${f.name}: declared ${f.type} but ${f.from} is ${r.type}`);
+          const path = fieldPath(f);
+          const r = n.inputs.result ? resolveReportPath(plan, n, path) : null;
+          if (r && !r.ok) err(n.id, [...p, f.from ? "from" : "name"], `${n.id}.${f.name}: ${r.message}`);
+          else if (r?.ok && !assignable(f.type, r.type))
+            err(n.id, [...p, "type"], `${n.id}.${f.name}: declared ${f.type} but ${path} is ${r.type}`);
           if (f.type === "string" && !n.config.privacy.allow_free_text)
             err(
               n.id,
@@ -103,9 +104,6 @@ export function lintPlan(plan: Plan): Issue[] {
               `${n.id}.${f.name}: string fields can carry free text; set privacy.allow_free_text to release them`,
             );
         });
-        const used = new Set(n.config.fields.map((f) => f.from.split(".")[0]));
-        for (const name of Object.keys(n.inputs))
-          if (!used.has(name)) warn(n.id, at(i, "inputs", name), `${n.id}: input "${name}" is not used by any field`);
         break;
       }
     }

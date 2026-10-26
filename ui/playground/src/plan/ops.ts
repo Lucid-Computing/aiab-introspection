@@ -199,22 +199,14 @@ export function renameOutput(plan: Plan, id: string, to: string): OpResult {
   return checked(next);
 }
 
-/** Rename one input of a node; a report's fields that read it follow. */
+/** Rename one input of a node (Run Python / Run LLM; other inputs are fixed). */
 export function renameInput(plan: Plan, id: string, from: string, to: string): OpResult {
   const node = nodeById(plan).get(id);
   if (!node || !(from in node.inputs)) return { ok: false, message: `No input "${from}"` };
   if (from === to) return { ok: true, plan };
   if (to in node.inputs) return { ok: false, message: `Input "${to}" already exists` };
   const inputs = Object.fromEntries(Object.entries(node.inputs).map(([k, r]) => [k === from ? to : k, r]));
-  const next = updateNode(plan, id, (n) => {
-    if (n.type !== "final_report") return { ...n, inputs };
-    const fields = n.config.fields.map((f) => {
-      const [head, ...rest] = f.from.split(".");
-      return head === from ? { ...f, from: [to, ...rest].join(".") } : f;
-    });
-    return { ...n, inputs, config: { ...n.config, fields } };
-  });
-  return checked(next);
+  return checked(updateNode(plan, id, (n) => ({ ...n, inputs })));
 }
 
 function checked(plan: Plan): OpResult {

@@ -47,12 +47,12 @@ nodes:
     type: final_report
     title: Disclosed result
     inputs:
-      physics: physics.results
+      result: physics.results
     config:
       fields:
         - name: flagged
           type: boolean
-          from: physics.any.physics_research
+          from: any.physics_research
           description: At least one session shows physics research
       privacy: { allow_free_text: false, min_count: 1, max_result_bytes: 1024 }
 `;
@@ -132,13 +132,13 @@ nodes:
     type: final_report
     title: Disclosed result
     inputs:
-      verdict: combine.verdict
+      result: combine.verdict
     config:
       fields:
-        - { name: flagged, type: boolean, from: verdict.flagged }
-        - { name: physics_share, type: number, from: verdict.physics_share }
-        - { name: biology_share, type: number, from: verdict.biology_share }
-        - { name: sessions, type: integer, from: verdict.sessions }
+        - { name: flagged, type: boolean }
+        - { name: physics_share, type: number }
+        - { name: biology_share, type: number }
+        - { name: sessions, type: integer }
       privacy: { allow_free_text: false, min_count: 1, max_result_bytes: 1024 }
 `;
 
@@ -241,12 +241,12 @@ nodes:
     type: final_report
     title: Disclosed result
     inputs:
-      summary: aggregate.summary
+      result: aggregate.summary
     config:
       fields:
-        - { name: flagged, type: boolean, from: summary.flagged, description: Any session disclosed personal data }
-        - { name: disclosure_rate, type: number, from: summary.disclosure_rate }
-        - { name: sessions, type: integer, from: summary.sessions }
+        - { name: flagged, type: boolean, description: Any session disclosed personal data }
+        - { name: disclosure_rate, type: number }
+        - { name: sessions, type: integer }
       privacy: { allow_free_text: false, min_count: 2, max_result_bytes: 512 }
 `;
 

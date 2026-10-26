@@ -5,7 +5,7 @@
  */
 import { selectRecords, type LogRecord } from "./mockLogs";
 import { splitRef } from "./ports";
-import { classifierLabels, resolveReportPath } from "./report";
+import { classifierLabels, fieldPath, reportSource, resolveReportPath } from "./report";
 import type { Classifier, FieldType, FinalReport, Output, Plan, PlanNode } from "./types";
 import { topoOrder } from "./validate";
 
@@ -216,12 +216,11 @@ export function buildReport(plan: Plan, report: FinalReport, outputs: Record<str
   const suppressed: string[] = [];
   const values = Object.fromEntries(
     report.config.fields.map((f) => {
-      if (!resolveReportPath(plan, report, f.from).ok) return [f.name, null];
-      const [input, ...path] = f.from.split(".");
-      const src = splitRef(report.inputs[input])[0];
-      const v = outputs[src];
-      const node = plan.nodes.find((n) => n.id === src);
-      let x = v ? reportValue(v, path, classifierLabels(node)) : null;
+      const path = fieldPath(f);
+      const node = reportSource(plan, report);
+      if (!node || !resolveReportPath(plan, report, path).ok) return [f.name, null];
+      const v = outputs[node.id];
+      let x = v ? reportValue(v, path.split("."), classifierLabels(node)) : null;
       if (f.type === "integer" && typeof x === "number" && x > 0 && x < min_count) {
         suppressed.push(f.name);
         x = 0;

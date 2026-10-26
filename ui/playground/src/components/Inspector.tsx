@@ -2,7 +2,7 @@ import { type Dispatch, useMemo } from "react";
 import { LOG_SOURCES, selectRecords, sourceAgents } from "../plan/mockLogs";
 import { connect, deleteNodes, disconnect, renameInput, renameNode, renameOutput, updateNode } from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
-import { CLASSIFICATION_PATHS, classifierLabels, reportJsonSchema, sourceOf } from "../plan/report";
+import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportJsonSchema, reportSource } from "../plan/report";
 import { simulate } from "../plan/simulate";
 import {
   type Classifier,
@@ -652,21 +652,20 @@ function RunLlmForm({ plan, node, set, op }: { plan: Plan; node: RunLlm; set: (n
   );
 }
 
-function reportPaths(plan: Plan, node: FinalReport): { path: string; type: string }[] {
-  return Object.keys(node.inputs).flatMap((input) => {
-    const src = sourceOf(plan, node, input);
-    const out = src && outputPort(src);
-    if (!src || !out) return [];
-    if ((src.type === "run_python" || src.type === "run_llm") && out.type === "Value")
-      return Object.entries(src.config.output.fields).map(([f, t]) => ({ path: `${input}.${f}`, type: t }));
-    if (out.type !== "Classifications") return [];
-    const labels = classifierLabels(src) ?? [];
-    return CLASSIFICATION_PATHS.flatMap((p) =>
-      p.path.includes("<label>")
-        ? labels.map((l) => ({ path: `${input}.${p.path.replace("<label>", l)}`, type: p.type }))
-        : [{ path: `${input}.${p.path}`, type: p.type }],
-    );
-  });
+/** What the report's single input exposes, as paths a field can read. */
+function reportPaths(plan: Plan, node: FinalReport): { path: string; type: FieldType }[] {
+  const src = reportSource(plan, node);
+  const out = src && outputPort(src);
+  if (!src || !out) return [];
+  if ((src.type === "run_python" || src.type === "run_llm") && out.type === "Value")
+    return Object.entries(src.config.output.fields).map(([path, type]) => ({ path, type }));
+  if (out.type !== "Classifications") return [];
+  const labels = classifierLabels(src) ?? [];
+  return CLASSIFICATION_PATHS.flatMap((p) =>
+    p.path.includes("<label>")
+      ? labels.map((l) => ({ path: p.path.replace("<label>", l), type: p.type as FieldType }))
+      : [{ path: p.path, type: p.type as FieldType }],
+  );
 }
 
 function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (n: PlanNode) => void }) {
@@ -674,11 +673,11 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
   const cfg = (patch: Partial<FinalReport["config"]>) => set({ ...node, config: { ...c, ...patch } });
   const paths = reportPaths(plan, node);
   const sim = useMemo(() => simulate(plan), [plan]);
-  const typeOf = (p: string) => paths.find((x) => x.path === p)?.type as FieldType | undefined;
+  const typeOf = (p: string) => paths.find((x) => x.path === p)?.type;
   return (
     <>
       <div className="f">
-        <span className="f-label">Released fields (the only output)</span>
+        <span className="f-label">Released fields — the shape of the result</span>
         <table className="io">
           <thead>
             <tr>
@@ -703,10 +702,15 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
                   </td>
                   <td>
                     <select
-                      value={f.from}
-                      onChange={(e) => put({ from: e.target.value, type: typeOf(e.target.value) ?? f.type })}
+                      value={fieldPath(f)}
+                      onChange={(e) => {
+                        const path = e.target.value;
+                        put({ from: path === f.name ? undefined : path, type: typeOf(path) ?? f.type });
+                      }}
                     >
-                      {!paths.some((p) => p.path === f.from) && <option value={f.from}>{f.from} (unresolved)</option>}
+                      {!paths.some((p) => p.path === fieldPath(f)) && (
+                        <option value={fieldPath(f)}>{fieldPath(f)} (unresolved)</option>
+                      )}
                       {paths.map((p) => (
                         <option key={p.path} value={p.path}>
                           {p.path}
@@ -735,12 +739,13 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
           className="btn btn--ghost btn--sm"
           disabled={!paths.length}
           onClick={() => {
-            const p = paths[0];
-            const base = p.path.split(".").slice(1).join("_");
+            const used = new Set(c.fields.map(fieldPath));
+            const p = paths.find((x) => !used.has(x.path)) ?? paths[0];
+            const base = p.path.replace(/\./g, "_");
             const names = new Set(c.fields.map((f) => f.name));
             let name = base;
             for (let k = 2; names.has(name); k++) name = `${base}_${k}`;
-            cfg({ fields: [...c.fields, { name, type: p.type as FieldType, from: p.path }] });
+            cfg({ fields: [...c.fields, { name, type: p.type, ...(name === p.path ? {} : { from: p.path }) }] });
           }}
         >
           + field

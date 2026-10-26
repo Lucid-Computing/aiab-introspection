@@ -121,21 +121,23 @@ describe("Plan IR validation", () => {
 
 describe("lint (soft issues)", () => {
   it("flags type-incompatible connections without rejecting the plan", () => {
-    const text = planToYaml(simple()).replace("physics: physics.results", "physics: logs.records");
+    const text = planToYaml(simple()).replace("result: physics.results", "result: logs.records");
     const plan = mustParse(text);
     const msgs = lintPlan(plan).map((i) => i.message);
-    expect(msgs.some((m) => /report\.physics: receives LogRecords/.test(m))).toBe(true);
+    expect(msgs.some((m) => /report\.result: receives LogRecords/.test(m))).toBe(true);
   });
 
   it("checks report fields against upstream declarations", () => {
     const p = samplePlan("two-classifiers");
     const report = p.nodes.find((n) => n.type === "final_report")!;
     if (report.type !== "final_report") throw new Error();
-    report.config.fields.push({ name: "missing", type: "number", from: "verdict.nope" });
-    report.config.fields.push({ name: "wrong", type: "boolean", from: "verdict.sessions" });
+    report.config.fields.push({ name: "missing", type: "number" });
+    report.config.fields.push({ name: "wrong", type: "boolean", from: "sessions" });
     const msgs = lintPlan(p).map((i) => i.message);
-    expect(msgs).toContain('report.missing: "combine" declares no field "nope"');
-    expect(msgs).toContain("report.wrong: declared boolean but verdict.sessions is integer");
+    expect(msgs).toContain(
+      'report.missing: "combine" declares no field "missing" (fields: flagged, physics_share, biology_share, sessions)',
+    );
+    expect(msgs).toContain("report.wrong: declared boolean but sessions is integer");
   });
 
   it("requires exactly one Final Report", () => {
@@ -156,7 +158,7 @@ describe("graph → code (serialisation)", () => {
     const text = planToYaml(samplePlan("two-classifiers"));
     expect(text).not.toMatch(/temperature|max_output_tokens|group_by|window|max_records|keywords|inputs: \{\}/);
     expect(text).toContain("      model: { id: gpt-oss-safeguard-120b }\n");
-    expect(text).toContain("        - { name: flagged, type: boolean, from: verdict.flagged }\n");
+    expect(text).toContain("        - { name: flagged, type: boolean }\n");
     // Non-default values stay.
     expect(text).toContain("threshold: 0.6");
   });
@@ -302,11 +304,23 @@ describe("graph edits", () => {
       targetHandle: "__new__",
     });
     expect(cyc).toEqual({ ok: false, message: "Connecting aggregate → sessions would create a cycle" });
-    const raw = connect(p, { source: "logs", sourceHandle: "records", target: "report", targetHandle: "__new__" });
+    const raw = connect(p, { source: "logs", sourceHandle: "records", target: "report", targetHandle: "result" });
     expect(raw.ok).toBe(false);
     expect(!raw.ok && raw.message).toMatch(/report discloses only aggregated results/);
     const toLogs = connect(p, { source: "aggregate", sourceHandle: "summary", target: "logs" });
     expect(toLogs.ok).toBe(false);
+  });
+
+  it("the Final Report is a sink with one input: connecting again replaces it", () => {
+    const p = samplePlan("two-classifiers");
+    const r = connect(p, { source: "physics", sourceHandle: "results", target: "report", targetHandle: "__new__" });
+    if (!r.ok) throw new Error(r.message);
+    expect(r.plan.nodes.find((n) => n.id === "report")!.inputs).toEqual({ result: "physics.results" });
+    expect(r.note).toMatch(/was combine\.verdict/);
+    const two = clone(p);
+    two.nodes.find((n) => n.id === "report")!.inputs.extra = "physics.results";
+    const v = validatePlan(two);
+    expect(!v.ok && v.issues[0].message).toMatch(/unknown input "extra" \(allowed: result\)/);
   });
 
   it("deleting a node removes the bindings that read it", () => {
@@ -318,17 +332,14 @@ describe("graph edits", () => {
   it("renames keep references consistent", () => {
     const p = samplePlan("two-classifiers");
     const a = renameNode(p, "combine", "merge");
-    expect(a.ok && a.plan.nodes.find((n) => n.id === "report")!.inputs).toEqual({ verdict: "merge.verdict" });
+    expect(a.ok && a.plan.nodes.find((n) => n.id === "report")!.inputs).toEqual({ result: "merge.verdict" });
     const b = renameOutput(p, "combine", "outcome");
-    expect(b.ok && b.plan.nodes.find((n) => n.id === "report")!.inputs).toEqual({ verdict: "combine.outcome" });
-    const c = renameInput(p, "report", "verdict", "v");
-    const rep = c.ok ? c.plan.nodes.find((n) => n.id === "report")! : null;
-    expect(rep?.type === "final_report" && rep.config.fields.map((f) => f.from)).toEqual([
-      "v.flagged",
-      "v.physics_share",
-      "v.biology_share",
-      "v.sessions",
-    ]);
+    expect(b.ok && b.plan.nodes.find((n) => n.id === "report")!.inputs).toEqual({ result: "combine.outcome" });
+    const c = renameInput(p, "combine", "biology", "bio");
+    expect(c.ok && c.plan.nodes.find((n) => n.id === "combine")!.inputs).toEqual({
+      physics: "physics.results",
+      bio: "biology.results",
+    });
     expect(renameNode(p, "combine", "physics").ok).toBe(false);
   });
 });

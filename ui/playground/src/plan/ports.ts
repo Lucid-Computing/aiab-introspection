@@ -33,7 +33,7 @@ export const INPUT_RULES: Record<
   classifier: { kind: "fixed", ports: ["items"] },
   run_python: { kind: "dynamic" },
   run_llm: { kind: "dynamic" },
-  final_report: { kind: "dynamic" },
+  final_report: { kind: "fixed", ports: ["result"] },
 };
 
 const ACCEPTS: Record<NodeType, readonly PortType[]> = {
