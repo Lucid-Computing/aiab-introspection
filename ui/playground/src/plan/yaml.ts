@@ -1,31 +1,75 @@
 /** The YAML projection of the IR, with errors located by line. */
-import { Document, isMap, LineCounter, parseDocument } from "yaml";
-import { type Issue, type Layout, LayoutSchema, type Plan } from "./types";
+import { Document, isMap, isScalar, isSeq, LineCounter, parseDocument, visit } from "yaml";
+import type { z } from "zod";
+import { type Issue, type Layout, LayoutSchema, type Plan, PlanNode } from "./types";
 import { validatePlan } from "./validate";
 
-const HEADER = " Audit plan (Plan IR). The graph view edits the same plan.";
+const HEADER = " Audit plan. Edits here update the graph, and graph edits update this.";
 
-/** Nodes without inputs omit the key (it defaults to empty). */
-function compact(plan: Plan): object {
-  return {
-    ...plan,
-    nodes: plan.nodes.map((n) => {
-      if (Object.keys(n.inputs).length) return n;
-      const { inputs: _, ...rest } = n;
-      return rest;
-    }),
+/**
+ * The plan without values that equal their defaults, so the code shows only what the plan
+ * sets. Parsing fills the defaults back in, so this changes no semantics.
+ */
+export function minimal(plan: Plan): object {
+  const same = (schema: z.ZodType, candidate: unknown, target: string) => {
+    const r = schema.safeParse(candidate);
+    return r.success && JSON.stringify(r.data) === target;
   };
+  // Drop keys depth-first; keep a removal only if the parsed result is unchanged.
+  const prune = (
+    schema: z.ZodType,
+    root: unknown,
+    obj: Record<string, unknown>,
+    target: string,
+    keep: string[] = [],
+  ) => {
+    for (const key of Object.keys(obj)) {
+      if (keep.includes(key)) continue;
+      const value = obj[key];
+      delete obj[key];
+      if (same(schema, root, target)) continue;
+      obj[key] = value;
+      const children = Array.isArray(value) ? value : [value];
+      for (const child of children)
+        if (child && typeof child === "object" && !Array.isArray(child))
+          prune(schema, root, child as Record<string, unknown>, target);
+    }
+  };
+  const nodes = plan.nodes.map((n) => {
+    const copy = structuredClone(n) as Record<string, unknown>;
+    prune(PlanNode, copy, copy, JSON.stringify(PlanNode.parse(n)), ["id", "type"]);
+    return copy;
+  });
+  const { nodes: _, ...meta } = plan;
+  const top = structuredClone(meta) as Record<string, unknown>;
+  if (top.title === "") delete top.title;
+  return { ...top, nodes };
+}
+
+/** Short maps on one line: `{ name: flagged, type: boolean, from: v.flagged }`. */
+const FLOW_KEYS = new Set(["model", "fields", "output_contract", "privacy", "input_scope", "filter"]);
+
+function toDocument(value: object): Document {
+  const doc = new Document(value);
+  visit(doc, {
+    Pair(_, pair) {
+      const key = isScalar(pair.key) ? String(pair.key.value) : "";
+      if (!FLOW_KEYS.has(key)) return;
+      const v = pair.value;
+      if (isMap(v) && v.items.every((p) => isScalar(p.value))) v.flow = true;
+      if (isSeq(v)) for (const item of v.items) if (isMap(item) && item.items.length <= 4) item.flow = true;
+    },
+  });
+  return doc;
 }
 
 export function planToYaml(plan: Plan): string {
-  const doc = new Document(compact(plan));
+  const doc = toDocument(minimal(plan));
   doc.commentBefore = HEADER;
   return doc.toString({ lineWidth: 0, blockQuote: "literal" });
 }
 
-export type YamlResult =
-  | { ok: true; plan: Plan; layout?: Layout }
-  | { ok: false; issues: Issue[] };
+export type YamlResult = { ok: true; plan: Plan; layout?: Layout } | { ok: false; issues: Issue[] };
 
 /**
  * Parse YAML into a valid plan. With `allowLayout`, a top-level `layout:` map (as written by
@@ -52,7 +96,10 @@ export function yamlToPlan(text: string, { allowLayout = false } = {}): YamlResu
     raw = rest;
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw))
-    return { ok: false, issues: [{ severity: "error", line: 1, message: "The plan must be a YAML mapping (version, plan_id, nodes, …)" }] };
+    return {
+      ok: false,
+      issues: [{ severity: "error", line: 1, message: "The plan must be a YAML mapping (version, plan_id, nodes, …)" }],
+    };
   const result = validatePlan(raw);
   if (result.ok) return { ok: true, plan: result.plan, layout };
   return {
@@ -87,7 +134,7 @@ export function exportYaml(plan: Plan, layout: Layout): string {
       .filter((n) => layout[n.id])
       .map((n) => [n.id, { x: Math.round(layout[n.id].x), y: Math.round(layout[n.id].y) }]),
   );
-  const doc = new Document({ ...compact(plan), layout: positions });
+  const doc = toDocument({ ...minimal(plan), layout: positions });
   doc.commentBefore = `${HEADER}\n \`layout\` holds canvas positions only; it does not change what the plan does.`;
   return doc.toString({ lineWidth: 0, blockQuote: "literal" });
 }

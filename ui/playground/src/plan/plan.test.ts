@@ -34,10 +34,19 @@ describe("samples", () => {
     const types = (p: Plan) => p.nodes.map((n) => n.type);
     expect(types(samplePlan("simple"))).toEqual(["input_logs", "classifier", "final_report"]);
     expect(types(samplePlan("two-classifiers"))).toEqual([
-      "input_logs", "classifier", "classifier", "run_python", "final_report",
+      "input_logs",
+      "classifier",
+      "classifier",
+      "run_python",
+      "final_report",
     ]);
     expect(types(samplePlan("multi-step"))).toEqual([
-      "input_logs", "run_python", "run_llm", "classifier", "run_python", "final_report",
+      "input_logs",
+      "run_python",
+      "run_llm",
+      "classifier",
+      "run_python",
+      "final_report",
     ]);
   });
 });
@@ -47,7 +56,9 @@ describe("Plan IR validation", () => {
     const p = samplePlan("two-classifiers");
     const physics = p.nodes.find((n) => n.id === "physics")!;
     expect(physics.type === "classifier" && physics.config.model).toEqual({
-      id: "gpt-oss-safeguard-120b", temperature: 0, max_output_tokens: 512,
+      id: "gpt-oss-safeguard-120b",
+      temperature: 0,
+      max_output_tokens: 512,
     });
   });
 
@@ -141,6 +152,15 @@ describe("graph → code (serialisation)", () => {
     expect(text).toContain("      session: sessions.sessions\n");
   });
 
+  it("leaves out values equal to their defaults", () => {
+    const text = planToYaml(samplePlan("two-classifiers"));
+    expect(text).not.toMatch(/temperature|max_output_tokens|group_by|window|max_records|keywords|inputs: \{\}/);
+    expect(text).toContain("      model: { id: gpt-oss-safeguard-120b }\n");
+    expect(text).toContain("        - { name: flagged, type: boolean, from: verdict.flagged }\n");
+    // Non-default values stay.
+    expect(text).toContain("threshold: 0.6");
+  });
+
   it("keeps layout out of the plan code", () => {
     const p = simple();
     expect(planToYaml(p)).not.toContain("layout");
@@ -169,7 +189,9 @@ describe("code → graph (parsing)", () => {
     const { nodes, edges } = planToFlow(plan, completeLayout(plan, {}));
     expect(nodes.map((n) => n.id)).toContain("tally");
     expect(edges.find((e) => e.target === "tally")).toMatchObject({
-      source: "physics", sourceHandle: "results", targetHandle: "physics",
+      source: "physics",
+      sourceHandle: "results",
+      targetHandle: "physics",
     });
   });
 
@@ -244,7 +266,8 @@ describe("round trips preserve semantics", () => {
     const llm = (q: Plan) => q.nodes.find((n) => n.id === "summarise")!;
     expect(py(back)).toEqual(py(p));
     expect(llm(back)).toEqual(llm(p));
-    const code = py(p).type === "run_python" ? (py(p) as Extract<Plan["nodes"][number], { type: "run_python" }>).config.code : "";
+    const code =
+      py(p).type === "run_python" ? (py(p) as Extract<Plan["nodes"][number], { type: "run_python" }>).config.code : "";
     expect(code).toContain('CUSTOMER_ID = re.compile(r"C-\\d+")');
   });
 });
@@ -272,7 +295,12 @@ describe("graph edits", () => {
 
   it("refuses cycles and incompatible types", () => {
     const p = samplePlan("multi-step");
-    const cyc = connect(p, { source: "aggregate", sourceHandle: "summary", target: "sessions", targetHandle: "__new__" });
+    const cyc = connect(p, {
+      source: "aggregate",
+      sourceHandle: "summary",
+      target: "sessions",
+      targetHandle: "__new__",
+    });
     expect(cyc).toEqual({ ok: false, message: "Connecting aggregate → sessions would create a cycle" });
     const raw = connect(p, { source: "logs", sourceHandle: "records", target: "report", targetHandle: "__new__" });
     expect(raw.ok).toBe(false);
@@ -296,7 +324,10 @@ describe("graph edits", () => {
     const c = renameInput(p, "report", "verdict", "v");
     const rep = c.ok ? c.plan.nodes.find((n) => n.id === "report")! : null;
     expect(rep?.type === "final_report" && rep.config.fields.map((f) => f.from)).toEqual([
-      "v.flagged", "v.physics_share", "v.biology_share", "v.sessions",
+      "v.flagged",
+      "v.physics_share",
+      "v.biology_share",
+      "v.sessions",
     ]);
     expect(renameNode(p, "combine", "physics").ok).toBe(false);
   });
@@ -326,8 +357,10 @@ describe("simulation", () => {
     const sim = simulate(simple());
     expect(sim.report).toEqual({ flagged: true });
     const physics = sim.outputs.physics;
-    expect(physics.type === "Classifications" && physics.value.filter((c) => c.label === "physics_research").map((c) => c.item_id))
-      .toEqual(["s01", "s03", "s07"]);
+    expect(
+      physics.type === "Classifications" &&
+        physics.value.filter((c) => c.label === "physics_research").map((c) => c.item_id),
+    ).toEqual(["s01", "s03", "s07"]);
   });
 
   it("never claims Python ran", () => {

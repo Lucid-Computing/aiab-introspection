@@ -19,9 +19,7 @@ export function lintPlan(plan: Plan): Issue[] {
   if (reports.length === 0)
     issues.push({ severity: "error", message: "The plan has no Final Report: nothing would be disclosed" });
   if (reports.length > 1)
-    reports.forEach((r) =>
-      err(r.id, at(plan.nodes.indexOf(r)), "A plan has exactly one Final Report"),
-    );
+    reports.forEach((r) => err(r.id, at(plan.nodes.indexOf(r)), "A plan has exactly one Final Report"));
 
   plan.nodes.forEach((n, i) => {
     for (const name of Object.keys(n.inputs)) {
@@ -37,9 +35,17 @@ export function lintPlan(plan: Plan): Issue[] {
     switch (n.type) {
       case "input_logs":
         if (!LOG_SOURCES[n.config.source])
-          err(n.id, at(i, "config", "source"), `${n.id}: unknown log source "${n.config.source}" (available: ${Object.keys(LOG_SOURCES).join(", ")})`);
+          err(
+            n.id,
+            at(i, "config", "source"),
+            `${n.id}: unknown log source "${n.config.source}" (available: ${Object.keys(LOG_SOURCES).join(", ")})`,
+          );
         if (!n.config.filter.kinds.length)
-          err(n.id, at(i, "config", "filter", "kinds"), `${n.id}: no record kinds selected, so no records are admitted`);
+          err(
+            n.id,
+            at(i, "config", "filter", "kinds"),
+            `${n.id}: no record kinds selected, so no records are admitted`,
+          );
         break;
       case "classifier": {
         if (!n.inputs.items) err(n.id, at(i, "inputs"), `${n.id}: connect logs or items to classify`);
@@ -49,7 +55,8 @@ export function lintPlan(plan: Plan): Issue[] {
         if (dup) err(n.id, at(i, "config", "labels"), `${n.id}: label "${dup}" appears twice`);
         if (names.includes("abstain"))
           err(n.id, at(i, "config", "labels"), `${n.id}: "abstain" is reserved for scores below the threshold`);
-        if (!n.config.instructions.trim()) warn(n.id, at(i, "config", "instructions"), `${n.id}: no classification instructions`);
+        if (!n.config.instructions.trim())
+          warn(n.id, at(i, "config", "instructions"), `${n.id}: no classification instructions`);
         break;
       }
       case "run_python":
@@ -58,7 +65,11 @@ export function lintPlan(plan: Plan): Issue[] {
         if (!ins.length) err(n.id, at(i, "inputs"), `${n.id}: connect at least one input`);
         const out = n.config.output;
         if (out.type === "Value" && !Object.keys(out.fields).length)
-          warn(n.id, at(i, "config", "output", "fields"), `${n.id}: output Value declares no fields, so a report cannot read it`);
+          warn(
+            n.id,
+            at(i, "config", "output", "fields"),
+            `${n.id}: output Value declares no fields, so a report cannot read it`,
+          );
         if (n.type === "run_python" && !n.config.code.trim())
           warn(n.id, at(i, "config", "code"), `${n.id}: no Python code`);
         if (n.type === "run_llm") {
@@ -68,7 +79,11 @@ export function lintPlan(plan: Plan): Issue[] {
               err(n.id, at(i, "config", "user_prompt"), `${n.id}: prompt uses {{${m[1]}}}, which is not an input`);
           const lists = ins.filter((k) => ["LogRecords", "Items"].includes(inputType(plan, n, k) ?? ""));
           if (out.type === "Items" && lists.length !== 1)
-            err(n.id, at(i, "config", "output", "type"), `${n.id}: an Items output runs once per item, so it needs exactly one LogRecords or Items input (has ${lists.length})`);
+            err(
+              n.id,
+              at(i, "config", "output", "type"),
+              `${n.id}: an Items output runs once per item, so it needs exactly one LogRecords or Items input (has ${lists.length})`,
+            );
         }
         break;
       }
@@ -82,7 +97,11 @@ export function lintPlan(plan: Plan): Issue[] {
           else if (!assignable(f.type, r.type))
             err(n.id, [...p, "type"], `${n.id}.${f.name}: declared ${f.type} but ${f.from} is ${r.type}`);
           if (f.type === "string" && !n.config.privacy.allow_free_text)
-            err(n.id, [...p, "type"], `${n.id}.${f.name}: string fields can carry free text; set privacy.allow_free_text to release them`);
+            err(
+              n.id,
+              [...p, "type"],
+              `${n.id}.${f.name}: string fields can carry free text; set privacy.allow_free_text to release them`,
+            );
         });
         const used = new Set(n.config.fields.map((f) => f.from.split(".")[0]));
         for (const name of Object.keys(n.inputs))

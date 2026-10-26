@@ -12,14 +12,24 @@ function describe(v: SimValue): string {
     case "Classifications": {
       const counts: Record<string, number> = {};
       for (const c of v.value) counts[c.label] = (counts[c.label] ?? 0) + 1;
-      return `${v.value.length} classified · ${Object.entries(counts).map(([l, n]) => `${l} ${n}`).join(", ")}`;
+      return `${v.value.length} classified · ${Object.entries(counts)
+        .map(([l, n]) => `${l} ${n}`)
+        .join(", ")}`;
     }
     case "Value":
       return JSON.stringify(v.value);
   }
 }
 
-export default function SimulateDialog({ plan, blocked, onClose }: { plan: Plan; blocked: string[]; onClose: () => void }) {
+export default function SimulateDialog({
+  plan,
+  blocked,
+  onClose,
+}: {
+  plan: Plan;
+  blocked: string[];
+  onClose: () => void;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => ref.current?.showModal(), []);
   const sim = useMemo(() => simulate(plan), [plan]);
@@ -29,8 +39,8 @@ export default function SimulateDialog({ plan, blocked, onClose }: { plan: Plan;
   return (
     <dialog ref={ref} className="modal sim" onClose={onClose}>
       <div className="sim-banner">
-        SIMULATED · deterministic mock values over synthetic logs. No Python was executed, no model
-        was called, and nothing here is a trusted or attested audit.
+        SIMULATED · deterministic mock values over synthetic logs. No Python was executed, no model was called, and
+        nothing here is a trusted or attested audit.
       </div>
       {blocked.length > 0 && (
         <div className="sim-warn">
@@ -75,7 +85,9 @@ export default function SimulateDialog({ plan, blocked, onClose }: { plan: Plan;
             {sim.notes.map((n, k) => (
               <li key={k}>{n}</li>
             ))}
-            <li>Classifier: scores from keyword overlap between each item and the label descriptions, plus a fixed hash.</li>
+            <li>
+              Classifier: scores from keyword overlap between each item and the label descriptions, plus a fixed hash.
+            </li>
           </ul>
         </>
       )}

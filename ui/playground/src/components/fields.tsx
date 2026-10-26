@@ -67,7 +67,12 @@ export function NumberInput({
       step={step}
       onChange={(e) => {
         const v = Number(e.target.value);
-        if (e.target.value !== "" && Number.isFinite(v) && (min === undefined || v >= min) && (max === undefined || v <= max))
+        if (
+          e.target.value !== "" &&
+          Number.isFinite(v) &&
+          (min === undefined || v >= min) &&
+          (max === undefined || v <= max)
+        )
           onChange(v);
       }}
     />
@@ -75,10 +80,24 @@ export function NumberInput({
 }
 
 /** One entry per line. */
-export function LinesInput({ value, onChange, rows = 3 }: { value: string[]; onChange: (v: string[]) => void; rows?: number }) {
+export function LinesInput({
+  value,
+  onChange,
+  rows = 3,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
+  rows?: number;
+}) {
   const [text, setText] = useState(value.join("\n"));
   useEffect(() => {
-    if (text.split("\n").filter((l) => l.trim()).join("\n") !== value.join("\n")) setText(value.join("\n"));
+    if (
+      text
+        .split("\n")
+        .filter((l) => l.trim())
+        .join("\n") !== value.join("\n")
+    )
+      setText(value.join("\n"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
   return (
@@ -87,9 +106,24 @@ export function LinesInput({ value, onChange, rows = 3 }: { value: string[]; onC
       value={text}
       onChange={(e) => {
         setText(e.target.value);
-        onChange(e.target.value.split("\n").map((l) => l.trim()).filter(Boolean));
+        onChange(
+          e.target.value
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean),
+        );
       }}
     />
+  );
+}
+
+/** Settings most plans leave alone, folded away. */
+export function Advanced({ children }: { children: ReactNode }) {
+  return (
+    <details className="adv">
+      <summary>Advanced</summary>
+      <div className="adv-body">{children}</div>
+    </details>
   );
 }
 

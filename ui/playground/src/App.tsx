@@ -5,7 +5,6 @@ import CodePane from "./components/CodePane";
 import Inspector from "./components/Inspector";
 import Palette from "./components/Palette";
 import SimulateDialog from "./components/SimulateDialog";
-import { autoLayout } from "./plan/layout";
 import { badBindings, lintPlan } from "./plan/lint";
 import { SAMPLE_SOURCES, samplePlan } from "./plan/samples";
 import { exportYaml, locateIssues, planToYaml, yamlToPlan } from "./plan/yaml";
@@ -49,7 +48,11 @@ export default function App() {
 
   const modified = (key: string) => planToYaml(plan) !== planToYaml(samplePlan(key));
   const loadSample = (key: string) => {
-    if (modified(state.sample) && !window.confirm("Replace the current plan with the sample? Export first to keep your changes.")) return;
+    if (
+      modified(state.sample) &&
+      !window.confirm("Replace the current plan with the sample? Export first to keep your changes.")
+    )
+      return;
     dispatch({ type: "loadPlan", plan: samplePlan(key), sample: key });
   };
 
@@ -65,7 +68,11 @@ export default function App() {
   const importFile = async (file: File) => {
     const r = yamlToPlan(await file.text(), { allowLayout: true });
     if (!r.ok) {
-      dispatch({ type: "toast", kind: "error", text: `Import failed: ${r.issues[0].line ? `line ${r.issues[0].line}: ` : ""}${r.issues[0].message}` });
+      dispatch({
+        type: "toast",
+        kind: "error",
+        text: `Import failed: ${r.issues[0].line ? `line ${r.issues[0].line}: ` : ""}${r.issues[0].message}`,
+      });
       return;
     }
     dispatch({ type: "loadPlan", plan: r.plan, layout: r.layout });
@@ -79,11 +86,15 @@ export default function App() {
     <ReactFlowProvider>
       <div className="app">
         <header className="bar">
-          <div className="bar-brand">
-            <span className="nav-wordmark">AIAB · Audit plan playground</span>
-            <span className="badge badge--outline">prototype</span>
-          </div>
-          <select className="bar-select" value={state.sample} onChange={(e) => loadSample(e.target.value)} title="Sample plans">
+          <span className="nav-wordmark" title="Prototype: nothing here runs or is sent anywhere">
+            Plan playground
+          </span>
+          <select
+            className="bar-select"
+            value={state.sample}
+            onChange={(e) => loadSample(e.target.value)}
+            title="Sample plans"
+          >
             {SAMPLE_SOURCES.map((s) => (
               <option key={s.key} value={s.key}>
                 {s.label}
@@ -92,7 +103,13 @@ export default function App() {
           </select>
           <div className="seg" role="tablist">
             {VIEWS.map(([v, label]) => (
-              <button key={v} role="tab" aria-selected={view === v} className={view === v ? "on" : ""} onClick={() => dispatch({ type: "view", view: v })}>
+              <button
+                key={v}
+                role="tab"
+                aria-selected={view === v}
+                className={view === v ? "on" : ""}
+                onClick={() => dispatch({ type: "view", view: v })}
+              >
                 {label}
               </button>
             ))}
@@ -104,28 +121,30 @@ export default function App() {
           >
             {state.codeIssues.length
               ? `Code not applied (${state.codeIssues.length})`
-              : [nErr && `${nErr} error${nErr === 1 ? "" : "s"}`, nWarn && `${nWarn} warning${nWarn === 1 ? "" : "s"}`]
-                  .filter(Boolean)
-                  .join(" · ") || "Valid plan"}
+              : nErr
+                ? `${nErr} error${nErr === 1 ? "" : "s"}`
+                : nWarn
+                  ? `${nWarn} warning${nWarn === 1 ? "" : "s"}`
+                  : "Valid"}
           </button>
           <div className="bar-spacer" />
-          <button className="btn btn--ghost btn--sm" onClick={() => dispatch({ type: "relayout", layout: autoLayout(plan) })} disabled={!showGraph}>
-            Auto-layout
-          </button>
-          <button className="btn btn--primary btn--sm" onClick={() => setSimOpen(true)}>
-            Simulate
-          </button>
-          <button className="btn btn--ghost btn--sm" onClick={() => fileInput.current?.click()}>
+          <button className="bar-link" onClick={() => fileInput.current?.click()}>
             Import
           </button>
-          <button className="btn btn--ghost btn--sm" onClick={download}>
+          <button className="bar-link" onClick={download}>
             Export
           </button>
           <button
-            className="btn btn--ghost btn--sm"
-            onClick={() => window.confirm("Reset to the selected sample? Your changes will be lost.") && dispatch({ type: "loadPlan", plan: samplePlan(state.sample) })}
+            className="bar-link"
+            onClick={() =>
+              window.confirm("Reset to the selected sample? Your changes will be lost.") &&
+              dispatch({ type: "loadPlan", plan: samplePlan(state.sample) })
+            }
           >
             Reset
+          </button>
+          <button className="btn btn--primary btn--sm" onClick={() => setSimOpen(true)}>
+            Simulate
           </button>
           <input
             ref={fileInput}

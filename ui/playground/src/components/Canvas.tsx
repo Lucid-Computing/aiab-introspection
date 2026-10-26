@@ -2,16 +2,17 @@ import {
   applyNodeChanges,
   Background,
   type Connection,
+  ControlButton,
   Controls,
   type EdgeChange,
   MarkerType,
-  MiniMap,
   type NodeChange,
   ReactFlow,
   useReactFlow,
 } from "@xyflow/react";
 import { type Dispatch, type DragEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { type FlowNode, planToFlow } from "../plan/graph";
+import { autoLayout } from "../plan/layout";
 import { addNode, connect, deleteNodes, disconnect } from "../plan/ops";
 import type { Issue, NodeType } from "../plan/types";
 import type { Action, State } from "../state/store";
@@ -23,14 +24,6 @@ const nodeTypes = {
   run_python: PlanNodeView,
   run_llm: PlanNodeView,
   final_report: PlanNodeView,
-};
-
-const MINIMAP_FILL: Record<NodeType, string> = {
-  input_logs: "#E3D9C2",
-  classifier: "#C9A227",
-  run_python: "#1E1F22",
-  run_llm: "#93959A",
-  final_report: "#5F6165",
 };
 
 export const DND_TYPE = "application/x-aiab-node";
@@ -67,8 +60,15 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
       derived.edges.map((e) => ({
         ...e,
         selected: selectedEdges.has(e.id),
+        // Port names are on the nodes; spell the binding out only when it needs attention.
+        label: selectedEdges.has(e.id) || e.data?.invalid ? e.label : undefined,
         className: e.data?.invalid ? "is-invalid" : undefined,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: e.data?.invalid ? "#B4321C" : "#1E1F22" },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: e.data?.invalid ? "#B4321C" : "#5F6165",
+        },
         labelBgPadding: [4, 2] as [number, number],
       })),
     [derived.edges, selectedEdges],
@@ -102,9 +102,10 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
       });
       const removed = changes.filter((c) => c.type === "remove");
       if (!removed.length) return;
-      const gone = removed
-        .map((c) => derived.edges.find((x) => x.id === c.id))
-        .filter((e) => e?.targetHandle) as { target: string; targetHandle: string }[];
+      const gone = removed.map((c) => derived.edges.find((x) => x.id === c.id)).filter((e) => e?.targetHandle) as {
+        target: string;
+        targetHandle: string;
+      }[];
       dispatch({ type: "update", f: (p) => gone.reduce((q, e) => disconnect(q, e.target, e.targetHandle), p) });
     },
     [dispatch, derived.edges],
@@ -129,7 +130,12 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
       e.preventDefault();
       const pos = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
       const { plan: next, id } = addNode(plan, type);
-      dispatch({ type: "setPlan", plan: next, layout: { ...layout, [id]: { x: pos.x - 130, y: pos.y - 40 } }, select: id });
+      dispatch({
+        type: "setPlan",
+        plan: next,
+        layout: { ...layout, [id]: { x: pos.x - 110, y: pos.y - 40 } },
+        select: id,
+      });
     },
     [dispatch, flow, layout, plan],
   );
@@ -152,9 +158,12 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={24} size={1} color="rgba(30,31,34,0.18)" />
-        <MiniMap pannable zoomable nodeColor={(n) => MINIMAP_FILL[n.type as NodeType] ?? "#93959A"} />
-        <Controls showInteractive={false} />
+        <Background gap={24} size={1} color="rgba(30,31,34,0.10)" />
+        <Controls showInteractive={false}>
+          <ControlButton title="Auto-layout" onClick={() => dispatch({ type: "relayout", layout: autoLayout(plan) })}>
+            ⇶
+          </ControlButton>
+        </Controls>
       </ReactFlow>
     </div>
   );

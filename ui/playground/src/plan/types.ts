@@ -8,13 +8,9 @@ import { z } from "zod";
 
 export const PLAN_VERSION = "aiab-plan-ir/v0";
 
-const ident = z
-  .string()
-  .regex(/^[a-z][a-z0-9_]*$/, "use lower_snake_case: a letter, then letters, digits or _");
+const ident = z.string().regex(/^[a-z][a-z0-9_]*$/, "use lower_snake_case: a letter, then letters, digits or _");
 
-export const ref = z
-  .string()
-  .regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/, 'a reference is "<node_id>.<output>"');
+export const ref = z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/, 'a reference is "<node_id>.<output>"');
 
 /** What travels along an edge. Kept deliberately small. */
 export const PORT_TYPES = ["LogRecords", "Items", "Classifications", "Value"] as const;
@@ -179,13 +175,7 @@ export type RunPython = NodeOf<"run_python">;
 export type RunLlm = NodeOf<"run_llm">;
 export type FinalReport = NodeOf<"final_report">;
 
-export const NODE_TYPES: NodeType[] = [
-  "input_logs",
-  "classifier",
-  "run_python",
-  "run_llm",
-  "final_report",
-];
+export const NODE_TYPES: NodeType[] = ["input_logs", "classifier", "run_python", "run_llm", "final_report"];
 
 /** Canvas positions by node id. Kept out of the IR: moving a box changes no semantics. */
 export const LayoutSchema = z.record(z.string(), z.object({ x: z.number(), y: z.number() }));

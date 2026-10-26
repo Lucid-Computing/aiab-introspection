@@ -4,9 +4,17 @@ import type { NodeType, PlanNode } from "../plan/types";
 export const NODE_META: Record<NodeType, { label: string; glyph: string; blurb: string }> = {
   input_logs: { label: "Input Logs", glyph: "▤", blurb: "Where the audit starts: which log records are read." },
   classifier: { label: "Classifier", glyph: "◆", blurb: "Labels each session or record with a fixed set of classes." },
-  run_python: { label: "Run Python", glyph: "λ", blurb: "Deterministic computation: group, count, combine, threshold." },
+  run_python: {
+    label: "Run Python",
+    glyph: "λ",
+    blurb: "Deterministic computation: group, count, combine, threshold.",
+  },
   run_llm: { label: "Run LLM", glyph: "✦", blurb: "A general model call with your prompts and a declared output." },
-  final_report: { label: "Final Report", glyph: "■", blurb: "The only result that leaves the box, with its release policy." },
+  final_report: {
+    label: "Final Report",
+    glyph: "■",
+    blurb: "The only result that leaves the box, with its release policy.",
+  },
 };
 
 export const MODEL_OPTIONS = ["gpt-oss-safeguard-120b", "gpt-oss-120b", "llama-3.3-70b-instruct", "qwen3-32b"];

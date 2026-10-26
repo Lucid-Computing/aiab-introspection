@@ -1,92 +1,83 @@
-import { Handle, type NodeProps, Position } from "@xyflow/react";
-import { memo } from "react";
+import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
+import { memo, useEffect } from "react";
 import { type FlowNode, NEW_INPUT } from "../plan/graph";
 import { INPUT_RULES, outputPort } from "../plan/ports";
 import { NODE_META, summary } from "./nodeMeta";
 
-function PlanNodeView({ data, selected }: NodeProps<FlowNode>) {
+function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
   const meta = NODE_META[n.type];
   const rule = INPUT_RULES[n.type];
   const out = outputPort(n);
-  const errors = data.issues.filter((i) => i.severity === "error");
-  const warnings = data.issues.filter((i) => i.severity === "warning");
+  const errors = data.issues.filter((i) => i.severity === "error").length;
   const inputs = rule.kind === "fixed" ? rule.ports : Object.keys(n.inputs);
+  // Port names matter only when there is more than one to tell apart.
+  const named = rule.kind === "dynamic" && inputs.length > 1;
+  // React Flow caches handle positions per node; re-measure when the set of handles changes.
+  const updateInternals = useUpdateNodeInternals();
+  const handleKey = `${inputs.join(",")}|${out?.name ?? ""}`;
+  useEffect(() => updateInternals(id), [id, handleKey, updateInternals]);
 
   return (
     <div
-      className={`pn pn--${n.type}${selected ? " is-selected" : ""}${errors.length ? " has-error" : ""}`}
+      className={`pn pn--${n.type}${selected ? " is-selected" : ""}${errors ? " has-error" : ""}`}
       title={data.issues.map((i) => i.message).join("\n") || undefined}
     >
       <div className="pn-head">
-        <span className="pn-glyph" aria-hidden>
-          {meta.glyph}
+        <span className="pn-kind">
+          {meta.glyph} {meta.label}
         </span>
-        <span className="pn-kind">{meta.label}</span>
-        <span className="pn-id">{n.id}</span>
+        {errors > 0 && <span className="pn-err">!</span>}
       </div>
-      <div className="pn-body">
-        <div className="pn-title">{n.title || meta.label}</div>
-        {summary(n).map((line, k) => (
-          <div key={k} className={k === 0 && n.type === "run_python" ? "pn-line mono" : "pn-line"}>
-            {line}
-          </div>
-        ))}
-        {n.type === "classifier" && (
-          <div className="pn-chips">
-            {n.config.labels.map((l) => (
-              <span key={l.name} className={`pn-chip${l.flag ? " is-flag" : ""}`}>
-                {l.name}
-              </span>
-            ))}
-          </div>
-        )}
-        {n.type === "final_report" && (
-          <ul className="pn-fields">
-            {n.config.fields.map((f) => (
-              <li key={f.name}>
-                <span className="mono">{f.name}</span>: {f.type}
-              </li>
-            ))}
-            {!n.config.fields.length && <li className="muted">no fields yet</li>}
-          </ul>
-        )}
-      </div>
+      <div className="pn-title">{n.title || n.id}</div>
+      <div className="pn-line">{detail(n)}</div>
 
-      {(inputs.length > 0 || rule.kind === "dynamic") && (
-        <div className="pn-ports pn-ports--in">
+      {named ? (
+        <div className="pn-ins">
           {inputs.map((name) => (
             <div key={name} className="pn-port">
               <Handle type="target" position={Position.Left} id={name} className="pn-handle" />
               <span>{name}</span>
             </div>
           ))}
-          {rule.kind === "dynamic" && (
-            <div className="pn-port pn-port--new" title="Drop a connection here to add an input">
-              <Handle type="target" position={Position.Left} id={NEW_INPUT} className="pn-handle pn-handle--new" />
-              <span>+ input</span>
-            </div>
-          )}
         </div>
+      ) : (
+        inputs.map((name) => (
+          <Handle key={name} type="target" position={Position.Left} id={name} className="pn-handle" title={name} />
+        ))
+      )}
+      {rule.kind === "dynamic" && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          id={NEW_INPUT}
+          className="pn-handle pn-handle--new"
+          title="Drop here to add an input"
+        />
       )}
       {out && (
-        <div className="pn-ports pn-ports--out">
-          <div className="pn-port">
-            <span>
-              {out.name} <span className="pn-type">{out.type}</span>
-            </span>
-            <Handle type="source" position={Position.Right} id={out.name} className="pn-handle" />
-          </div>
-        </div>
-      )}
-      {(errors.length > 0 || warnings.length > 0) && (
-        <div className="pn-issues">
-          {errors.length > 0 && <span className="pn-err">{errors.length} error{errors.length > 1 ? "s" : ""}</span>}
-          {warnings.length > 0 && <span className="pn-warn">{warnings.length} warning{warnings.length > 1 ? "s" : ""}</span>}
-        </div>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id={out.name}
+          className="pn-handle"
+          title={`${out.name}: ${out.type}`}
+        />
       )}
     </div>
   );
+}
+
+/** One line: what the node does, in the fewest words. */
+function detail(n: FlowNode["data"]["node"]): string {
+  switch (n.type) {
+    case "classifier":
+      return n.config.labels.map((l) => (l.flag ? `${l.name}*` : l.name)).join(" · ");
+    case "final_report":
+      return n.config.fields.map((f) => f.name).join(", ") || "no fields yet";
+    default:
+      return summary(n)[0];
+  }
 }
 
 export default memo(PlanNodeView);

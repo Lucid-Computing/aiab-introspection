@@ -59,15 +59,19 @@ export default function CodePane({ state, dispatch, lint }: Props) {
           <span className="code-state ok">In sync with the graph</span>
         )}
         <button
-          className="btn btn--ghost btn--sm"
-          title="Rewrite the code in canonical form (defaults filled, keys ordered)"
+          className="bar-link"
+          title="Rewrite the code in canonical form (keys ordered, defaults left out)"
           disabled={blocked}
           onClick={() => dispatch({ type: "editYaml", text: planToYaml(state.plan) })}
         >
           Format
         </button>
         {blocked && (
-          <button className="btn btn--ghost btn--sm" title="Discard the invalid edits" onClick={() => dispatch({ type: "editYaml", text: planToYaml(state.plan) })}>
+          <button
+            className="bar-link"
+            title="Discard the invalid edits"
+            onClick={() => dispatch({ type: "editYaml", text: planToYaml(state.plan) })}
+          >
             Revert to last valid
           </button>
         )}

@@ -3,28 +3,19 @@ import { Graph, layout as dagreLayout } from "@dagrejs/dagre";
 import { splitRef } from "./ports";
 import type { Layout, Plan, PlanNode } from "./types";
 
-export const NODE_W = 260;
-export const NODE_H = 130;
+export const NODE_W = 220;
+export const NODE_H = 80;
 
-/** Rough rendered height, so taller boxes (classifiers, long reports) do not overlap. */
+/** Rough rendered height: nodes with several named inputs list them. */
 export function nodeHeight(n: PlanNode): number {
-  const ports = 18 * Math.max(1, Object.keys(n.inputs).length + 1);
-  switch (n.type) {
-    case "classifier":
-      return 175 + 18 * Math.ceil(n.config.labels.length / 3);
-    case "final_report":
-      return 90 + 17 * n.config.fields.length + ports;
-    case "input_logs":
-      return 125;
-    default:
-      return 105 + ports;
-  }
+  const inputs = Object.keys(n.inputs).length;
+  return NODE_H + (n.type !== "classifier" && inputs > 1 ? 10 + 17 * inputs : 0);
 }
 
 /** Left-to-right layered layout of the whole plan. */
 export function autoLayout(plan: Plan): Layout {
   const g = new Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 90, marginx: 20, marginy: 20 });
+  g.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 70, marginx: 20, marginy: 20 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of plan.nodes) g.setNode(n.id, { width: NODE_W, height: nodeHeight(n) });
   for (const n of plan.nodes)

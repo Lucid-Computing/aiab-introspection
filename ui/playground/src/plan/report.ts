@@ -29,8 +29,7 @@ export const CLASSIFICATION_PATHS = [
 
 export function resolveReportPath(plan: Plan, report: FinalReport, from: string): Resolved {
   const [input, ...rest] = from.split(".");
-  if (!(input in report.inputs))
-    return { ok: false, message: `"${input}" is not an input of this report` };
+  if (!(input in report.inputs)) return { ok: false, message: `"${input}" is not an input of this report` };
   const src = sourceOf(plan, report, input);
   if (!src) return { ok: false, message: `input "${input}" is not connected` };
   const out =
@@ -43,16 +42,21 @@ export function resolveReportPath(plan: Plan, report: FinalReport, from: string)
 
   if (out.type === "Value") {
     if (rest.length !== 1)
-      return { ok: false, message: `use "${input}.<field>" (fields: ${Object.keys(out.fields).join(", ") || "none declared"})` };
+      return {
+        ok: false,
+        message: `use "${input}.<field>" (fields: ${Object.keys(out.fields).join(", ") || "none declared"})`,
+      };
     const t = out.fields[rest[0]];
-    return t
-      ? { ok: true, type: t }
-      : { ok: false, message: `"${src.id}" declares no field "${rest[0]}"` };
+    return t ? { ok: true, type: t } : { ok: false, message: `"${src.id}" declares no field "${rest[0]}"` };
   }
   if (out.type === "Classifications") {
     const labels = classifierLabels(src);
     const checkLabel = (l: string | undefined): string | null =>
-      !l ? "missing label" : labels && !labels.includes(l) ? `unknown label "${l}" (labels: ${labels.join(", ")})` : null;
+      !l
+        ? "missing label"
+        : labels && !labels.includes(l)
+          ? `unknown label "${l}" (labels: ${labels.join(", ")})`
+          : null;
     const [head, label, ...extra] = rest;
     if (extra.length) return { ok: false, message: `path too long` };
     if (head === "count" && label === undefined) return { ok: true, type: "integer" };

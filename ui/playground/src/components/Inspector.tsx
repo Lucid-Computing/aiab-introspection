@@ -1,7 +1,7 @@
 import { type Dispatch, useMemo } from "react";
 import { LOG_SOURCES, selectRecords, sourceAgents } from "../plan/mockLogs";
 import { connect, deleteNodes, disconnect, renameInput, renameNode, renameOutput, updateNode } from "../plan/ops";
-import { acceptedTypes, accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
+import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, reportJsonSchema, sourceOf } from "../plan/report";
 import { simulate } from "../plan/simulate";
 import {
@@ -21,7 +21,7 @@ import {
 } from "../plan/types";
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
-import { CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
+import { Advanced, CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
 import { MODEL_OPTIONS, NODE_META } from "./nodeMeta";
 
 interface Props {
@@ -45,13 +45,13 @@ export default function Inspector({ plan, selected, issues, dispatch }: Props) {
 
   return (
     <div className={`insp insp--${node.type}`}>
-      <div className="insp-head">
+      <div className="insp-head" title={meta.blurb}>
         <span className="pn-glyph">{meta.glyph}</span> {meta.label}
-        <button className="btn btn--ghost btn--sm" onClick={() => dispatch({ type: "select", id: null })}>
-          Close
+        <CommitInput className="insp-id mono" value={node.id} onCommit={(v) => op(renameNode(plan, node.id, v), v)} />
+        <button className="x" title="Close" onClick={() => dispatch({ type: "select", id: null })}>
+          ×
         </button>
       </div>
-      <p className="insp-blurb">{meta.blurb}</p>
       {own.length > 0 && (
         <ul className="insp-issues">
           {own.map((i, k) => (
@@ -61,11 +61,12 @@ export default function Inspector({ plan, selected, issues, dispatch }: Props) {
           ))}
         </ul>
       )}
-      <Field label="Node id" hint="Stable identifier; references to it are renamed too.">
-        <CommitInput className="mono" value={node.id} onCommit={(v) => op(renameNode(plan, node.id, v), v)} />
-      </Field>
       <Field label="Title">
-        <input value={node.title ?? ""} placeholder={meta.label} onChange={(e) => set({ ...node, title: e.target.value || undefined })} />
+        <input
+          value={node.title ?? ""}
+          placeholder={meta.label}
+          onChange={(e) => set({ ...node, title: e.target.value || undefined })}
+        />
       </Field>
       <InputsEditor plan={plan} node={node} op={op} />
 
@@ -77,7 +78,7 @@ export default function Inspector({ plan, selected, issues, dispatch }: Props) {
 
       <div className="insp-foot">
         <button
-          className="btn btn--ghost btn--sm danger"
+          className="linklike danger"
           onClick={() => dispatch({ type: "update", f: (p) => deleteNodes(p, [node.id]) })}
         >
           Delete node
@@ -94,19 +95,27 @@ function PlanPanel({ plan, issues, dispatch }: { plan: Plan; issues: Issue[]; di
   return (
     <div className="insp">
       <div className="insp-head">Plan</div>
-      <p className="insp-blurb">Select a node to configure it. Drag blocks from the left, connect an output (right edge) to an input (left edge).</p>
+      <p className="insp-blurb">Select a block to edit it.</p>
       <Field label="Plan id">
         <CommitInput
           className="mono"
           value={plan.plan_id}
-          onCommit={(v) => (/^[a-z][a-z0-9_]*$/.test(v) ? setMeta({ plan_id: v }) : dispatch({ type: "toast", text: "plan_id: use lower_snake_case", kind: "error" }))}
+          onCommit={(v) =>
+            /^[a-z][a-z0-9_]*$/.test(v)
+              ? setMeta({ plan_id: v })
+              : dispatch({ type: "toast", text: "plan_id: use lower_snake_case", kind: "error" })
+          }
         />
       </Field>
       <Field label="Title">
         <input value={plan.title} onChange={(e) => setMeta({ title: e.target.value })} />
       </Field>
       <Field label="Description">
-        <textarea rows={3} value={plan.description ?? ""} onChange={(e) => setMeta({ description: e.target.value || undefined })} />
+        <textarea
+          rows={3}
+          value={plan.description ?? ""}
+          onChange={(e) => setMeta({ description: e.target.value || undefined })}
+        />
       </Field>
       <div className="f-label">Issues</div>
       {issues.length === 0 ? (
@@ -136,19 +145,24 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
   // Outputs this node could read without a cycle or a type mismatch.
   const candidates = plan.nodes
     .map((s) => ({ s, out: outputPort(s) }))
-    .filter(({ s, out }) => out && s.id !== node.id && accepts(node.type, out.type) && !wouldCycle(plan, s.id, node.id));
+    .filter(
+      ({ s, out }) => out && s.id !== node.id && accepts(node.type, out.type) && !wouldCycle(plan, s.id, node.id),
+    );
   const names = rule.kind === "fixed" ? rule.ports : Object.keys(node.inputs);
   return (
     <div className="f">
       <span className="f-label">Inputs</span>
-      <span className="f-hint">Accepts {acceptedTypes(node.type).join(", ")}.</span>
       <table className="io">
         <tbody>
           {names.map((name) => (
             <tr key={name}>
               <td>
                 {rule.kind === "dynamic" ? (
-                  <CommitInput className="mono" value={name} onCommit={(v) => op(renameInput(plan, node.id, name, v))} />
+                  <CommitInput
+                    className="mono"
+                    value={name}
+                    onCommit={(v) => op(renameInput(plan, node.id, name, v))}
+                  />
                 ) : (
                   <span className="mono">{name}</span>
                 )}
@@ -164,9 +178,10 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
                   }}
                 >
                   <option value="">— not connected —</option>
-                  {node.inputs[name] && !candidates.some(({ s, out }) => `${s.id}.${out!.name}` === node.inputs[name]) && (
-                    <option value={node.inputs[name]}>{node.inputs[name]}</option>
-                  )}
+                  {node.inputs[name] &&
+                    !candidates.some(({ s, out }) => `${s.id}.${out!.name}` === node.inputs[name]) && (
+                      <option value={node.inputs[name]}>{node.inputs[name]}</option>
+                    )}
                   {candidates.map(({ s, out }) => (
                     <option key={s.id} value={`${s.id}.${out!.name}`}>
                       {s.id}.{out!.name} ({out!.type})
@@ -177,7 +192,11 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
               </td>
               {rule.kind === "dynamic" && (
                 <td>
-                  <button className="x" title="Remove input" onClick={() => op({ ok: true, plan: disconnect(plan, node.id, name) })}>
+                  <button
+                    className="x"
+                    title="Remove input"
+                    onClick={() => op({ ok: true, plan: disconnect(plan, node.id, name) })}
+                  >
                     ×
                   </button>
                 </td>
@@ -190,7 +209,9 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
         <select
           className="add-input"
           value=""
-          onChange={(e) => e.target.value && op(connect(plan, { source: e.target.value, target: node.id, targetHandle: "__new__" }))}
+          onChange={(e) =>
+            e.target.value && op(connect(plan, { source: e.target.value, target: node.id, targetHandle: "__new__" }))
+          }
         >
           <option value="">+ add input from…</option>
           {candidates.map(({ s, out }) => (
@@ -224,8 +245,11 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
   const records = useMemo(() => selectRecords(node), [node]);
   return (
     <>
-      <Field label="Log source" hint="Synthetic sources only in this prototype.">
-        <select value={c.source} onChange={(e) => cfg({ source: e.target.value, input_scope: { ...c.input_scope, agents: [] } })}>
+      <Field label="Log source">
+        <select
+          value={c.source}
+          onChange={(e) => cfg({ source: e.target.value, input_scope: { ...c.input_scope, agents: [] } })}
+        >
           {!LOG_SOURCES[c.source] && <option value={c.source}>{c.source} (unknown)</option>}
           {Object.entries(LOG_SOURCES).map(([k, s]) => (
             <option key={k} value={k}>
@@ -235,7 +259,7 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
         </select>
       </Field>
       <div className="f">
-        <span className="f-label">Agents (input_scope)</span>
+        <span className="f-label">Agents (none ticked = all)</span>
         <div className="checks">
           {agents.map((a) => (
             <label key={a}>
@@ -246,7 +270,9 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
                   cfg({
                     input_scope: {
                       ...c.input_scope,
-                      agents: e.target.checked ? [...c.input_scope.agents, a] : c.input_scope.agents.filter((x) => x !== a),
+                      agents: e.target.checked
+                        ? [...c.input_scope.agents, a]
+                        : c.input_scope.agents.filter((x) => x !== a),
                     },
                   })
                 }
@@ -255,43 +281,57 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
             </label>
           ))}
         </div>
-        <span className="f-hint">None ticked = every agent.</span>
       </div>
-      <div className="row2">
-        <Field label="Window start">
-          <input className="mono" placeholder="2026-10-01T00:00:00Z" value={c.input_scope.window_start ?? ""} onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_start: e.target.value || undefined } })} />
-        </Field>
-        <Field label="Window end">
-          <input className="mono" placeholder="(open)" value={c.input_scope.window_end ?? ""} onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_end: e.target.value || undefined } })} />
-        </Field>
-      </div>
-      <div className="f">
-        <span className="f-label">Record kinds</span>
-        <div className="checks">
-          {RECORD_KINDS.map((k) => (
-            <label key={k}>
-              <input
-                type="checkbox"
-                checked={c.filter.kinds.includes(k)}
-                onChange={(e) =>
-                  cfg({ filter: { ...c.filter, kinds: RECORD_KINDS.filter((x) => (x === k ? e.target.checked : c.filter.kinds.includes(x))) } })
-                }
-              />
-              {k}
-            </label>
-          ))}
-        </div>
-      </div>
-      <Field label="Keywords" hint="One per line. A record must contain one; empty keeps all.">
+      <Field label="Keywords (one per line, empty = all)">
         <LinesInput value={c.filter.keywords} onChange={(keywords) => cfg({ filter: { ...c.filter, keywords } })} />
       </Field>
-      <Field label="Max records">
-        <NumberInput value={c.max_records} min={1} onChange={(max_records) => cfg({ max_records })} />
-      </Field>
+      <Advanced>
+        <div className="row2">
+          <Field label="Window start">
+            <input
+              className="mono"
+              placeholder="2026-10-01T00:00:00Z"
+              value={c.input_scope.window_start ?? ""}
+              onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_start: e.target.value || undefined } })}
+            />
+          </Field>
+          <Field label="Window end">
+            <input
+              className="mono"
+              placeholder="(open)"
+              value={c.input_scope.window_end ?? ""}
+              onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_end: e.target.value || undefined } })}
+            />
+          </Field>
+        </div>
+        <div className="f">
+          <span className="f-label">Record kinds</span>
+          <div className="checks">
+            {RECORD_KINDS.map((k) => (
+              <label key={k}>
+                <input
+                  type="checkbox"
+                  checked={c.filter.kinds.includes(k)}
+                  onChange={(e) =>
+                    cfg({
+                      filter: {
+                        ...c.filter,
+                        kinds: RECORD_KINDS.filter((x) => (x === k ? e.target.checked : c.filter.kinds.includes(x))),
+                      },
+                    })
+                  }
+                />
+                {k}
+              </label>
+            ))}
+          </div>
+        </div>
+        <Field label="Max records">
+          <NumberInput value={c.max_records} min={1} onChange={(max_records) => cfg({ max_records })} />
+        </Field>
+      </Advanced>
       <div className="f">
-        <span className="f-label">
-          Preview · {records.length} synthetic records
-        </span>
+        <span className="f-label">Preview · {records.length} synthetic records</span>
         <div className="rec-preview">
           <table>
             <thead>
@@ -326,24 +366,16 @@ function ClassifierForm({ node, set }: { node: Classifier; set: (n: PlanNode) =>
   const cfg = (patch: Partial<Classifier["config"]>) => set({ ...node, config: { ...c, ...patch } });
   const contract = {
     item_id: "s01",
-    label: c.labels.map((l) => l.name).concat(c.threshold !== undefined ? ["abstain"] : []).join(" | ") || "…",
+    label:
+      c.labels
+        .map((l) => l.name)
+        .concat(c.threshold !== undefined ? ["abstain"] : [])
+        .join(" | ") || "…",
     ...(c.output_contract.score ? { score: "0.0 – 1.0" } : {}),
     ...(c.output_contract.evidence_ids ? { evidence_ids: ["r001", "r003"] } : {}),
   };
   return (
     <>
-      <ModelField value={c.model.id} onChange={(id) => cfg({ model: { ...c.model, id } })} />
-      <div className="row2">
-        <Field label="Classify each">
-          <select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as "session" | "record" })}>
-            <option value="session">session</option>
-            <option value="record">record</option>
-          </select>
-        </Field>
-        <Field label="Window (records/call)">
-          <NumberInput value={c.window} min={1} onChange={(window) => cfg({ window })} />
-        </Field>
-      </div>
       <Field label="Instructions" hint="The question the classifier answers about each item.">
         <textarea rows={5} value={c.instructions} onChange={(e) => cfg({ instructions: e.target.value })} />
       </Field>
@@ -360,11 +392,16 @@ function ClassifierForm({ node, set }: { node: Classifier; set: (n: PlanNode) =>
           </thead>
           <tbody>
             {c.labels.map((l, k) => {
-              const put = (patch: Partial<typeof l>) => cfg({ labels: c.labels.map((x, j) => (j === k ? { ...x, ...patch } : x)) });
+              const put = (patch: Partial<typeof l>) =>
+                cfg({ labels: c.labels.map((x, j) => (j === k ? { ...x, ...patch } : x)) });
               return (
                 <tr key={k}>
                   <td>
-                    <CommitInput className="mono" value={l.name} onCommit={(name) => /^[a-z][a-z0-9_]*$/.test(name) && put({ name })} />
+                    <CommitInput
+                      className="mono"
+                      value={l.name}
+                      onCommit={(name) => /^[a-z][a-z0-9_]*$/.test(name) && put({ name })}
+                    />
                   </td>
                   <td>
                     <input value={l.description} onChange={(e) => put({ description: e.target.value })} />
@@ -394,45 +431,83 @@ function ClassifierForm({ node, set }: { node: Classifier; set: (n: PlanNode) =>
           + label
         </button>
       </div>
-      <div className="row2">
-        <Field label="Confidence threshold" hint="Below it the label is “abstain”.">
-          <div className="inline-check">
-            <input type="checkbox" checked={c.threshold !== undefined} onChange={(e) => cfg({ threshold: e.target.checked ? 0.7 : undefined })} />
-            {c.threshold !== undefined && <NumberInput value={c.threshold} min={0} max={1} step={0.05} onChange={(threshold) => cfg({ threshold })} />}
-          </div>
-        </Field>
+      <Field label="Confidence threshold" hint="Below it the item is labelled “abstain”.">
+        <div className="inline-check">
+          <input
+            type="checkbox"
+            checked={c.threshold !== undefined}
+            onChange={(e) => cfg({ threshold: e.target.checked ? 0.7 : undefined })}
+          />
+          {c.threshold !== undefined && (
+            <NumberInput value={c.threshold} min={0} max={1} step={0.05} onChange={(threshold) => cfg({ threshold })} />
+          )}
+        </div>
+      </Field>
+      <Advanced>
+        <ModelField value={c.model.id} onChange={(id) => cfg({ model: { ...c.model, id } })} />
+        <div className="row2">
+          <Field label="Classify each">
+            <select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as "session" | "record" })}>
+              <option value="session">session</option>
+              <option value="record">record</option>
+            </select>
+          </Field>
+          <Field label="Window (records/call)">
+            <NumberInput value={c.window} min={1} onChange={(window) => cfg({ window })} />
+          </Field>
+        </div>
         <Field label="Output contract">
           <div className="checks">
             <label>
               <input type="checkbox" checked disabled /> label
             </label>
             <label>
-              <input type="checkbox" checked={c.output_contract.score} onChange={(e) => cfg({ output_contract: { ...c.output_contract, score: e.target.checked } })} /> score
+              <input
+                type="checkbox"
+                checked={c.output_contract.score}
+                onChange={(e) => cfg({ output_contract: { ...c.output_contract, score: e.target.checked } })}
+              />{" "}
+              score
             </label>
             <label>
-              <input type="checkbox" checked={c.output_contract.evidence_ids} onChange={(e) => cfg({ output_contract: { ...c.output_contract, evidence_ids: e.target.checked } })} /> evidence_ids
+              <input
+                type="checkbox"
+                checked={c.output_contract.evidence_ids}
+                onChange={(e) => cfg({ output_contract: { ...c.output_contract, evidence_ids: e.target.checked } })}
+              />{" "}
+              evidence_ids
             </label>
           </div>
         </Field>
-      </div>
-      <pre className="contract">{JSON.stringify(contract, null, 2)}</pre>
-      <Field label="Positive examples" hint="One per line: should get a flagged label.">
-        <LinesInput value={c.positive_examples} onChange={(positive_examples) => cfg({ positive_examples })} />
-      </Field>
-      <Field label="Negative examples" hint="One per line: should not be flagged.">
-        <LinesInput value={c.negative_examples} onChange={(negative_examples) => cfg({ negative_examples })} />
-      </Field>
+        <pre className="contract">{JSON.stringify(contract, null, 2)}</pre>
+        <Field label="Positive examples" hint="One per line: should get a flagged label.">
+          <LinesInput value={c.positive_examples} onChange={(positive_examples) => cfg({ positive_examples })} />
+        </Field>
+        <Field label="Negative examples" hint="One per line: should not be flagged.">
+          <LinesInput value={c.negative_examples} onChange={(negative_examples) => cfg({ negative_examples })} />
+        </Field>
+      </Advanced>
     </>
   );
 }
 
-function OutputEditor({ plan, node, op, set }: { plan: Plan; node: RunPython | RunLlm; op: Op; set: (n: PlanNode) => void }) {
+function OutputEditor({
+  plan,
+  node,
+  op,
+  set,
+}: {
+  plan: Plan;
+  node: RunPython | RunLlm;
+  op: Op;
+  set: (n: PlanNode) => void;
+}) {
   const out = node.config.output;
   const put = (o: Output) => set({ ...node, config: { ...node.config, output: o } } as PlanNode);
   const fields = Object.entries(out.fields);
   return (
     <div className="f">
-      <span className="f-label">Declared output</span>
+      <span className="f-label">Output</span>
       <div className="row2">
         <CommitInput className="mono" value={out.name} onCommit={(v) => op(renameOutput(plan, node.id, v))} />
         <select value={out.type} onChange={(e) => put({ ...out, type: e.target.value as Output["type"] })}>
@@ -443,7 +518,6 @@ function OutputEditor({ plan, node, op, set }: { plan: Plan; node: RunPython | R
       </div>
       {out.type === "Value" && (
         <>
-          <span className="f-hint">Fields of the Value (its schema). Reports can read these.</span>
           <table className="io">
             <tbody>
               {fields.map(([name, t]) => (
@@ -453,19 +527,27 @@ function OutputEditor({ plan, node, op, set }: { plan: Plan; node: RunPython | R
                       className="mono"
                       value={name}
                       onCommit={(v) =>
-                        /^[a-z][a-z0-9_]*$/.test(v) && !(v in out.fields) && put({ ...out, fields: Object.fromEntries(fields.map(([k, x]) => [k === name ? v : k, x])) })
+                        /^[a-z][a-z0-9_]*$/.test(v) &&
+                        !(v in out.fields) &&
+                        put({ ...out, fields: Object.fromEntries(fields.map(([k, x]) => [k === name ? v : k, x])) })
                       }
                     />
                   </td>
                   <td>
-                    <select value={t} onChange={(e) => put({ ...out, fields: { ...out.fields, [name]: e.target.value as FieldType } })}>
+                    <select
+                      value={t}
+                      onChange={(e) => put({ ...out, fields: { ...out.fields, [name]: e.target.value as FieldType } })}
+                    >
                       {FIELD_TYPES.map((f) => (
                         <option key={f}>{f}</option>
                       ))}
                     </select>
                   </td>
                   <td>
-                    <button className="x" onClick={() => put({ ...out, fields: Object.fromEntries(fields.filter(([k]) => k !== name)) })}>
+                    <button
+                      className="x"
+                      onClick={() => put({ ...out, fields: Object.fromEntries(fields.filter(([k]) => k !== name)) })}
+                    >
                       ×
                     </button>
                   </td>
@@ -493,8 +575,18 @@ function RunPythonForm({ plan, node, set, op }: { plan: Plan; node: RunPython; s
   const args = Object.keys(node.inputs);
   return (
     <>
-      <Field label="Python" hint={<>Called as <code>run({args.join(", ") || "…"})</code>. Not executed in the browser.</>}>
-        <PythonEditor value={node.config.code} onChange={(code) => set({ ...node, config: { ...node.config, code } })} />
+      <Field
+        label="Python"
+        hint={
+          <>
+            Called as <code>run({args.join(", ") || "…"})</code>.
+          </>
+        }
+      >
+        <PythonEditor
+          value={node.config.code}
+          onChange={(code) => set({ ...node, config: { ...node.config, code } })}
+        />
       </Field>
       <OutputEditor plan={plan} node={node} op={op} set={set} />
     </>
@@ -506,25 +598,20 @@ function RunLlmForm({ plan, node, set, op }: { plan: Plan; node: RunLlm; set: (n
   const cfg = (patch: Partial<RunLlm["config"]>) => set({ ...node, config: { ...c, ...patch } });
   return (
     <>
-      <ModelField value={c.model.id} onChange={(id) => cfg({ model: { ...c.model, id } })} />
-      <div className="row2">
-        <Field label="Temperature">
-          <NumberInput value={c.model.temperature} min={0} max={2} step={0.1} onChange={(temperature) => cfg({ model: { ...c.model, temperature } })} />
-        </Field>
-        <Field label="Max output tokens">
-          <NumberInput value={c.model.max_output_tokens} min={1} onChange={(max_output_tokens) => cfg({ model: { ...c.model, max_output_tokens } })} />
-        </Field>
-      </div>
       <Field label="System prompt">
-        <textarea rows={4} value={c.system_prompt} onChange={(e) => cfg({ system_prompt: e.target.value })} />
+        <textarea rows={3} value={c.system_prompt} onChange={(e) => cfg({ system_prompt: e.target.value })} />
       </Field>
       <Field
-        label="User prompt template"
+        label="User prompt"
         hint={
           <>
             Insert an input:{" "}
             {Object.keys(node.inputs).map((k) => (
-              <button key={k} className="linklike mono" onClick={() => cfg({ user_prompt: `${c.user_prompt}{{${k}}}` })}>
+              <button
+                key={k}
+                className="linklike mono"
+                onClick={() => cfg({ user_prompt: `${c.user_prompt}{{${k}}}` })}
+              >
                 {`{{${k}}}`}
               </button>
             ))}
@@ -532,10 +619,35 @@ function RunLlmForm({ plan, node, set, op }: { plan: Plan; node: RunLlm; set: (n
           </>
         }
       >
-        <textarea rows={7} className="mono-area" value={c.user_prompt} onChange={(e) => cfg({ user_prompt: e.target.value })} />
+        <textarea
+          rows={7}
+          className="mono-area"
+          value={c.user_prompt}
+          onChange={(e) => cfg({ user_prompt: e.target.value })}
+        />
       </Field>
       <OutputEditor plan={plan} node={node} op={op} set={set} />
-      <p className="f-hint">Items output: one call per item of the list input. Value output: one call in total.</p>
+      <Advanced>
+        <ModelField value={c.model.id} onChange={(id) => cfg({ model: { ...c.model, id } })} />
+        <div className="row2">
+          <Field label="Temperature">
+            <NumberInput
+              value={c.model.temperature}
+              min={0}
+              max={2}
+              step={0.1}
+              onChange={(temperature) => cfg({ model: { ...c.model, temperature } })}
+            />
+          </Field>
+          <Field label="Max output tokens">
+            <NumberInput
+              value={c.model.max_output_tokens}
+              min={1}
+              onChange={(max_output_tokens) => cfg({ model: { ...c.model, max_output_tokens } })}
+            />
+          </Field>
+        </div>
+      </Advanced>
     </>
   );
 }
@@ -566,8 +678,7 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
   return (
     <>
       <div className="f">
-        <span className="f-label">Released fields</span>
-        <span className="f-hint">Only these fields leave the box. Pick from what the inputs expose.</span>
+        <span className="f-label">Released fields (the only output)</span>
         <table className="io">
           <thead>
             <tr>
@@ -579,14 +690,22 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
           </thead>
           <tbody>
             {c.fields.map((f, k) => {
-              const put = (patch: Partial<typeof f>) => cfg({ fields: c.fields.map((x, j) => (j === k ? { ...x, ...patch } : x)) });
+              const put = (patch: Partial<typeof f>) =>
+                cfg({ fields: c.fields.map((x, j) => (j === k ? { ...x, ...patch } : x)) });
               return (
                 <tr key={k}>
                   <td>
-                    <CommitInput className="mono" value={f.name} onCommit={(name) => /^[a-z][a-z0-9_]*$/.test(name) && put({ name })} />
+                    <CommitInput
+                      className="mono"
+                      value={f.name}
+                      onCommit={(name) => /^[a-z][a-z0-9_]*$/.test(name) && put({ name })}
+                    />
                   </td>
                   <td>
-                    <select value={f.from} onChange={(e) => put({ from: e.target.value, type: typeOf(e.target.value) ?? f.type })}>
+                    <select
+                      value={f.from}
+                      onChange={(e) => put({ from: e.target.value, type: typeOf(e.target.value) ?? f.type })}
+                    >
                       {!paths.some((p) => p.path === f.from) && <option value={f.from}>{f.from} (unresolved)</option>}
                       {paths.map((p) => (
                         <option key={p.path} value={p.path}>
@@ -627,32 +746,47 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
           + field
         </button>
       </div>
-      <div className="f">
-        <span className="f-label">Release policy</span>
-        <label className="inline-check">
-          <input type="checkbox" checked={c.privacy.allow_free_text} onChange={(e) => cfg({ privacy: { ...c.privacy, allow_free_text: e.target.checked } })} />
-          Allow free-text (string) fields
-        </label>
-        <div className="row2">
-          <Field label="Min count" hint="Smaller counts are released as 0.">
-            <NumberInput value={c.privacy.min_count} min={1} onChange={(min_count) => cfg({ privacy: { ...c.privacy, min_count } })} />
-          </Field>
-          <Field label="Max result bytes">
-            <NumberInput value={c.privacy.max_result_bytes} min={1} onChange={(max_result_bytes) => cfg({ privacy: { ...c.privacy, max_result_bytes } })} />
-          </Field>
+      <Advanced>
+        <div className="f">
+          <span className="f-label">Release policy</span>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={c.privacy.allow_free_text}
+              onChange={(e) => cfg({ privacy: { ...c.privacy, allow_free_text: e.target.checked } })}
+            />
+            Allow free-text (string) fields
+          </label>
+          <div className="row2">
+            <Field label="Min count" hint="Smaller counts are released as 0.">
+              <NumberInput
+                value={c.privacy.min_count}
+                min={1}
+                onChange={(min_count) => cfg({ privacy: { ...c.privacy, min_count } })}
+              />
+            </Field>
+            <Field label="Max result bytes">
+              <NumberInput
+                value={c.privacy.max_result_bytes}
+                min={1}
+                onChange={(max_result_bytes) => cfg({ privacy: { ...c.privacy, max_result_bytes } })}
+              />
+            </Field>
+          </div>
         </div>
-      </div>
-      <details className="f">
-        <summary className="f-label">Output schema (JSON Schema)</summary>
-        <pre className="contract">{JSON.stringify(reportJsonSchema(node), null, 2)}</pre>
-      </details>
+        <details className="f">
+          <summary className="f-label">Output schema (JSON Schema)</summary>
+          <pre className="contract">{JSON.stringify(reportJsonSchema(node), null, 2)}</pre>
+        </details>
+      </Advanced>
       <div className="f">
         <span className="f-label">
           Preview <span className="sim-badge">simulated</span>
         </span>
         <pre className="contract">{JSON.stringify(sim.report, null, 2)}</pre>
         <span className={`f-hint${sim.reportBytes > c.privacy.max_result_bytes ? " danger" : ""}`}>
-          {sim.reportBytes} of {c.privacy.max_result_bytes} bytes. Mock values from synthetic logs; nothing was executed.
+          {sim.reportBytes} of {c.privacy.max_result_bytes} bytes. Mock values from synthetic logs; nothing was
+          executed.
         </span>
       </div>
     </>

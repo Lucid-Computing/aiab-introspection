@@ -123,9 +123,7 @@ export function structuralIssues(plan: Plan): Issue[] {
 
 /** Upstream node ids of each node (deduplicated, in binding order). */
 export function upstream(plan: Plan): Map<string, string[]> {
-  return new Map(
-    plan.nodes.map((n) => [n.id, [...new Set(Object.values(n.inputs).map((r) => splitRef(r)[0]))]]),
-  );
+  return new Map(plan.nodes.map((n) => [n.id, [...new Set(Object.values(n.inputs).map((r) => splitRef(r)[0]))]]));
 }
 
 /** A cycle as a list of ids in data-flow order (first repeated at the end), or null. */

@@ -82,7 +82,8 @@ function classify(node: Classifier, items: Item[]): Classification[] {
       .sort((a, b) => b.raw - a.raw);
     const [best, second] = scored;
     const score = best ? round(0.5 + 0.45 * (best.raw / (best.raw + (second?.raw ?? 0) + 0.5))) : 0;
-    const label = best && (node.config.threshold === undefined || score >= node.config.threshold) ? best.label : "abstain";
+    const label =
+      best && (node.config.threshold === undefined || score >= node.config.threshold) ? best.label : "abstain";
     // Evidence: the records of this item; for record-level items that is the record itself.
     return { item_id: item.id, label, score, evidence_ids: item.record_ids.slice(0, 3) };
   });
@@ -99,21 +100,32 @@ function statsOf(name: string, v: SimValue): Stat {
     return { name, count: v.value.length, flagged: v.value.filter((c) => v.flagLabels.includes(c.label)).length };
   if (v.type === "Value") {
     const nums = Object.values(v.value);
-    return { name, count: nums.filter((x) => typeof x === "number").length, flagged: nums.filter((x) => x === true).length };
+    return {
+      name,
+      count: nums.filter((x) => typeof x === "number").length,
+      flagged: nums.filter((x) => x === true).length,
+    };
   }
   return { name, count: v.value.length, flagged: 0 };
 }
 
-function fillValue(node: PlanNode, out: Output, inputs: [string, SimValue][]): Record<string, boolean | number | string> {
+function fillValue(
+  node: PlanNode,
+  out: Output,
+  inputs: [string, SimValue][],
+): Record<string, boolean | number | string> {
   const stats = inputs.map(([k, v]) => statsOf(k, v));
   const pick = (field: string): Stat => {
     const named = stats.find((s) => field.includes(s.name) || s.name.includes(field.split("_")[0]));
     if (named) return named;
-    return stats.reduce((a, s) => ({ name: "all", count: Math.max(a.count, s.count), flagged: a.flagged + s.flagged }), {
-      name: "all",
-      count: 0,
-      flagged: 0,
-    });
+    return stats.reduce(
+      (a, s) => ({ name: "all", count: Math.max(a.count, s.count), flagged: a.flagged + s.flagged }),
+      {
+        name: "all",
+        count: 0,
+        flagged: 0,
+      },
+    );
   };
   const fill = (field: string, t: FieldType): boolean | number | string => {
     const s = pick(field);
@@ -159,7 +171,10 @@ function runNode(node: PlanNode, inputs: [string, SimValue][], notes: string[]):
           value:
             node.type === "run_python"
               ? items
-              : items.map((it) => ({ ...it, text: `[simulated ${out.name}] ${it.text.replace(/\n/g, " ").slice(0, 160)}` })),
+              : items.map((it) => ({
+                  ...it,
+                  text: `[simulated ${out.name}] ${it.text.replace(/\n/g, " ").slice(0, 160)}`,
+                })),
         };
       }
       if (out.type === "LogRecords") {
@@ -230,7 +245,9 @@ export function simulate(plan: Plan): Simulation {
       const r = buildReport(plan, node, outputs);
       report = r.values;
       if (r.suppressed.length)
-        notes.push(`${node.id}: counts below min_count (${node.config.privacy.min_count}) released as 0: ${r.suppressed.join(", ")}.`);
+        notes.push(
+          `${node.id}: counts below min_count (${node.config.privacy.min_count}) released as 0: ${r.suppressed.join(", ")}.`,
+        );
       continue;
     }
     const v = runNode(node, inputs, notes);

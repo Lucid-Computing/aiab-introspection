@@ -184,7 +184,8 @@ export function renameNode(plan: Plan, from: string, to: string): OpResult {
 /** Rename a Run Python / Run LLM output and the references that read it. */
 export function renameOutput(plan: Plan, id: string, to: string): OpResult {
   const node = nodeById(plan).get(id);
-  if (!node || (node.type !== "run_python" && node.type !== "run_llm")) return { ok: false, message: "No output to rename" };
+  if (!node || (node.type !== "run_python" && node.type !== "run_llm"))
+    return { ok: false, message: "No output to rename" };
   const old = `${id}.${node.config.output.name}`;
   const next: Plan = {
     ...plan,
