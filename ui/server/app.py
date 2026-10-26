@@ -159,68 +159,6 @@ EDIT_WARNING = (
     "and any existing signature is removed now. Continue?"
 )
 
-STAGES: list[tuple[str, str, list[str]]] = [
-    (
-        "Draft",
-        "Edit the settings, the code and the prompt. Every save changes the plan digest.",
-        [
-            "Create an agreement with a name and the question the classifier answers, "
-            "from a minimal template or as a copy of the deployed one.",
-            "Open it to see the four steps the box runs, in order: "
-            "group the records into queries, classify each query, turn scores into a verdict, "
-            "emit the typed answer.",
-            "Edit a step: its settings in plan.json, its code in plan.py, and for classify "
-            "the prompt. Saves are written straight to those files, and edits made in the "
-            "files show up here on reload.",
-            "Every save is a new version with a new digest. The Changes list on the plan "
-            "shows who changed what, lab or auditor.",
-        ],
-    ),
-    (
-        "Freeze and sign",
-        "Each party signs the digest on its own machine and pastes the signature.",
-        [
-            "The Sign screen shows the version's digest and the one-line signing command.",
-            "One openssl command signs that digest with your private key and prints one "
-            "line; paste it and the UI verifies it against the public key on file for your "
-            "party, which you submit on the same screen.",
-            "The first valid signature locks editing. To change anything after that, remove "
-            "the signatures and both parties sign the new version.",
-        ],
-    ),
-    (
-        "Build and deploy",
-        "Deploy selects the agreement; the build and the operator do the rest.",
-        [
-            "Deploy copies the agreement into plan/, the folder the image is built from.",
-            "Commit and push; CI re-checks the digest, both signatures and the restrictions, "
-            "then merges and tags.",
-            "The image is built twice from clean inputs, both digests are published, and the "
-            "operator deploys the release to the confidential VM.",
-        ],
-    ),
-    (
-        "Verify and run",
-        "Check the box runs this plan, then submit runs and read signed reports.",
-        [
-            "The box reports the image digest and plan digest it runs; the Agreements screen "
-            "compares the plan digest with the deployed agreement.",
-            "Attestation is the hardware's signed statement of the same thing, for an "
-            "independent check with the auditor's own tools.",
-            "Submitting runs and reading reports comes after, in a later version of this UI.",
-        ],
-    ),
-]
-AFTER_SIGNING: list[str] = [
-    "CI re-checks the plan: digest, both signatures, the box's restrictions.",
-    "The pull request merges and the commit is tagged.",
-    "The image is built twice from clean inputs; the two digests must match.",
-    "The release publishes the image digest and the plan digest.",
-    "The operator deploys the tagged release to the confidential VM.",
-    "The box verifies the signatures again at start-up and reports both digests.",
-    "The attestation check confirms the running image is the published one.",
-]
-
 
 # --------------------------------------------------------------------------- helpers
 
@@ -363,7 +301,7 @@ async def index(request: Request) -> Response:
 async def how(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    return render(request, "how.html", stages=STAGES, after=AFTER_SIGNING)
+    return render(request, "how.html")
 
 
 @app.get("/logs")
