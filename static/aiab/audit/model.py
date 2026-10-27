@@ -74,6 +74,9 @@ class PinnedModel:
             "model": model["id"],
             "messages": content,
             "temperature": model["temperature"],
+            # The signed budget includes reasoning tokens. Default reasoning can consume
+            # all 512 tokens and leave no score even for benign inputs.
+            "reasoning_effort": "low",
             "max_tokens": model["max_output_tokens"],
             "stream": False,
             "response_format": {

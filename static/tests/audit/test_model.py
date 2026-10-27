@@ -62,6 +62,8 @@ async def test_complete_text_and_policy_used_once_without_truncation():
     tokenized, inferred = [body for _, body in transport.calls]
     assert tokenized["messages"] == inferred["messages"]
     assert decode(inferred["messages"][1]["content"])["audit_text"] == text
+    assert inferred["reasoning_effort"] == "low"
+    assert inferred["max_tokens"] == settings["max_output_tokens"]
     assert "truncate_prompt_tokens" not in inferred
 
 
