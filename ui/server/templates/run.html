@@ -6,7 +6,7 @@
 <p class="crumb"><a href="/runs" class="link">← Runs</a></p>
 <h1>Run <span class="mono" style="font-size: var(--text-xl)">{{ run.id }}</span></h1>
 <p class="lead">Input: <span class="mono">{{ run.transcript }}</span>. Started {{ run.started[:16].replace("T", " ") }} by {{ run.by.user }} ({{ run.by.party }}).
-{% if run.status == "running" %}Running. This page refreshes itself every few seconds.{% elif run.status == "failed" %}Stopped: a step failed. Nothing after it ran.{% elif run.status == "interrupted" %}Interrupted: the server restarted while this run was going. Start a new one.{% else %}Finished and verified.{% endif %}</p>
+{% if run.status == "running" %}Running. This page refreshes itself every few seconds.{% elif run.status == "failed" %}Stopped: a step failed. Nothing after it ran.{% elif run.status == "interrupted" %}Interrupted: the server restarted while this run was going. Start a new one.{% else %}{{ run.outcome.title }}.{% endif %}</p>
 
 {# which step is "now": the running one, else the failed one, else the last done one #}
 {% set ns = namespace(idx=0) %}
@@ -72,9 +72,13 @@
   <div class="card-body">
     <p class="whatitdoes">{{ now.explain }}</p>
     {% if now.error %}<p class="form-message error" style="margin-top: var(--space-4)">{{ now.error }}</p>{% endif %}
-    {% if run.status == "done" and run.result %}
-    <p class="whatitdoes" style="margin-top: var(--space-4)"><strong>Result: {% if run.result.flagged %}flagged{% else %}not flagged{% endif %}.</strong> The box's signed report says <span class="mono">flagged = {{ run.result.flagged | lower }}</span> for run <span class="mono">{{ run.result.run_id }}</span>, and it verified offline.</p>
-    {% endif %}
+    <div class="form-message {{ 'error' if run.outcome.execution == 'failed' else '' }}">
+      <strong>{{ run.outcome.title }}</strong>
+      <p>Report verification: {{ 'passed — signature and commitments match' if run.outcome.verified else 'not complete' }}.</p>
+      {% if run.outcome.error %}<p>Error: <code>{{ run.outcome.error }}</code>. {{ run.outcome.help }}</p>{% endif %}
+      {% if run.result.run_id %}<p>Executor run ID: <code>{{ run.result.run_id }}</code></p>{% endif %}
+      {% if run.outcome.verified and run.outcome.execution == 'completed' %}<pre>{{ run.outcome.result | tojson }}</pre>{% endif %}
+    </div>
     {% if now.output %}
     <details class="info" style="margin-top: var(--space-4)">
       <summary>What it returned</summary>
@@ -98,9 +102,6 @@
       </div>
       <p>{{ s.explain }}</p>
       {% if s.error %}<p class="form-message error" style="margin-top: var(--space-4)">{{ s.error }}</p>{% endif %}
-      {% if s.key == "offline" and run.status == "done" and run.result %}
-      <p><strong>Result: {% if run.result.flagged %}flagged{% else %}not flagged{% endif %}.</strong> The box's signed report says <span class="mono">flagged = {{ run.result.flagged | lower }}</span> for run <span class="mono">{{ run.result.run_id }}</span>, and it verified offline.</p>
-      {% endif %}
       {% if s.output %}
       <details class="info" style="margin-top: var(--space-4)">
         <summary>What it returned</summary>

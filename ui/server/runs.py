@@ -24,7 +24,6 @@ from aiab.baked.bundle import load_bundle
 
 from server.config import STATIC_DIR, Settings
 
-BOX_TRUST = STATIC_DIR / "aiab" / "baked" / "trust.json"  # the keys the box itself pins
 RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}")
 STALE_SECONDS = 15 * 60  # a step still "running" after this long was interrupted
 
@@ -181,7 +180,13 @@ def _write(folder: Path, state: dict) -> None:
 
 
 def _cli(settings: Settings, *args: str, offline: bool = False) -> dict | None:
-    base = ["--folder", str(settings.deployed_plan_dir), "--trust", str(BOX_TRUST), *args]
+    base = [
+        "--folder",
+        str(settings.deployed_plan_dir),
+        "--trust",
+        str(settings.run_trust_file),
+        *args,
+    ]
     if offline:
         # The same CLI, with sockets disabled, as the walkthrough does for the offline check.
         code = (
@@ -222,7 +227,9 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
             # function here so a missing file or a bad key shows as itself.
             try:
                 bundle = load_bundle(
-                    settings.deployed_plan_dir, json.loads(BOX_TRUST.read_text()), signed=True
+                    settings.deployed_plan_dir,
+                    json.loads(settings.run_trust_file.read_text()),
+                    signed=True,
                 )
             except AuditError as exc:
                 raise RuntimeError(
@@ -380,6 +387,7 @@ def load_run(settings: Settings, run_id: str) -> dict | None:
         started = datetime.strptime(state["started"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
         if (datetime.now(UTC) - started).total_seconds() > STALE_SECONDS:
             state["status"] = "interrupted"  # the server restarted while this run was going
+    state["outcome"] = outcome(state)
     return state
 
 
@@ -392,3 +400,76 @@ def list_runs(settings: Settings) -> list[dict]:
         if state:
             runs.append(state)
     return runs
+
+
+def outcome(state: dict) -> dict:
+    """Derive the verdict from the report, including runs saved by older UI versions."""
+    steps = {step["key"]: step for step in state["steps"]}
+    report = (steps.get("report", {}).get("output") or {}).get("report", {})
+    verified = steps.get("offline", {}).get("status") == "done"
+    result = report.get("result") if report.get("status") == "completed" else None
+    flagged = result.get("flagged") if isinstance(result, dict) else None
+    if report.get("status") == "failed":
+        title = "Execution failed — no verdict"
+    elif report.get("status") == "completed" and verified:
+        title = ("Flagged" if flagged else "Not flagged") if type(flagged) is bool else "Completed"
+    elif state["status"] == "failed":
+        title = "Run stopped — no verified verdict"
+    elif state["status"] == "interrupted":
+        title = "Run interrupted — no verified verdict"
+    else:
+        title = "Running — no verified verdict yet"
+    code = report.get("error")
+    help_text = {
+        "execution_failed": (
+            "The executor could not finish the plan. This older report has no stage details; "
+            "use the run ID to investigate. Do not interpret this as an all-clear."
+        ),
+        "model_unavailable": (
+            "The confidential model could not be reached or verified. Check the inference "
+            "service before retrying."
+        ),
+        "input_too_large": (
+            "The records or assembled queries exceed the plan's limits. Select a smaller input "
+            "or review the plan limits."
+        ),
+        "invalid_output": (
+            "The plan returned a result outside its agreed output schema. Review emit_report "
+            "and the schema, then re-sign the corrected plan."
+        ),
+        "plan_start_failed": (
+            "The plan worker failed to start or load the signed code. Check the runtime and "
+            "plan imports."
+        ),
+        "plan_query_failed": (
+            "The plan failed while grouping input records. Check build_query against the "
+            "selected record types."
+        ),
+        "plan_classify_failed": (
+            "The plan failed in classify. Check its use of run_llm and returned scores."
+        ),
+        "plan_metric_failed": (
+            "The plan failed while combining scores. Check metric, including empty input."
+        ),
+        "plan_report_failed": "The plan failed while producing its result. Check emit_report.",
+        "execution_timeout": (
+            "The plan exceeded its signed runtime limit. Reduce the input or review and re-sign "
+            "the limit."
+        ),
+        "model_output_truncated": (
+            "The classifier exhausted its output-token budget before completing its answer. "
+            "Review the model budget; no verdict was produced."
+        ),
+        "model_output_invalid": (
+            "The classifier did not return the required numeric score. Review the prompt and "
+            "model response contract; no verdict was produced."
+        ),
+    }.get(code, "")
+    return {
+        "title": title,
+        "execution": report.get("status"),
+        "verified": verified,
+        "result": result,
+        "error": code,
+        "help": help_text,
+    }

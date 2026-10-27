@@ -11,15 +11,15 @@
         {% if deployed.error %}<strong>plan/</strong> does not load: <span class="mono">{{ deployed.error }}</span>
         {% elif not deployed.trusted %}<strong>{{ deployed.plan_id }}</strong> <span class="selected-label bad">the keys changed · no longer valid · sign a plan with the trusted keys and deploy it</span>
         {% else %}<strong>{{ deployed.plan_id }}</strong> <span class="digest">{{ deployed.digest[7:19] }}…</span>
-          {% if box.configured and box.plan_matches %}<span class="selected-label ok">running</span>
-          {% elif box.configured and box.plan_digest %}<span class="selected-label">deployed · the box still runs {{ box.plan_digest[7:15] }}…</span>
+          {% if box.configured and box.plan_matches %}<span class="selected-label ok">running in the box</span>
+          {% elif box.configured and box.plan_digest %}<span class="selected-label now">deployed · not live yet · the box still runs {{ box.plan_digest[7:15] }}…</span>
           {% elif box.configured %}<span class="selected-label">deployed · the box did not answer</span>
           {% else %}<span class="selected-label ok">deployed</span>{% endif %}
         {% endif %}
       </p>
       <a class="btn btn--ghost btn--sm" href="/deployed">Read</a>
     </div>
-{% if current and current.state and (current.state.busy or current.state.tone == "bad" or not current.state.box_matches) %}
+{% if current and current.state and not current.state.superseded and (current.state.busy or current.state.tone == "bad" or not current.state.box_matches) %}
 <div class="notice notice--stack" style="margin: var(--space-4) 0 0">
   {% set d = current.state %}{% set pr = d.pr %}{% set check = d.check %}{% set rel = d.release %}
   <p><strong>Deployment</strong> of {{ current.name }} <span class="digest">{{ current.digest[7:19] }}…</span>: <span class="selected-label {{ d.tone }}">{{ d.label }}</span>{% if d.busy %} <span class="badge"><span class="spinner spinner--sm"></span> this page refreshes itself</span>{% endif %}{% if d.error %} <span class="text-muted">(GitHub did not answer: {{ d.error }})</span>{% endif %}</p>
@@ -28,7 +28,7 @@
     <li class="{% if pr.state == 'merged' %}ok{% elif pr.state == 'closed' %}bad{% else %}now{% endif %}">Pull request <a class="link" href="{{ pr.url }}" target="_blank" rel="noopener">#{{ pr.number }}</a> into <span class="mono">{{ pr.base }}</span>: {{ pr.state }}{% if pr.base != "production" %} <span class="bad">· wrong branch, nothing will check or merge it</span>{% endif %}</li>
     <li class="{% if check and check.conclusion == 'success' %}ok{% elif check and check.status == 'completed' %}bad{% elif check %}now{% endif %}">Signature check: {% if check %}{% if check.status != 'completed' %}running{% elif check.conclusion == 'success' %}passed, merged by itself{% else %}<span class="bad">failed</span>{% endif %} · <a class="link" href="{{ check.url }}" target="_blank" rel="noopener">log</a>{% elif pr.state == 'open' %}waiting for it to start{% else %}—{% endif %}</li>
     <li class="{% if rel and rel.conclusion == 'success' %}ok{% elif rel and rel.status == 'completed' %}bad{% elif rel %}now{% endif %}">Release to the box: {% if rel %}{% if rel.status != 'completed' %}running, a few minutes{% elif rel.conclusion == 'success' %}done{% else %}<span class="bad">failed</span>{% endif %} · <a class="link" href="{{ rel.url }}" target="_blank" rel="noopener">log</a>{% elif pr.state == 'merged' %}waiting for it to start{% else %}after the merge{% endif %}</li>
-    <li class="{% if d.box_matches %}ok{% endif %}">The box: {% if d.box_matches %}runs this version{% else %}still runs the previous version{% endif %}</li>
+    <li class="{% if d.box_matches %}ok{% endif %}">The box: {% if d.box_matches %}runs this version{% elif d.superseded %}runs a newer agreement{% else %}does not yet run this version{% endif %}</li>
   </ol>
   {% endif %}
   {% endif %}
@@ -44,12 +44,13 @@
     <td><strong>{{ r.plan_id }}</strong><br>
       {% if r.deploying and r.deploying.busy %}<span class="selected-label {{ r.deploying.tone }}">{{ r.deploying.label }}</span>
       {% elif r.deploying %}<span class="selected-label {{ r.deploying.tone }}">{{ r.deploying.label }}</span>
-      {% elif r.selected and deployed.trusted %}<span class="selected-label ok">deployed</span>
+      {% elif r.running and deployed.trusted %}<span class="selected-label ok">running in the box</span>
+      {% elif r.selected and deployed.trusted %}<span class="selected-label now">deployed · not live yet</span>
       {% else %}<span class="text-muted">agreements/{{ r.id }}</span>{% endif %}
       {% if r.editor %}<br><span class="text-muted" style="font-size: var(--text-xs)">{{ r.editor.user }} ({{ r.editor.party }}) is editing since {{ r.editor.since | hhmm }}</span>{% endif %}</td>
     <td>{% if r.digest %}<span class="digest">{{ r.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
     {% set frozen = r.deploying and r.deploying.busy %}
-    {% set why = ("wait, " ~ current.name ~ " is being deployed") if busy else ("fix the plan first" if (r.error or r.issue) else ("needs both signatures" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("this version is deployed" if (r.selected and deployed.trusted) else ("being edited" if r.editor else ""))))) %}
+    {% set why = ("wait, " ~ current.name ~ " is being deployed") if busy else ("fix the plan first" if (r.error or r.issue) else ("needs both signatures" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("this version is running in the box" if (r.running and deployed.trusted) else ("being edited" if r.editor else ""))))) %}
     <td>{{ r.state }}{% if why %}<br><span class="text-muted" style="font-size: var(--text-xs)">Deploy: {{ why }}</span>{% endif %}</td>
     <td class="actions">
       <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/plan">Open</a>

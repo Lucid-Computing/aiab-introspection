@@ -17,6 +17,7 @@ import asyncio
 import os
 import subprocess
 import time
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -26,6 +27,10 @@ from server.config import Settings
 API = "https://api.github.com"
 RELEASE_WORKFLOW = "Release to the live box"
 TTL_SECONDS = 20
+# After a successful release the box restarts within minutes. Past this, a box that still
+# does not run the version is a failure to show, not something to wait for: nothing on
+# this page must stay locked on it.
+BOX_GRACE_SECONDS = 15 * 60
 _cache: dict[tuple, tuple[float, Any]] = {}
 
 # Every GitHub answer is kept and served at once; when it is older than TTL_SECONDS it is
@@ -123,7 +128,21 @@ def freshness() -> float | None:
 
 
 def _run(run: dict) -> dict[str, Any]:
-    return {"status": run["status"], "conclusion": run["conclusion"], "url": run["html_url"]}
+    return {
+        "status": run["status"],
+        "conclusion": run["conclusion"],
+        "url": run["html_url"],
+        "finished": run.get("updated_at"),
+    }
+
+
+def _box_overdue(release: dict[str, Any]) -> bool:
+    """The release finished more than BOX_GRACE_SECONDS ago (unknown finish: not overdue)."""
+    try:
+        finished = datetime.fromisoformat(release["finished"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return False
+    return time.time() - finished > BOX_GRACE_SECONDS
 
 
 async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) -> dict | None:
@@ -152,6 +171,16 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
         },
         "check": None,
         "release": None,
+        "superseded": bool(
+            merged_at
+            and any(
+                p.get("merged_at")
+                and p["merged_at"] > merged_at
+                and p["base"]["ref"] == pr["base"]["ref"]
+                and p["head"]["ref"].startswith("plan/")
+                for p in prs
+            )
+        ),
     }
     runs = (
         await _get(
@@ -176,16 +205,12 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
             await _get(
                 client,
                 f"/repos/{settings.repo}/actions/runs",
-                {"branch": pr["base"]["ref"], "per_page": 15},
+                {"head_sha": pr["merge_commit_sha"], "per_page": 30},
             )
             or {}
         )
         release = next(
-            (
-                r
-                for r in runs.get("workflow_runs", [])
-                if r["name"] == RELEASE_WORKFLOW and r["created_at"] >= merged_at
-            ),
+            (r for r in runs.get("workflow_runs", []) if r["name"] == RELEASE_WORKFLOW),
             None,
         )
         if release:
@@ -221,19 +246,25 @@ async def status(settings: Settings, digest: str, box_matches: bool) -> dict[str
 def _busy(out: dict[str, Any]) -> bool:
     """True while something is still expected to change on its own."""
     pr, check, release = out["pr"], out["check"], out["release"]
+    if out.get("superseded"):
+        return False
     if pr is None or pr["state"] == "closed" or pr["base"] != "production":
         return False
     if pr["state"] == "open":
         return check is None or check["status"] != "completed" or check["conclusion"] == "success"
     if release is None or release["status"] != "completed":
         return True
-    return release["conclusion"] == "success" and not out["box_matches"]
+    return (
+        release["conclusion"] == "success" and not out["box_matches"] and not _box_overdue(release)
+    )
 
 
 def _summary(out: dict[str, Any]) -> tuple[str, str]:
     """One short line for the agreement row: what the deployment is doing, and a tone
     (now = in progress, ok = done, bad = stopped)."""
     pr, check, release = out["pr"], out["check"], out["release"]
+    if out.get("superseded"):
+        return "superseded · a newer agreement was merged", "ok"
     if pr["base"] != "production":
         return "deploy failed · pull request against the wrong branch", "bad"
     if pr["state"] == "closed":
@@ -250,6 +281,8 @@ def _summary(out: dict[str, Any]) -> tuple[str, str]:
         return "deploy failed · the release stopped", "bad"
     if out["box_matches"]:
         return "deployed · running in the box", "ok"
+    if _box_overdue(release):
+        return "deploy failed · the release finished but the box does not run this version", "bad"
     return "deploying · waiting for the box to come back", "now"
 
 

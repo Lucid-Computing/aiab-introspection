@@ -194,7 +194,7 @@ async def test_os_boundary_even_if_source_checker_is_bypassed(setup, operation):
         ("    " + operation + "\n    kept: list[LogRecord] = []").encode(),
     )
     # Deliberately bypass static checks to test the actual syscall boundary.
-    with pytest.raises(AuditError, match="execution_failed"):
+    with pytest.raises(AuditError, match="plan_start_failed"):
         await execute(replace(bundle, files=files), records, MockModel())
 
 
@@ -210,7 +210,7 @@ async def test_timeout_kills_worker_and_signs_failure(setup):
     run = runtime.submit(submission(setup), "lab")
     await asyncio.wait_for(run.task, 4)
     envelope = decode(run.envelope)
-    assert envelope["report"]["error"] == "execution_failed"
+    assert envelope["report"]["error"] == "execution_timeout"
     await runtime.close()
 
 
@@ -328,3 +328,15 @@ def test_plan_without_input_scope_accepts_any_agent(setup):
     # the same records are still refused by a plan that pins other agents
     with pytest.raises(AuditError, match="scope_mismatch"):
         verify(data, setup[3].config, trust["logger_key"])
+
+
+async def test_worker_error_identifies_stage_without_private_exception_text(setup):
+    _, _, _, bundle, records = setup
+    files = dict(bundle.files)
+    files["plan.py"] = files["plan.py"].replace(
+        b"    above = [score for score in scores if score > threshold]",
+        b"    raise ValueError('PRIVATE INPUT MUST NOT ESCAPE')",
+    )
+    with pytest.raises(AuditError) as failure:
+        await execute(replace(bundle, files=files), records, MockModel())
+    assert str(failure.value) == "plan_metric_failed"
