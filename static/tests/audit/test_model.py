@@ -81,3 +81,20 @@ async def test_invalid_classifier_output_never_retries(content, finish):
     with pytest.raises(AuditError):
         await model.classify("private", POLICY, settings)
     assert len(transport.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "finish,content,code",
+    [
+        ("length", "", "model_output_truncated"),
+        ("stop", "not JSON", "model_output_invalid"),
+        ("stop", '{"flagged":false}', "model_output_invalid"),
+    ],
+)
+async def test_response_failure_is_actionable_without_releasing_model_text(finish, content, code):
+    transport = TransportDouble(content=content, finish=finish)
+    model, settings = adapter(transport)
+    with pytest.raises(AuditError) as failure:
+        await model.classify("private", POLICY, settings)
+    assert failure.value.code == code
+    assert len(transport.calls) == 2

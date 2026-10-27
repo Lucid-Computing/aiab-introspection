@@ -47,7 +47,19 @@ async def execute(bundle, records, model):
                 raw = await worker.stdout.readline()
                 if not raw.endswith(b"\n") or len(raw) > 2_097_152:
                     raise AuditError("execution_failed")
-                return decode(raw)
+                value = decode(raw)
+                if isinstance(value, dict) and value.get("kind") == "error":
+                    code = value.get("error")
+                    if set(value) == {"kind", "error"} and code in {
+                        "plan_start_failed",
+                        "plan_query_failed",
+                        "plan_classify_failed",
+                        "plan_metric_failed",
+                        "plan_report_failed",
+                    }:
+                        raise AuditError(code)
+                    raise AuditError("execution_failed")
+                return value
 
             await send(
                 {"config": cfg, "records": records, "source": bundle.files["plan.py"].decode()}
@@ -117,6 +129,8 @@ async def execute(bundle, records, model):
                     query_text(message["query"]), bundle.policy, model.model
                 )
                 await send({"score": score, "label": ""})
+    except TimeoutError:
+        raise AuditError("execution_timeout") from None
     except AuditError:
         raise
     except Exception:

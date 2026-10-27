@@ -60,7 +60,11 @@ def receive():
     return json.loads(line)
 
 
+stage = "plan_start_failed"
+
+
 def main():
+    global stage
     request = receive()
     cfg = request["config"]
     records = [plan_api.LogRecord(**r) for r in request["records"]]
@@ -88,6 +92,7 @@ def main():
             or any(r not in records for r in kept)
         ):
             raise ValueError
+    stage = "plan_query_failed"
     queries = namespace["build_query"](kept, window=cfg["window"])
     if not isinstance(queries, list) or len(queries) > cfg["limits"]["max_model_calls_per_run"]:
         raise ValueError
@@ -108,6 +113,7 @@ def main():
         return plan_api.ClassifierResult(**response)
 
     plan_api.install_run_llm(run_llm)
+    stage = "plan_classify_failed"
     scores = [
         namespace["classify"](
             q, model_id=cfg["model"]["id"], prompt_id=cfg["classification"]["prompt_id"]
@@ -118,7 +124,9 @@ def main():
         type(s) not in (float, int) or not math.isfinite(s) or not 0 <= s <= 1 for s in scores
     ):
         raise ValueError
+    stage = "plan_metric_failed"
     verdict = namespace["metric"](scores, threshold=cfg["classification"]["threshold"])
+    stage = "plan_report_failed"
     send({"kind": "result", "result": namespace["emit_report"](verdict)})
 
 
@@ -126,5 +134,8 @@ if __name__ == "__main__":
     try:
         main()
     except BaseException:
-        # Never reflect the exception or its potentially confidential message.
-        os._exit(1)
+        # Only a fixed stage code crosses the boundary, never exception text or data.
+        try:
+            send({"kind": "error", "error": stage})
+        finally:
+            os._exit(1)

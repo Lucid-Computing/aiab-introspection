@@ -152,6 +152,16 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
         },
         "check": None,
         "release": None,
+        "superseded": bool(
+            merged_at
+            and any(
+                p.get("merged_at")
+                and p["merged_at"] > merged_at
+                and p["base"]["ref"] == pr["base"]["ref"]
+                and p["head"]["ref"].startswith("plan/")
+                for p in prs
+            )
+        ),
     }
     runs = (
         await _get(
@@ -176,16 +186,12 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
             await _get(
                 client,
                 f"/repos/{settings.repo}/actions/runs",
-                {"branch": pr["base"]["ref"], "per_page": 15},
+                {"head_sha": pr["merge_commit_sha"], "per_page": 30},
             )
             or {}
         )
         release = next(
-            (
-                r
-                for r in runs.get("workflow_runs", [])
-                if r["name"] == RELEASE_WORKFLOW and r["created_at"] >= merged_at
-            ),
+            (r for r in runs.get("workflow_runs", []) if r["name"] == RELEASE_WORKFLOW),
             None,
         )
         if release:
@@ -221,6 +227,8 @@ async def status(settings: Settings, digest: str, box_matches: bool) -> dict[str
 def _busy(out: dict[str, Any]) -> bool:
     """True while something is still expected to change on its own."""
     pr, check, release = out["pr"], out["check"], out["release"]
+    if out.get("superseded"):
+        return False
     if pr is None or pr["state"] == "closed" or pr["base"] != "production":
         return False
     if pr["state"] == "open":
@@ -234,6 +242,8 @@ def _summary(out: dict[str, Any]) -> tuple[str, str]:
     """One short line for the agreement row: what the deployment is doing, and a tone
     (now = in progress, ok = done, bad = stopped)."""
     pr, check, release = out["pr"], out["check"], out["release"]
+    if out.get("superseded"):
+        return "superseded · a newer agreement was merged", "ok"
     if pr["base"] != "production":
         return "deploy failed · pull request against the wrong branch", "bad"
     if pr["state"] == "closed":

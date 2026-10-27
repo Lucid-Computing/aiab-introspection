@@ -88,16 +88,24 @@ class PinnedModel:
             raise AuditError("model_unavailable")
         try:
             choices = result["choices"]
-            if len(choices) != 1 or choices[0]["finish_reason"] != "stop":
+            if len(choices) != 1:
+                raise ValueError
+            if choices[0]["finish_reason"] == "length":
+                raise AuditError("model_output_truncated")
+            if choices[0]["finish_reason"] != "stop":
                 raise ValueError
             message = choices[0]["message"]
             if message.get("refusal"):
                 raise ValueError
             parsed = decode(message["content"])
-            validate(parsed, SCORE_SCHEMA, "execution_failed")
+            validate(parsed, SCORE_SCHEMA, "model_output_invalid")
             return parsed["score"]
+        except AuditError as exc:
+            if exc.code == "model_output_truncated":
+                raise
+            raise AuditError("model_output_invalid") from None
         except (KeyError, TypeError, ValueError):
-            raise AuditError("execution_failed") from None
+            raise AuditError("model_output_invalid") from None
 
     async def close(self):
         await self.connection.close()
