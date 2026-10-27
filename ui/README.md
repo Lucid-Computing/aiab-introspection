@@ -193,3 +193,21 @@ with `render services update <service-id> --image <image@sha256:digest>` and run
 `render deploys create <service-id> --wait`. Confirm the deployment succeeds,
 then test `/runs` through offline report verification. Preserve `/data` and the
 existing service environment; do not replace its disk to refresh a deployment.
+
+### Diagnosing a run
+
+Execution and verification are separate. A signed failure report can verify successfully
+but has **no audit verdict**. The run page and history derive this distinction from the
+report itself, including reports saved by older UI versions. Expand the report step for
+the signed evidence; use the executor run ID when investigating.
+
+New runtime failures identify a fixed stage (`plan_query_failed`, `plan_metric_failed`,
+etc.), a classifier response problem (`model_output_truncated`, `model_output_invalid`),
+or a timeout. Error codes never contain prompts, model responses or exception messages.
+Older `execution_failed` reports cannot retrospectively reveal their missing stage.
+Update the verifier alongside the runtime to recognize the additional error codes.
+
+The Runs page refreshes its isolated production snapshot before admission, so a completed
+release does not require a UI restart. A run keeps the same snapshot throughout all six
+steps. Release status is matched to the PR's merge commit; a superseded agreement does
+not hold the deployment lock.

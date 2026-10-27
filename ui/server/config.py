@@ -45,6 +45,14 @@ class Settings:
         return self.run_plan_dir or self.plan_dir
 
     @property
+    def run_trust_file(self) -> Path:
+        if self.run_plan_dir:
+            candidate = self.run_plan_dir.parent / "static/aiab/baked/trust.json"
+            if candidate.is_file():
+                return candidate
+        return self.trust_file
+
+    @property
     def repo_url(self) -> str | None:
         return f"https://github.com/{self.repo}" if self.repo else None
 

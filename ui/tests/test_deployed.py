@@ -64,3 +64,27 @@ def test_run_uses_signed_production_not_unsigned_draft(tmp_path, monkeypatch):
     release = tmp_path / "release.json"
     release.write_text(json.dumps({**result["release"], "plan_digest": "wrong"}))
     assert not preflight(replace(settings, release_file=release))["ok"]
+
+
+def test_release_refresh_updates_plan_and_pins_without_restart(tmp_path, monkeypatch):
+    from server import deployed
+
+    old = tmp_path / "releases" / "old"
+    new = tmp_path / "releases" / "new"
+    trust = new / "static/aiab/baked/trust.json"
+    trust.parent.mkdir(parents=True)
+    trust.write_text("{}")
+    settings = replace(load_settings(), run_plan_dir=old / "plan", repo="owner/repo")
+    calls = []
+
+    def fetch(data, url, branch):
+        calls.append((data, url, branch))
+        return new
+
+    monkeypatch.setattr(deployed, "snapshot", fetch)
+    updated = deployed.refresh(settings)
+    assert calls == [(tmp_path, "https://github.com/owner/repo.git", "production")]
+    assert updated.deployed_plan_dir == new / "plan"
+    assert updated.release_file == new / "static/deploy/tinfoil/audit/release.json"
+    assert updated.run_trust_file == trust
+    assert settings.deployed_plan_dir == old / "plan"  # in-flight runs keep their snapshot

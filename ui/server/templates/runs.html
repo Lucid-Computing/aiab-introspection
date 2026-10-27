@@ -98,7 +98,7 @@
       <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
       <td class="mono">{{ r.transcript }}</td>
       <td>{{ r.by.user }} <span class="badge {% if r.by.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ r.by.party }}</span></td>
-      <td>{% if r.status == "done" %}{% if r.result and r.result.flagged %}flagged{% elif r.result %}not flagged{% else %}done{% endif %}, verified{% elif r.status == "failed" %}stopped at step {{ (r.steps | selectattr("status", "equalto", "failed") | list | first).title | lower }}{% elif r.status == "interrupted" %}interrupted{% else %}running…{% endif %}</td>
+      <td>{{ r.outcome.title }}{% if r.outcome.verified %}<br><span class="text-muted">Report verified</span>{% endif %}</td>
       <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>
     </tr>
     {% endfor %}

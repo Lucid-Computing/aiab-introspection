@@ -18,7 +18,20 @@ from aiab.audit.protocol import (
     verify_signature,
 )
 
-ERRORS = ("execution_failed", "model_unavailable", "invalid_output", "input_too_large")
+ERRORS = (
+    "execution_failed",
+    "model_unavailable",
+    "invalid_output",
+    "input_too_large",
+    "plan_start_failed",
+    "plan_query_failed",
+    "plan_classify_failed",
+    "plan_metric_failed",
+    "plan_report_failed",
+    "execution_timeout",
+    "model_output_truncated",
+    "model_output_invalid",
+)
 BASE = {
     "schema": {"const": "aiab-report/v2"},
     "run_id": ID,

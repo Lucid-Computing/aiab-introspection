@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import subprocess
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -18,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from server import deploystatus, editing, plan_chat, proxylogs, publish, runs
+from server import deployed, deploystatus, editing, plan_chat, proxylogs, publish, runs
 from server import plan_view as pv
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
@@ -581,7 +582,14 @@ async def new_agreement(request: Request) -> Response:
 async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    pre = runs.preflight(settings)
+    try:
+        run_settings = await asyncio.to_thread(deployed.refresh, settings)
+    except (OSError, subprocess.SubprocessError):
+        return back(
+            "/agreements",
+            err="Could not fetch the deployed release. Check GitHub access and retry.",
+        )
+    pre = runs.preflight(run_settings)
     qp = request.query_params
     win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
     lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
@@ -600,7 +608,7 @@ async def runs_index(request: Request) -> Response:
         sessions.append(
             {
                 "session": s,
-                "notes": runs.scope_notes(settings, s.who, min(times), max(times)),
+                "notes": runs.scope_notes(run_settings, s.who, min(times), max(times)),
                 "records": len(recs),
                 "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
             }
@@ -621,7 +629,7 @@ async def runs_index(request: Request) -> Response:
         totals=totals,
         source=qp.get("source", ""),
         picked=set(qp.getlist("session")),
-        scope=runs.plan_scope(settings),
+        scope=runs.plan_scope(run_settings),
         runs=runs.list_runs(settings),
         plan_digest=pre["plan_digest"],
         plan_error=next((m for m in pre["missing"] if "deployed plan" in m), None),
@@ -641,7 +649,14 @@ async def runs_start(request: Request) -> Response:
     user = user_of(request)
     if user is None:
         return to_login(request)
-    pre = runs.preflight(settings)
+    try:
+        run_settings = await asyncio.to_thread(deployed.refresh, settings)
+    except (OSError, subprocess.SubprocessError):
+        return back(
+            "/agreements",
+            err="Could not fetch the deployed release. Check GitHub access and retry.",
+        )
+    pre = runs.preflight(run_settings)
     if not pre["ok"]:
         return back("/runs", err="Cannot start: " + "; ".join(pre["missing"]))
     form = await request.form()
@@ -655,7 +670,7 @@ async def runs_start(request: Request) -> Response:
                 return back("/runs", err="Pick at least one recorded session.")
             records = proxylogs.to_box_records([r for s in picked for r in s.requests])
             label = f"{len(picked)} recorded session(s), {len(records)} records"
-            run_id = runs.start_run(settings, user, records=records, label=label)
+            run_id = runs.start_run(run_settings, user, records=records, label=label)
     except (ValueError, OSError) as exc:
         return back("/runs", err=str(exc))
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
