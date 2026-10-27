@@ -5,6 +5,12 @@
 <h1>Runs</h1>
 <p class="lead">Run the deployed plan against the live box and watch each step: the box is attested, a signed test export goes in, a signed report comes out, and the report is verified again offline. Only the logger is a stand-in; the box and the model are real.</p>
 
+<form method="get" action="/runs" class="row" style="margin-bottom: var(--space-6)">
+  <label for="audit-box">Audit box</label>
+  <select id="audit-box" name="box">{% for name in boxes %}<option value="{{ name }}" {% if name == box_name %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+  <button class="btn btn--ghost">Choose box</button>
+</form>
+<p class="explain">Each box runs its own signed plan. Selecting a box does not redeploy it.</p>
 <div class="stack">
   <div class="card">
     <div class="card-header">Before a run</div>
@@ -39,20 +45,23 @@
   <div class="card">
     <div class="card-header">Input</div>
     <div class="card-body">
-      <form method="post" action="/runs/start" id="run-form"></form>
+      <form method="post" action="/runs/start" id="run-form">
+        <input type="hidden" name="box" value="{{ box_name }}">
+        <input type="hidden" name="release_digest" value="{{ pre.release.release_digest if pre.release else '' }}">
+      </form>
       <p class="explain">Which recorded sessions go into this run. You choose here; the plan does not filter.{% if scope %} This plan pins an input scope (agents and a time window); the box refuses records outside it.{% endif %}</p>
       <div class="sources">
         <div class="src">
           <label class="src-head"><input type="hidden" name="source" value="sessions" form="run-form"><span class="src-title">Recorded sessions</span> <span class="src-sub">from the <a class="link" href="/logs">Logs</a> page, as the proxy recorded them{% if not all_count %} · none on disk yet{% endif %}</span></label>
           {% if all_count %}
           <form method="get" action="/runs" class="window">
-            <input type="hidden" name="source" value="sessions">
+            <input type="hidden" name="source" value="sessions"><input type="hidden" name="box" value="{{ box_name }}">
             <span class="lbl">window</span>
             <input type="datetime-local" name="from" value="{{ win.from }}"> <span class="lbl">to</span> <input type="datetime-local" name="to" value="{{ win.to }}">
             <span class="lbl">sender</span>
             <select name="who"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == win.who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>
             <button class="btn btn--ghost btn--sm">Show</button>
-            {% if win.from or win.to or win.who %}<a class="link" href="/runs?source=sessions">all time</a>{% endif %}
+            {% if win.from or win.to or win.who %}<a class="link" href="/runs?source=sessions&amp;box={{ box_name }}">all time</a>{% endif %}
           </form>
           <p class="pick-sum">
             <label class="choice"><input type="checkbox" onchange="for (const c of document.querySelectorAll('.sess input')) c.checked = this.checked"> select all shown</label>

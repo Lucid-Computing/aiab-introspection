@@ -35,6 +35,10 @@ _answers: dict[tuple, tuple[float, Any]] = {}
 _refreshing: set[tuple] = set()
 
 
+def _box_for_branch(branch: str) -> str:
+    return branch.split("/")[2] if branch.startswith("plan/box/") else "default"
+
+
 def _token() -> str | None:
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if token:
@@ -159,6 +163,7 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
                 and p["merged_at"] > merged_at
                 and p["base"]["ref"] == pr["base"]["ref"]
                 and p["head"]["ref"].startswith("plan/")
+                and _box_for_branch(p["head"]["ref"]) == _box_for_branch(pr["head"]["ref"])
                 for p in prs
             )
         ),
@@ -182,16 +187,28 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
     if check:
         out["check"] = _run(check)
     if merged_at:
+        # Dispatch can happen after another merge advances production. Its head SHA is
+        # then unrelated to the source actually built; the run title pins both inputs.
         runs = (
             await _get(
                 client,
-                f"/repos/{settings.repo}/actions/runs",
-                {"head_sha": pr["merge_commit_sha"], "per_page": 30},
+                f"/repos/{settings.repo}/actions/workflows/release.yml/runs",
+                {"per_page": 100},
             )
             or {}
         )
+        title = f"Release {_box_for_branch(pr['head']['ref'])} · {pr['merge_commit_sha']}"
         release = next(
-            (r for r in runs.get("workflow_runs", []) if r["name"] == RELEASE_WORKFLOW),
+            (
+                r
+                for r in runs.get("workflow_runs", [])
+                if r.get("display_title") == title
+                or (
+                    r.get("display_title") == RELEASE_WORKFLOW
+                    and r.get("head_sha") == pr["merge_commit_sha"]
+                    and _box_for_branch(pr["head"]["ref"]) == "default"
+                )
+            ),
             None,
         )
         if release:
@@ -202,7 +219,9 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
 # ---- a plan version ----------------------------------------------------------------------
 
 
-async def status(settings: Settings, digest: str, box_matches: bool) -> dict[str, Any] | None:
+async def status(
+    settings: Settings, digest: str, box_matches: bool, branch: str | None = None
+) -> dict[str, Any] | None:
     """The deployment of one plan version, or None when no pull request exists for it."""
     if not digest or not settings.repo:
         return None
@@ -211,7 +230,11 @@ async def status(settings: Settings, digest: str, box_matches: bool) -> dict[str
     try:
         async with _client() as client:
             out = await _pull_request(
-                settings, client, lambda ref: ref.startswith("plan/") and ref.endswith(suffix)
+                settings,
+                client,
+                lambda ref: (
+                    ref == branch if branch else ref.startswith("plan/") and ref.endswith(suffix)
+                ),
             )
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         out = {"pr": None, "check": None, "release": None, "error": type(exc).__name__}

@@ -135,21 +135,17 @@ def preflight(settings: Settings) -> dict:
     missing = []
     plan_digest = None
     try:
-        # Against the keys production trusts now. After a key change the deployed plan is
-        # signed by keys that are no longer trusted: nothing may run until a plan signed
-        # with the new keys is deployed.
+        # Each box pins the keys from its own released source revision. Updating another
+        # box's keys must not change the verification of this still-running release.
         bundle = load_bundle(
             settings.deployed_plan_dir,
-            json.loads(settings.trust_file.read_text(encoding="utf-8")),
+            json.loads(settings.run_trust_file.read_text(encoding="utf-8")),
             signed=True,
         )
         plan_digest = bundle.digest
     except AuditError as exc:
         if str(exc) == "invalid_signature":
-            missing.append(
-                "the deployed plan is not signed by the keys production trusts (the keys"
-                " changed): sign a plan with the trusted keys and deploy it"
-            )
+            missing.append("the deployed plan is not signed by this box’s pinned keys")
         else:
             missing.append("signed deployed plan: " + str(exc))
     except (OSError, ValueError) as exc:
@@ -349,6 +345,8 @@ def start_run(
         )
     state = {
         "id": run_id,
+        "box_name": settings.box_name,
+        "box_url": settings.box_url,
         "started": _now(),
         "by": {"party": actor.get("party", ""), "user": actor.get("username", "")},
         "transcript": label or transcript,

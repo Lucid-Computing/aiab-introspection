@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -120,6 +121,7 @@ def push_deploy(
     digest: str,
     actor: dict[str, str],
     base: str | None = None,
+    new_box: str | None = None,
 ) -> PushResult:
     """Replace plan/ on the branch for this version, commit, push.
 
@@ -130,11 +132,21 @@ def push_deploy(
     """
     result = PushResult()
     base = base or default_branch(repo)
-    branch = f"plan/{name}-{digest[7:15]}"
+    if new_box and (not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", new_box) or new_box == "default"):
+        raise ValueError("Invalid box name")
+    prefix = f"plan/box/{new_box}" if new_box else "plan"
+    branch = f"{prefix}/{name}-{digest[7:15]}"
     who = f"{actor.get('party', 'party')} ({actor.get('username', '?')}) via the agreement UI"
     worktree = Path(tempfile.mkdtemp(prefix="aiab-deploy-"))
     try:
         _git(repo, "fetch", "origin", base)
+        if new_box:
+            approval = _git(repo, "show", f"origin/{base}:.github/workflows/approve-plan.yml")
+            if 'new_box=${BASH_REMATCH[1]}' not in approval:
+                raise RuntimeError(
+                    "The production approval workflow does not support new boxes yet. "
+                    "Merge the multi-box release changes into production before deploying."
+                )
         on_remote = bool(_git(repo, "ls-remote", "--heads", "origin", branch))
         if on_remote:
             _git(repo, "fetch", "origin", branch)
@@ -148,6 +160,11 @@ def push_deploy(
             result.compare_url = f"https://github.com/{slug}/compare/{base}...{branch}?expand=1"
         if not _git(worktree, "status", "--porcelain", "--", "plan"):
             result.unchanged = True
+            if new_box:
+                result.error = (
+                    "This plan is already selected. Create its replica with "
+                    "the Release workflow new_box input."
+                )
             result.branch = branch
             return result
         message = (

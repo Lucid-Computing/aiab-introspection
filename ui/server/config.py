@@ -38,6 +38,8 @@ class Settings:
     proxy_key: str | None  # the "tester" key for that API; None means the Logs page is read-only
 
     run_plan_dir: Path | None = None
+    box_name: str = "default"
+    box_catalog_dir: Path | None = None
     anthropic_api_key: str | None = field(default=None, repr=False)
 
     @property
