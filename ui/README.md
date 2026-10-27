@@ -211,3 +211,7 @@ The Runs page refreshes its isolated production snapshot before admission, so a 
 release does not require a UI restart. A run keeps the same snapshot throughout all six
 steps. Release status is matched to the PR's merge commit; a superseded agreement does
 not hold the deployment lock.
+
+The classifier adapter uses low reasoning effort within the unchanged signed token
+budget. Default reasoning can exhaust that budget before producing a score; truncation
+is a failure, never an all-clear and never silently retried with a larger budget.
