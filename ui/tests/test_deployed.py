@@ -75,6 +75,10 @@ def test_release_refresh_updates_plan_and_pins_without_restart(tmp_path, monkeyp
     trust.parent.mkdir(parents=True)
     trust.write_text("{}")
     settings = replace(load_settings(), run_plan_dir=old / "plan", repo="owner/repo")
+    pins = new / "static/deploy/tinfoil/audit/release.json"
+    pins.parent.mkdir(parents=True)
+    pins.write_text(json.dumps({"application_source_commit": "a" * 40, "host": "new.example"}))
+    monkeypatch.setattr(deployed, "revision", lambda data, sha: new)
     calls = []
 
     def fetch(data, url, branch):

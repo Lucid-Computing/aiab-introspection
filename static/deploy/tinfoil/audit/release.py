@@ -11,6 +11,7 @@ and a durable stage journal. Failures never get a success record.
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import re
@@ -118,6 +119,43 @@ class ControlPlane:
         return response.json()
 
 
+def create_box(cp, template_id, name, tag, repo):
+    """Create a separate confidential container; never replace/promote another box.
+
+    Use the existing container only for placement and org secret references. Names,
+    domains, SSH/debug settings and instance IDs are not copied.
+    """
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", name) or name == "default":
+        raise ValueError("Box name must be 1–40 lowercase letters, digits or hyphens (not default)")
+    template = cp.request("GET", "/api/containers/" + template_id)
+    if template["repo"].lower() != repo.lower():
+        raise ValueError("Template container uses a different config repository")
+    variables = template.get("variables") or {}
+    # The control plane returns this JSON object as base64-encoded bytes.
+    if isinstance(variables, str):
+        variables = json.loads(base64.b64decode(variables, validate=True))
+    if not isinstance(variables, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in variables.items()
+    ):
+        raise ValueError("Invalid container variables")
+    created = cp.request(
+        "POST",
+        "/api/containers",
+        {
+            "name": name,
+            "repo": repo,
+            "tag": tag,
+            "host_name": template["host_name"],
+            "secrets": template.get("secrets") or [],
+            "variables": variables,
+            "debug": False,
+            "disable_cc_mode": False,
+            "mark_latest_release": False,
+        },
+    )
+    return created["id"], created["domain"]
+
+
 async def verify(release, token_file):
     client = AuditClient(
         release["host"],
@@ -139,6 +177,9 @@ async def verify(release, token_file):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-ref", default="feat/signed-plan-audit-execution")
+    parser.add_argument(
+        "--source-commit", help="Exact approved source; build workflow stays on --source-ref"
+    )
     parser.add_argument("--tag", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--execute", action="store_true")
@@ -149,13 +190,22 @@ def main():
         help="Local synthetic-demo role keys/tokens; never uploaded to CI",
     )
     parser.add_argument("--instance", default="28c10708-7f8b-4981-8280-dca928a2654b")
+    parser.add_argument("--new-box", help="Create a named box instead of updating --instance")
     args = parser.parse_args()
+    if args.source_commit and not re.fullmatch(r"[0-9a-f]{40}", args.source_commit):
+        parser.error("Invalid source commit")
     if not re.fullmatch(r"v\d+\.\d+\.\d+", args.tag):
         parser.error("Tag must be vMAJOR.MINOR.PATCH")
     if not re.fullmatch(r"[0-9a-f-]{36}", args.instance):
         parser.error("Invalid instance ID")
+    if args.new_box and (
+        not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", args.new_box) or args.new_box == "default"
+    ):
+        parser.error("Invalid box name")
     root = Path(__file__).resolve().parents[4]
     baseline = Path(__file__).parent
+    if args.new_box and (baseline / "boxes" / (args.new_box + ".json")).exists():
+        raise ValueError("Box name already registered; use a new name")
     source_repo = "Lucid-Computing/aiab-introspection"
     prior = json.loads((baseline / "release.json").read_text())
     repo = prior["repo"]
@@ -163,7 +213,11 @@ def main():
     if command("git", "status", "--porcelain", cwd=root):
         raise RuntimeError("Commit local changes before planning a release")
     remote_sha = command(
-        "gh", "api", "repos/" + source_repo + "/commits/" + args.source_ref, "--jq", ".sha"
+        "gh",
+        "api",
+        "repos/" + source_repo + "/commits/" + (args.source_commit or args.source_ref),
+        "--jq",
+        ".sha",
     )
     if remote_sha != sha:
         raise RuntimeError("Local source differs from selected remote ref")
@@ -174,6 +228,7 @@ def main():
         "source_commit": sha,
         "tag": args.tag,
         "instance": args.instance,
+        "new_box": args.new_box,
         "previous_release": prior,
         "status": "planned",
     }
@@ -193,11 +248,16 @@ def main():
     try:
         record("building", status="in_progress")
         image = "ghcr.io/lucid-computing/aiab-introspection-enclave"
-        run_id, built_sha = workflow(
-            source_repo, "build-image.yml", args.source_ref, args.output, "-f", "image=" + image
+        run_id, _ = workflow(
+            source_repo,
+            "build-image.yml",
+            args.source_ref,
+            args.output,
+            "-f",
+            "image=" + image,
+            "-f",
+            "source_commit=" + sha,
         )
-        if built_sha != sha:
-            raise RuntimeError("Source ref moved during build")
         build_dir = args.output / "build"
         command(
             "gh",
@@ -280,14 +340,26 @@ def main():
                 else {}
             ),
         }
-        (args.output / "release.json").write_bytes(canonical(release) + b"\n")
         record("deploying", target_release=release)
-        cp.request(
-            "POST", "/api/containers/" + args.instance + "/update", {"tag": args.tag, "hold": False}
-        )
+        if args.new_box:
+            instance, host = create_box(
+                cp, args.instance, args.new_box, args.tag, prior.get("control_plane_repo", repo)
+            )
+            release.update(host=host, instance_id=instance, box_name=args.new_box)
+        else:
+            instance = args.instance
+            cp.request(
+                "POST",
+                "/api/containers/" + instance + "/update",
+                {"tag": args.tag, "hold": False},
+            )
+        # Record only after the provider accepted a create/update. Keep failed deployments
+        # discoverable without ever claiming their health/attestation check succeeded.
+        (args.output / "release.json").write_bytes(canonical(release) + b"\n")
+        record("deploying", instance=instance, target_release=release)
         deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
-            live = cp.request("GET", "/api/containers/" + args.instance)
+            live = cp.request("GET", "/api/containers/" + instance)
             if live.get("current_tag") == args.tag and live.get("status") == "running":
                 break
             if live.get("update_status") == "failed" or live.get("status") == "failed":

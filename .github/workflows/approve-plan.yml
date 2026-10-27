@@ -69,4 +69,10 @@ jobs:
           gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --match-head-commit "$HEAD_SHA" --squash
           # A push made with the workflow token starts no other workflow (GitHub's rule against
           # loops), so the release is started here explicitly; a dispatch is allowed.
-          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$BASE_REF"
+          MERGED_SHA=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json mergeCommit --jq .mergeCommit.oid)
+          [[ "$MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          TARGET=(-f "source_commit=$MERGED_SHA")
+          if [[ "$HEAD_REF" =~ ^plan/box/([a-z][a-z0-9-]{0,39})/ ]]; then
+            TARGET+=(-f "new_box=${BASH_REMATCH[1]}")
+          fi
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$BASE_REF" "${TARGET[@]}"

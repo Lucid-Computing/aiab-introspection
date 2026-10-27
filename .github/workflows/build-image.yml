@@ -6,6 +6,10 @@ on:
     paths: ['plan/**', 'static/**', '.dockerignore', '.github/workflows/build-image.yml']
   workflow_dispatch:
     inputs:
+      source_commit:
+        description: "Exact approved application commit to build (empty: workflow ref)"
+        required: false
+        type: string
       image:
         description: 'Reviewed lowercase ghcr.io/owner/image name'
         required: true
@@ -22,7 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          ref: ${{ inputs.source_commit || github.sha }}
           persist-credentials: false
+      - name: Record immutable source
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           version: "0.11.6"
@@ -70,7 +78,7 @@ jobs:
           provenance: false
           sbom: false
           build-args: SOURCE_DATE_EPOCH=0
-          outputs: type=image,name=${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}:${{ github.sha }},push=true,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=6,force-compression=true
+          outputs: type=image,name=${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}:${{ steps.source.outputs.sha }},push=true,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=6,force-compression=true
       - name: Record the registry digest
         env:
           IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}
@@ -78,6 +86,7 @@ jobs:
         run: printf '%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
       - name: Require reproducibility and write release evidence
         env:
+          SOURCE_COMMIT: ${{ steps.source.outputs.sha }}
           FIRST: ${{ steps.reproduce.outputs.digest }}
           SECOND: ${{ steps.build.outputs.digest }}
           IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}
@@ -86,7 +95,7 @@ jobs:
           import json, os
           assert os.environ['FIRST'] == os.environ['SECOND'], 'Image reproduction mismatch'
           with open('audit-build.json', 'w') as f:
-              json.dump({'schema':'aiab-build/v1', 'source_commit':os.environ['GITHUB_SHA'],
+              json.dump({'schema':'aiab-build/v1', 'source_commit':os.environ['SOURCE_COMMIT'],
                          'image':os.environ['IMAGE'], 'digest':os.environ['SECOND'],
                          'reproduced_digest':os.environ['FIRST'],
                          'workflow_run_id':os.environ['GITHUB_RUN_ID'],

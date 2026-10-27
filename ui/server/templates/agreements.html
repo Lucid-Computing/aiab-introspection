@@ -3,11 +3,12 @@
 {% block head %}{% if busy or (keys and keys.busy) %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
 <div class="row" style="justify-content: space-between; margin-bottom: var(--space-6)"><h1 style="margin: 0">Agreements</h1><a class="btn btn--primary" href="/agreements/new">New agreement</a></div>
+<p class="explain">Deploy updates the default box. Deploy to a new box leaves existing boxes running. Choose which box to audit on <a class="link" href="/runs">Runs</a>.</p>
 <table class="table">
   <thead><tr><th>Agreement</th><th>Version</th><th>State</th><th></th></tr></thead>
   <tbody>
   <tr class="selected">
-    <td><strong>{{ deployed.plan_id or "No selected agreement" }}</strong><br>{% if deployed.trusted %}<span class="selected-label {{ 'ok' if box.plan_matches else 'now' }}">{{ 'running in the box' if box.plan_matches else 'selected · not live yet' }}</span>{% else %}<span class="selected-label bad">the keys changed · {{ deployed.plan_id }} is no longer valid</span>{% endif %}{% if deployed.trusted and box.configured and box.plan_digest and not box.plan_matches %}<br><span class="text-muted" style="font-size: var(--text-xs)">the box still runs {{ box.plan_digest[7:15] }}…</span>{% endif %}</td>
+    <td><strong>{{ deployed.plan_id or "No selected agreement" }}</strong><br>{% if deployed.trusted %}<span class="selected-label {{ 'ok' if box.plan_matches else 'now' }}">{{ 'running in the default box' if box.plan_matches else 'selected source · not the default box' }}</span>{% else %}<span class="selected-label bad">the keys changed · {{ deployed.plan_id }} is no longer valid</span>{% endif %}{% if deployed.trusted and box.configured and box.plan_digest and not box.plan_matches %}<br><span class="text-muted" style="font-size: var(--text-xs)">the default box runs {{ box.plan_digest[7:15] }}…</span>{% endif %}</td>
     <td>{% if deployed.digest and deployed.trusted %}<span class="digest">{{ deployed.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
     <td>{% if deployed.error %}does not load: <span class="mono">{{ deployed.error }}</span>{% elif not deployed.trusted %}sign a plan with the trusted keys and deploy it{% else %}read only · <span class="mono">plan/</span>{% endif %}</td>
     <td class="actions"><a class="btn btn--ghost btn--sm" href="/a/plan/plan">Open</a></td>
@@ -17,7 +18,7 @@
     <td><strong>{{ r.plan_id }}</strong><br>
       {% if r.deploying and r.deploying.busy %}<span class="selected-label {{ r.deploying.tone }}">{{ r.deploying.label }}</span>
       {% elif r.deploying %}<span class="selected-label {{ r.deploying.tone }}">{{ r.deploying.label }}</span>
-      {% elif r.selected and deployed.trusted %}<span class="text-muted">agreements/{{ r.id }} · same version as deployed</span>
+      {% elif r.selected and deployed.trusted %}<span class="text-muted">agreements/{{ r.id }} · same version as selected source</span>
       {% else %}<span class="text-muted">agreements/{{ r.id }}</span>{% endif %}
       {% if r.editor %}<br><span class="text-muted" style="font-size: var(--text-xs)">{{ r.editor.user }} ({{ r.editor.party }}) is editing since {{ r.editor.since | hhmm }}</span>{% endif %}</td>
     <td>{% if r.digest %}<span class="digest">{{ r.digest[7:19] }}…</span>{% else %}—{% endif %}</td>
@@ -27,8 +28,14 @@
       {% set frozen = r.deploying and r.deploying.busy %}
       <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm" {% if frozen %}disabled title="being deployed"{% elif r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Edit</button></form>
       {% if frozen %}<button class="btn btn--ghost btn--sm" disabled title="being deployed">Sign</button>{% else %}<a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/sign">Sign</a>{% endif %}
-      {% set why = ("deploying " ~ current.name ~ " now") if busy else ("fix the plan first" if (r.error or r.issue) else ("sign it first" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("already running in the box" if (r.running and deployed.trusted) else ("being edited" if r.editor else ""))))) %}
+      {% set why = ("deploying " ~ current.name ~ " now") if busy else ("fix the plan first" if (r.error or r.issue) else ("sign it first" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("already running in the default box" if (r.running and deployed.trusted) else ("being edited" if r.editor else ""))))) %}
       <form method="post" action="/a/{{ r.id }}/deploy" class="inline" data-busy="Deploying {{ r.plan_id }}: making the branch and pushing it. A few seconds." data-confirm="This deploys {{ r.plan_id }}: a branch with only this plan is pushed and a pull request opened; the signature check merges it and the box is released with it. Continue?"><button class="btn btn--primary btn--sm" {% if why %}disabled title="{{ why }}"{% endif %}>Deploy</button></form>
+      <details class="info"><summary>Deploy to a new box</summary>
+        <form method="post" action="/a/{{ r.id }}/deploy" data-confirm="Create an additional Tinfoil box for this signed plan? Existing boxes stay running. This uses additional compute.">
+          <label>New box name <input name="new_box" required pattern="[a-z][a-z0-9-]{0,39}" maxlength="40" placeholder="dev-audit"></label>
+          <button class="btn btn--primary btn--sm" {% if busy or r.error or r.issue or not r.signed or not keys.ready or r.editor %}disabled{% endif %}>Create box</button>
+        </form>
+      </details>
       <form method="post" action="/a/{{ r.id }}/delete" class="inline" data-confirm="Delete {{ r.plan_id }}? The folder agreements/{{ r.id }} and its history are removed; a deployed copy in plan/ stays. This cannot be undone."><button class="btn btn--ghost btn--sm" {% if frozen %}disabled title="being deployed"{% elif r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Delete</button></form>
     </td>
   </tr>
@@ -41,7 +48,7 @@
 {% if current and current.state %}
 <div class="notice notice--stack" style="margin-top: var(--space-8)">
   {% set d = current.state %}{% set pr = d.pr %}{% set check = d.check %}{% set rel = d.release %}
-  <p style="margin-top: var(--space-4)"><strong>Deployment</strong> of {{ current.name }} <span class="digest">{{ current.digest[7:19] }}…</span>: <span class="selected-label {{ d.tone }}">{{ d.label }}</span>{% if d.busy %} <span class="badge"><span class="spinner spinner--sm"></span> this page refreshes itself</span>{% endif %}{% if d.error %} <span class="text-muted">(GitHub did not answer: {{ d.error }})</span>{% endif %}</p>
+  <p style="margin-top: var(--space-4)"><strong>Deployment</strong> of {{ current.name }}{% if current.box_name %} to new box <strong>{{ current.box_name }}</strong>{% endif %} <span class="digest">{{ current.digest[7:19] }}…</span>: <span class="selected-label {{ d.tone }}">{{ d.label }}</span>{% if d.busy %} <span class="badge"><span class="spinner spinner--sm"></span> this page refreshes itself</span>{% endif %}{% if d.error %} <span class="text-muted">(GitHub did not answer: {{ d.error }})</span>{% endif %}</p>
   {% if pr %}
   <ol class="dsteps">
     <li class="{% if pr.state == 'merged' %}ok{% elif pr.state == 'closed' %}bad{% else %}now{% endif %}">Pull request <a class="link" href="{{ pr.url }}" target="_blank" rel="noopener">#{{ pr.number }}</a> into <span class="mono">{{ pr.base }}</span>: {{ pr.state }}{% if pr.base != "production" %} <span class="bad">· wrong branch, nothing will check or merge it</span>{% endif %}</li>

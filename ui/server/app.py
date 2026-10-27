@@ -501,6 +501,12 @@ async def _current_deployment(box: dict) -> dict | None:
         marker = json.loads(_deploy_marker().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    if marker.get("box_name"):
+        try:
+            target = await asyncio.to_thread(deployed.refresh, settings, marker["box_name"])
+            box = await box_status(target.box_url, marker["digest"])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            box = {}  # Not registered until the provider accepts the new container.
     box_digest = (box.get("manifest") or {}).get("plan_digest")
     phase = marker.get("phase", "pushed")
     if phase == "pushing":
@@ -514,7 +520,9 @@ async def _current_deployment(box: dict) -> dict | None:
             "busy": False,
         }
         return {**marker, "state": state}
-    state = await deploystatus.status(settings, marker["digest"], marker["digest"] == box_digest)
+    state = await deploystatus.status(
+        settings, marker["digest"], marker["digest"] == box_digest, branch=marker.get("branch")
+    )
     if state is None:
         state = {
             "pr": None,
@@ -583,8 +591,10 @@ async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     try:
-        run_settings = await asyncio.to_thread(deployed.refresh, settings)
-    except (OSError, subprocess.SubprocessError):
+        run_settings = await asyncio.to_thread(
+            deployed.refresh, settings, request.query_params.get("box", "default")
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
         return back(
             "/agreements",
             err="Could not fetch the deployed release. Check GitHub access and retry.",
@@ -622,6 +632,8 @@ async def runs_index(request: Request) -> Response:
         request,
         "runs.html",
         pre=pre,
+        box_name=run_settings.box_name,
+        boxes=deployed.choices(run_settings),
         sessions=sessions,
         all_count=len(all_sessions),
         whos=whos,
@@ -649,17 +661,26 @@ async def runs_start(request: Request) -> Response:
     user = user_of(request)
     if user is None:
         return to_login(request)
+    form = await request.form()
     try:
-        run_settings = await asyncio.to_thread(deployed.refresh, settings)
-    except (OSError, subprocess.SubprocessError):
+        run_settings = await asyncio.to_thread(
+            deployed.refresh, settings, str(form.get("box", "default"))
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
         return back(
             "/agreements",
             err="Could not fetch the deployed release. Check GitHub access and retry.",
         )
     pre = runs.preflight(run_settings)
+    if form.get("release_digest") != pre["release"].get("release_digest"):
+        return back(
+            "/runs?box=" + run_settings.box_name,
+            err="This box’s release changed. Review it and start the run again.",
+        )
     if not pre["ok"]:
-        return back("/runs", err="Cannot start: " + "; ".join(pre["missing"]))
-    form = await request.form()
+        return back(
+            "/runs?box=" + run_settings.box_name, err="Cannot start: " + "; ".join(pre["missing"])
+        )
     try:
         if True:  # the input is always recorded sessions; test transcripts are gone
             chosen = set(form.getlist("session"))
@@ -667,12 +688,14 @@ async def runs_start(request: Request) -> Response:
                 s for s in proxylogs.sessions(proxylogs.load_records(settings)) if s.id in chosen
             ]
             if not picked:
-                return back("/runs", err="Pick at least one recorded session.")
+                return back(
+                    "/runs?box=" + run_settings.box_name, err="Pick at least one recorded session."
+                )
             records = proxylogs.to_box_records([r for s in picked for r in s.requests])
             label = f"{len(picked)} recorded session(s), {len(records)} records"
             run_id = runs.start_run(run_settings, user, records=records, label=label)
     except (ValueError, OSError) as exc:
-        return back("/runs", err=str(exc))
+        return back("/runs?box=" + run_settings.box_name, err=str(exc))
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
 
@@ -837,6 +860,18 @@ async def deploy(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
+    form = await request.form()
+    new_box = str(form.get("new_box", "")).strip() or None
+    if new_box:
+        try:
+            deployed.validate_box_name(new_box)
+            if new_box == "default":
+                raise ValueError("default is reserved")
+        except ValueError:
+            return back(
+                "/agreements",
+                err="Use a new box name: lowercase letters, digits and hyphens; not default.",
+            )
     actor = user_of(request) or {}
     view, error = load_view(target)
     if view is None:
@@ -879,18 +914,32 @@ async def deploy(request: Request, aid: str) -> Response:
     digest = view.digest
     # The push takes seconds to a minute (fetch, branch, push, pull request). It runs behind
     # the page: the page answers at once and its deployment strip follows the marker file.
-    _remember_deploy(aid, view.plan_id, digest, phase="pushing")
+    _remember_deploy(aid, view.plan_id, digest, phase="pushing", box_name=new_box)
     agreement_dir, plan_id = target.plan_dir, view.plan_id
 
     def push() -> None:
         pushed = publish.push_deploy(
-            settings.git_dir, agreement_dir, aid, digest, actor, base=settings.deploy_base
+            settings.git_dir,
+            agreement_dir,
+            aid,
+            digest,
+            actor,
+            base=settings.deploy_base,
+            new_box=new_box,
         )
         if pushed.error:
-            _remember_deploy(aid, plan_id, digest, phase="failed", error=pushed.error)
+            _remember_deploy(
+                aid, plan_id, digest, phase="failed", error=pushed.error, box_name=new_box
+            )
         else:
             _remember_deploy(
-                aid, plan_id, digest, phase="pushed", pr_url=pushed.pr_url, branch=pushed.branch
+                aid,
+                plan_id,
+                digest,
+                phase="pushed",
+                pr_url=pushed.pr_url,
+                branch=pushed.branch,
+                box_name=new_box,
             )
 
     threading.Thread(target=push, name=f"deploy-{aid}", daemon=True).start()

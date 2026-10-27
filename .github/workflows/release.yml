@@ -11,11 +11,20 @@
 #   AUDIT_LAB_TOKEN    the lab API token, for the live verification step
 #   AUDIT_LOGGER_KEY   the demo logger private key (no longer used by the release; kept for now)
 name: Release to the live box
+run-name: "Release ${{ inputs.new_box || 'default' }} · ${{ inputs.source_commit || github.sha }}"
 on:
   workflow_dispatch:
     inputs:
       tag:
         description: 'Release tag vMAJOR.MINOR.PATCH (empty: bump the patch of the current tag)'
+        required: false
+        type: string
+      source_commit:
+        description: "Approved source commit (empty: dispatch/push commit)"
+        required: false
+        type: string
+      new_box:
+        description: "New box name (empty: update the default box); existing boxes stay running"
         required: false
         type: string
       dry_run:
@@ -32,7 +41,7 @@ on:
   # does not start another one. The Actions tab button remains for re-runs and dry runs.
   push:
     branches: [production]
-    paths: ['plan/**', 'static/**', '.dockerignore']
+    paths: ['plan/**', 'static/**', '!static/deploy/tinfoil/audit/boxes/**', '.dockerignore']
 concurrency:
   group: audit-release
   cancel-in-progress: false
@@ -44,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          ref: production
+          ref: ${{ inputs.source_commit || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
@@ -70,6 +79,19 @@ jobs:
           uv sync --locked
           uv run --locked python -m auditor.baked --folder ../plan --trust aiab/baked/trust.json verify \
             || { echo "::error::plan/ on production is not signed by the keys in static/aiab/baked/trust.json. Sign the plan with the trusted keys and deploy it; that deploy releases both together."; exit 1; }
+      - name: Do not implicitly replace the default with another box's plan
+        if: github.event_name == 'push'
+        working-directory: static
+        run: |
+          uv run --locked python -m auditor.baked --folder ../plan --trust aiab/baked/trust.json digest > "$RUNNER_TEMP/selected-plan.json"
+          python3 - <<'PY_CHECK'
+          import json, os
+          from pathlib import Path
+          selected = json.loads((Path(os.environ['RUNNER_TEMP']) / 'selected-plan.json').read_text())
+          default = json.loads(Path('deploy/tinfoil/audit/release.json').read_text())
+          if selected['plan_digest'] != default['plan_digest']:
+              raise SystemExit('The selected plan differs from the default box. Use Deploy or an explicit release workflow dispatch to update the default; automatic pushes do not replace it with another box’s plan.')
+          PY_CHECK
       - name: Choose the tag
         id: tag
         env:
@@ -99,6 +121,7 @@ jobs:
         working-directory: static
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+          NEW_BOX: ${{ inputs.new_box }}
         run: |
           uv sync --locked
           git config --global user.name "AIAB release"
@@ -106,8 +129,10 @@ jobs:
           gh auth setup-git
           EXECUTE=--execute
           if [ "${{ inputs.dry_run }}" = "true" ]; then EXECUTE=""; echo "Dry run: planning only" >> "$GITHUB_STEP_SUMMARY"; fi
-          uv run --locked python deploy/tinfoil/audit/release.py \
-            $EXECUTE --source-ref production --tag "${{ steps.tag.outputs.tag }}" \
+          TARGET=()
+          if [ -n "$NEW_BOX" ]; then TARGET=(--new-box "$NEW_BOX"); fi
+          uv run --locked python deploy/tinfoil/audit/release.py "${TARGET[@]}" \
+            $EXECUTE --source-ref production --source-commit "$(git rev-parse HEAD)" --tag "${{ steps.tag.outputs.tag }}" \
             --key-directory "$RUNNER_TEMP/keys" --output "$RUNNER_TEMP/release-out"
       - name: Commit the new release pins to production
         # Runs even when the health check after the deploy failed: release.py writes
@@ -117,23 +142,34 @@ jobs:
         if: ${{ !cancelled() && inputs.dry_run != true }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+          NEW_BOX: ${{ inputs.new_box }}
         run: |
           if [ ! -f "$RUNNER_TEMP/release-out/release.json" ]; then
             echo "No deployment happened in this run; nothing to record." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          cp "$RUNNER_TEMP/release-out/release.json" static/deploy/tinfoil/audit/release.json
-          for file in tinfoil-config.yml trust.json manifest.json policy-digest.txt; do
-            cp "$RUNNER_TEMP/release-out/config/$file" "static/deploy/tinfoil/audit/$file"
-          done
           git config --global user.name "AIAB release"
           git config --global user.email "aiab-release@users.noreply.github.com"
-          git add static/deploy/tinfoil/audit/release.json \
-            static/deploy/tinfoil/audit/tinfoil-config.yml \
-            static/deploy/tinfoil/audit/trust.json \
-            static/deploy/tinfoil/audit/manifest.json \
-            static/deploy/tinfoil/audit/policy-digest.txt
+          if [ -n "$NEW_BOX" ]; then
+            [[ "$NEW_BOX" =~ ^[a-z][a-z0-9-]{0,39}$ ]] && [ "$NEW_BOX" != default ]
+            mkdir -p static/deploy/tinfoil/audit/boxes
+            test ! -e "static/deploy/tinfoil/audit/boxes/$NEW_BOX.json"
+            cp "$RUNNER_TEMP/release-out/release.json" "static/deploy/tinfoil/audit/boxes/$NEW_BOX.json"
+            git add "static/deploy/tinfoil/audit/boxes/$NEW_BOX.json"
+          else
+            cp "$RUNNER_TEMP/release-out/release.json" static/deploy/tinfoil/audit/release.json
+            for file in tinfoil-config.yml trust.json manifest.json policy-digest.txt; do
+              cp "$RUNNER_TEMP/release-out/config/$file" "static/deploy/tinfoil/audit/$file"
+            done
+            git add static/deploy/tinfoil/audit/release.json \
+              static/deploy/tinfoil/audit/tinfoil-config.yml \
+              static/deploy/tinfoil/audit/trust.json \
+              static/deploy/tinfoil/audit/manifest.json \
+              static/deploy/tinfoil/audit/policy-digest.txt
+          fi
           git commit -m "Release ${{ steps.tag.outputs.tag }}: update pins [skip ci]"
+          git fetch origin production
+          git rebase origin/production
           git push origin HEAD:production
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()   # on failure the journal holds the reason
