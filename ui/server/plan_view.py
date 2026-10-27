@@ -526,6 +526,35 @@ def deployed_plan(settings: Settings) -> dict[str, Any]:
     }
 
 
+FILE_CUT = 64 * 1024
+
+
+def plan_files(settings: Settings) -> list[dict[str, Any]]:
+    """Every file under the deploy slot, plan/, in path order, read only: what the box image
+    was built from. Caches and hidden files are left out; a long file is cut so the page
+    stays readable."""
+    root = settings.plan_dir
+    files = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        rel = path.relative_to(root)
+        if any(part.startswith(".") or part == "__pycache__" for part in rel.parts):
+            continue
+        raw = path.read_bytes()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+        files.append(
+            {
+                "path": str(rel),
+                "size": len(raw),
+                "text": text[:FILE_CUT] if text is not None else None,
+                "cut": text is not None and len(text) > FILE_CUT,
+            }
+        )
+    return files
+
+
 def list_agreements(settings: Settings) -> list[dict[str, Any]]:
     """Every folder under agreements/, the editable ones. The deploy slot is not an
     agreement; see deployed_plan()."""

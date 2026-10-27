@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -468,6 +469,18 @@ async def _agreements_page(request: Request, **extra) -> Response:
     )
 
 
+@app.get("/deployed")
+async def deployed_files(request: Request) -> Response:
+    """The deploy slot as it is: every file under plan/, read only (the Read button)."""
+    if user_of(request) is None:
+        return to_login(request)
+    deployed = pv.deployed_plan(settings)
+    box = await box_status(settings.box_url, deployed.get("digest") or "")
+    return render(
+        request, "deployed.html", deployed=deployed, box=box, files=pv.plan_files(settings)
+    )
+
+
 async def _in_flight(aid: str) -> str | None:
     """Why this agreement may not be touched right now: it is being deployed."""
     current = await _current_deployment(await box_status(settings.box_url, ""))
@@ -486,7 +499,16 @@ def _remember_deploy(aid: str, plan_id: str, digest: str, phase: str = "pushed",
     try:
         settings.agreements_dir.mkdir(parents=True, exist_ok=True)
         _deploy_marker().write_text(
-            json.dumps({"id": aid, "name": plan_id, "digest": digest, "phase": phase, **more}),
+            json.dumps(
+                {
+                    "id": aid,
+                    "name": plan_id,
+                    "digest": digest,
+                    "phase": phase,
+                    "at": time.time(),
+                    **more,
+                }
+            ),
             encoding="utf-8",
         )
     except OSError:
@@ -513,13 +535,31 @@ async def _current_deployment(box: dict) -> dict | None:
             "busy": False,
         }
         return {**marker, "state": state}
-    state = await deploystatus.status(settings, marker["digest"], marker["digest"] == box_digest)
-    if state is None:
+    running = marker["digest"] == box_digest
+    state = await deploystatus.status(settings, marker["digest"], running)
+    if state is None and running:
+        # GitHub did not answer (or has no pull request for it), but the box already runs
+        # this version: the deployment is over, whatever GitHub says later.
         state = {
             "pr": None,
-            "label": "deploying · waiting for GitHub to show the pull request",
-            "tone": "now",
-            "busy": True,
+            "label": "deployed · running in the box",
+            "tone": "ok",
+            "busy": False,
+            "box_matches": True,
+        }
+    elif state is None:
+        # Unknown. Hold other deployments only while this one can still be in flight; a
+        # release takes minutes, so after half an hour GitHub's silence must not keep
+        # every Deploy button grey.
+        young = time.time() - float(marker.get("at") or 0) < 30 * 60
+        state = {
+            "pr": None,
+            "label": "deploying · waiting for GitHub to show the pull request"
+            if young
+            else "deploy state unknown · GitHub did not answer",
+            "tone": "now" if young else "bad",
+            "busy": young,
+            "box_matches": False,
         }
     elif state["pr"]["state"] == "closed":
         return None
@@ -577,11 +617,37 @@ async def new_agreement(request: Request) -> Response:
     )
 
 
+def _pins_differ(pre: dict, box: dict) -> bool:
+    pins, live = (pre.get("release") or {}).get("image_digest"), box.get("image_digest")
+    return bool(pins and live and pins != live)
+
+
+async def _run_preflight() -> dict:
+    """The run's preconditions, plus one the files alone cannot tell: the release pins
+    must be the release the box runs, or the attestation step fails with the SDK's
+    catch-all "model_unavailable". When they differ, the checkout is usually behind a
+    release that just went live, so it is pulled once, now, before giving up."""
+    pre = runs.preflight(settings)
+    box = await box_status(settings.box_url, pre.get("plan_digest") or "")
+    if _pins_differ(pre, box):
+        if await asyncio.to_thread(publish.pull_now, settings.git_dir):
+            pre = runs.preflight(settings)
+    if _pins_differ(pre, box):
+        tag = (pre.get("release") or {}).get("tag", "?")
+        pre["missing"].append(
+            f"the release pins here ({tag}) are not the release the box runs: this checkout"
+            " is behind production and could not be fast-forwarded (unsaved changes in it,"
+            " or the pull failed). Until it catches up the box cannot be attested."
+        )
+        pre["ok"] = False
+    return pre
+
+
 @app.get("/runs")
 async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    pre = runs.preflight(settings)
+    pre = await _run_preflight()
     qp = request.query_params
     win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
     lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
@@ -641,7 +707,7 @@ async def runs_start(request: Request) -> Response:
     user = user_of(request)
     if user is None:
         return to_login(request)
-    pre = runs.preflight(settings)
+    pre = await _run_preflight()
     if not pre["ok"]:
         return back("/runs", err="Cannot start: " + "; ".join(pre["missing"]))
     form = await request.form()
@@ -654,6 +720,8 @@ async def runs_start(request: Request) -> Response:
             if not picked:
                 return back("/runs", err="Pick at least one recorded session.")
             records = proxylogs.to_box_records([r for s in picked for r in s.requests])
+            if not records:
+                return back("/runs", err="The chosen sessions hold no text to audit.")
             label = f"{len(picked)} recorded session(s), {len(records)} records"
             run_id = runs.start_run(settings, user, records=records, label=label)
     except (ValueError, OSError) as exc:

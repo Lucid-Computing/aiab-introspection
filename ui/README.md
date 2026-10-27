@@ -132,7 +132,7 @@ What lives where: the image holds the UI code and the static part it imports; th
 To try the container locally against a throwaway bare repository instead of GitHub:
 
 ```sh
-docker build -f ui/Dockerfile -t aiab-ui .
+docker build --platform linux/amd64 -f ui/Dockerfile -t aiab-ui .   # Render runs amd64 only; a default build on an Apple Silicon Mac is arm64 and will not start there
 docker run --rm -p 8090:8090 -v /path/to/origin.git:/origin.git -v aiab-data:/data \
   -e AIAB_REPO=Lucid-Computing/aiab-introspection -e AIAB_REPO_URL=file:///origin.git \
   -e AIAB_CHECKOUT_BRANCH=ui-design -e UI_BOOTSTRAP_ACCOUNTS=teddy:lab:lab-pass-123 aiab-ui
@@ -187,7 +187,7 @@ The tested UI code from commit `bde6e99` is published privately as
 `sha256:58a021525ab2983344e8f880d73efe7535917ff2fa049ce299b6d81daf22c9b0`.
 Render uses registry credential `Lucid AIAB UI (derpyplops)` to pull it.
 
-For future UI changes, build `ui/Dockerfile` from the repository root, push a new
+For future UI changes, build `ui/Dockerfile` from the repository root with `--platform linux/amd64`, push a new
 commit-tagged image to that repository, then update this service's image digest
 with `render services update <service-id> --image <image@sha256:digest>` and run
 `render deploys create <service-id> --wait`. Confirm the deployment succeeds,

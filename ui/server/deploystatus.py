@@ -329,8 +329,11 @@ async def keys(
                 pass
         info["label"], info["tone"], info["busy"] = _key_summary(info, trust is not None)
         out["parties"][party] = info
-    out["ready"] = trust is not None and all(
-        p["ui"] and p["ui"] == p["production"] for p in out["parties"].values()
+    # The keys this UI verifies against are production's own trust file (the checkout is
+    # kept at production). GitHub only confirms it; when GitHub does not answer, that
+    # must not turn every Deploy button grey.
+    out["ready"] = all(p["ui"] for p in out["parties"].values()) and (
+        trust is None or all(p["ui"] == p["production"] for p in out["parties"].values())
     )
     out["busy"] = any(p["busy"] for p in out["parties"].values())
     return out

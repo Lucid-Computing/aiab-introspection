@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Deployed plan · AIAB agreement{% endblock %}
+{% block content %}
+<div class="row" style="justify-content: space-between; margin-bottom: var(--space-6)"><h1 style="margin: 0">Deployed plan</h1><a class="btn btn--ghost btn--sm" href="/agreements">Back to agreements</a></div>
+<p class="lead">The folder <span class="mono">plan/</span> on production, file by file: what the box image was built from. Read only; it changes only when an agreement is deployed.</p>
+<table class="kv" style="margin-bottom: var(--space-6)">
+  <tr><th>Plan</th><td>{% if deployed.error %}does not load: <span class="mono">{{ deployed.error }}</span>{% else %}{{ deployed.plan_id }} · <span class="digest">{{ deployed.digest }}</span>{% endif %}</td></tr>
+  <tr><th>Signatures</th><td>{% if deployed.error %}—{% elif deployed.trusted %}<span class="ok">verify against the keys production trusts</span>{% else %}<span class="bad">do not verify against the keys production trusts: the keys changed, this plan is no longer valid</span>{% endif %}</td></tr>
+  <tr><th>Box</th><td>{% if not box.configured %}not configured{% elif box.plan_matches %}<span class="ok">runs this plan</span>{% elif box.plan_digest %}runs <span class="digest">{{ box.plan_digest[7:19] }}…</span>, not this one yet{% else %}did not answer{% endif %}</td></tr>
+</table>
+{% for f in files %}
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="card-header"><span class="mono">{{ f.path }}</span> <span>{{ f.size }} bytes</span></div>
+  <div class="card-body">{% if f.text is none %}<p class="text-muted" style="margin: 0">binary file</p>{% else %}<pre class="cmd" style="margin: 0; white-space: pre">{{ f.text }}</pre>{% if f.cut %}<p class="text-muted" style="margin: var(--space-2) 0 0">cut after 64 KB</p>{% endif %}{% endif %}</div>
+</div>
+{% else %}<p class="text-muted">plan/ is empty.</p>
+{% endfor %}
+{% endblock %}

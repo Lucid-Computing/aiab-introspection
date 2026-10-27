@@ -232,7 +232,22 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 raise RuntimeError(f"{type(exc).__name__}: {exc}") from None
             return {"plan_digest": bundle.digest, "signatures_verified": True}
         if key == "attest":
-            _cli(settings, "pin-identity", *connection, "--output", str(files["anchor"]))
+            try:
+                _cli(settings, "pin-identity", *connection, "--output", str(files["anchor"]))
+            except RuntimeError as exc:
+                if "model_unavailable" not in str(exc):
+                    raise
+                # The SDK's one code for every verification failure. The usual cause: the
+                # release pins describe another release than the one the box runs.
+                try:
+                    tag = json.loads(release.read_text(encoding="utf-8")).get("tag", "?")
+                except (OSError, ValueError):
+                    tag = "?"
+                raise RuntimeError(
+                    f"the box could not be attested against the release pins ({tag}): they"
+                    " describe another release than the one running, or Tinfoil could not"
+                    " verify the box (model_unavailable)"
+                ) from None
             anchor = json.loads(files["anchor"].read_text())
             return {"host": anchor["release"]["host"], "manifest": anchor["manifest"]}
         if key == "export":

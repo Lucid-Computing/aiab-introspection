@@ -330,19 +330,28 @@ def _open_pull_request(slug: str, branch: str) -> str | None:
 #      pins, the deployed plan shown on the Agreements page is current within a minute.
 
 
+def pull_now(repo: Path) -> bool:
+    """Fast-forward the checkout to its remote branch once, only when nothing is modified
+    locally (agreement drafts are git-ignored, so normally nothing is). True when it moved."""
+    try:
+        if _git(repo, "status", "--porcelain"):
+            return False
+        before = _git(repo, "rev-parse", "HEAD")
+        branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+        _git(repo, "fetch", "--quiet", "origin", branch)
+        _git(repo, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
+        return _git(repo, "rev-parse", "HEAD") != before
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
+        log.warning("pull: %s", str(exc)[-200:])
+        return False
+
+
 def start_auto_pull(repo: Path, every: int = 60) -> None:
-    """Fast-forward the checkout to its remote branch, every ``every`` seconds, only when
-    nothing is modified locally (agreement drafts are git-ignored, so normally nothing is)."""
+    """Fast-forward the checkout to its remote branch every ``every`` seconds."""
 
     def loop() -> None:
         while True:
-            try:
-                if not _git(repo, "status", "--porcelain"):
-                    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
-                    _git(repo, "fetch", "--quiet", "origin", branch)
-                    _git(repo, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
-            except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
-                log.warning("auto-pull: %s", str(exc)[-200:])
+            pull_now(repo)
             time.sleep(every)
 
     threading.Thread(target=loop, daemon=True, name="auto-pull").start()

@@ -325,38 +325,68 @@ def sessions(records: list[dict]) -> list[Session]:
 # ---- box records, for a run --------------------------------------------------------------
 
 
-def to_box_records(requests: list[Request]) -> list[dict]:
-    """The box's record format: one request record and one response record per call.
+# What one record may carry. Tool results (file contents, command output) and tool inputs
+# can be enormous, and the plan allows 100 KB per run, so they are cut, head first.
+CONTENT_LIMITS = {"request": 8000, "response": 8000, "tool_call": 2000, "tool_result": 2000}
 
-    agent_id is who sent it (the proxy's "who"), session_id the grouping above, content the
-    text the model saw and said. The box checks these against the plan's input scope.
+
+def _cut(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f"\n… [cut here; {len(text):,} characters in all]"
+
+
+def call_parts(r: Request) -> list[tuple[str, str]]:
+    """(kind, content) pairs for one call, in order: the newest user turn (its text and the
+    tool results it carries), then the model's answer (its text and the tool calls it
+    makes). Earlier turns went to the box with their own calls, so they are not repeated;
+    empty parts, harness reminders and API errors are left out."""
+    parts: list[tuple[str, str]] = []
+    newest = next((m for m in reversed(r.messages) if m["role"] == "user"), None)
+    text: list[str] = []
+    for b in newest["blocks"] if newest else []:
+        if b["kind"] == "text":
+            text.append(b["text"])
+        elif b["kind"] == "tool_result":
+            if text:
+                parts.append(("request", "\n".join(text)))
+                text = []
+            parts.append(("tool_result", b["text"]))
+    if text:
+        parts.append(("request", "\n".join(text)))
+    answer = [b["text"] for b in r.response_blocks if b["kind"] == "text"]
+    if answer:
+        parts.append(("response", "\n".join(answer)))
+    for b in r.response_blocks:
+        if b["kind"] == "tool_use":
+            name = b["label"].removeprefix("tool call: ")
+            parts.append(("tool_call", f"{name} {b['text']}"))
+    return [(kind, _cut(body, CONTENT_LIMITS[kind])) for kind, body in parts if body.strip()]
+
+
+def to_box_records(requests: list[Request]) -> list[dict]:
+    """The box's record format, one record per part of each call (see ``call_parts``).
+
+    agent_id is who sent it (the proxy's "who"), session_id the grouping above, content
+    what the model saw and said. The box checks these against the plan's input scope.
     """
     out = []
     for r in sorted(requests, key=lambda x: x.time):
         ts = datetime.fromtimestamp(r.time, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        base = {
-            "stream": "proxy",
-            "batch": 0,
-            "agent_id": r.who,
-            "session_id": r.session_id,
-            "ts": ts,
-        }
-        out.append(
-            {
-                **base,
-                "offset": len(out),
-                "kind": "request",
-                "content": r.last_user_text or "(no text)",
-            }
-        )
-        out.append(
-            {
-                **base,
-                "offset": len(out),
-                "kind": "response",
-                "content": r.response_text or "(no text)",
-            }
-        )
+        for kind, content in call_parts(r):
+            out.append(
+                {
+                    "stream": "proxy",
+                    "batch": 0,
+                    "offset": len(out),
+                    "agent_id": r.who,
+                    "session_id": r.session_id,
+                    "ts": ts,
+                    "kind": kind,
+                    "content": content,
+                }
+            )
     return out
 
 
