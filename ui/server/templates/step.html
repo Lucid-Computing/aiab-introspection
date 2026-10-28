@@ -11,7 +11,7 @@
 {% if aid == "plan" %}
 <div class="notice"><p><strong>Deployed plan</strong>, read only: this is what the box runs. Changes happen in the agreement it was made from.</p></div>
 {% elif editor %}
-<div class="notice"><p>{{ editor.user }} ({{ editor.party }}) is editing this agreement since {{ editor.since | hhmm }}. Read only until they finish or stay idle for 15 minutes.</p></div>
+<div class="notice"><p>{{ editor.user }} ({{ editor.party }}) is editing this agreement since {{ editor.since | hhmm }}. Read only until they leave, sign or stay idle for 15 minutes.</p></div>
 {% elif edit and view.frozen %}
 <div class="notice"><p>A valid signature exists for this version, so saving is disabled. Use Edit on the Agreements screen to start a new version.</p></div>
 {% elif not edit %}

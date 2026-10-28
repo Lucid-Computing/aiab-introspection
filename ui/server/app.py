@@ -443,6 +443,7 @@ async def logs_sync(request: Request) -> Response:
 async def agreements(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
+    editing.release_all(user_of(request) or {})  # back on the list is leaving edit mode
     return await _agreements_page(request)
 
 
@@ -1062,6 +1063,7 @@ async def deploy(request: Request, aid: str) -> Response:
             err=f"{current['name']} is being deployed right now ({current['state']['label']})."
             " Wait for it to finish before deploying another plan.",
         )
+    editing.release(aid, actor)  # deploying is leaving edit mode; someone else's still blocks
     if editing.holder(aid):
         return back("/agreements", err=editing.describe(editing.holder(aid)) + ". Deploy later.")
     pv.record_change(target, actor, "deploy", "deployment", "pushed for deployment")
@@ -1142,12 +1144,17 @@ def _edit_mode(request: Request, aid: str, wanted: bool) -> tuple[bool, dict | N
     if aid == "plan":
         return False, None
     actor = user_of(request) or {}
+    if not wanted:
+        # Opening the agreement outside edit mode is leaving it: every save is already on
+        # disk, so nothing is lost and nobody is kept waiting (and Deploy is not blocked).
+        editing.release(aid, actor)
+        return False, editing.holder(aid)
     other = editing.blocked_by(aid, actor)
     if other:
         return False, other
-    if wanted and editing.acquire(aid, actor):
+    if editing.acquire(aid, actor):
         return False, editing.holder(aid)
-    return wanted, None
+    return True, None
 
 
 @app.post("/a/{aid}/plan/step/{name}/settings")
@@ -1256,6 +1263,7 @@ async def sign(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
+    editing.release(aid, user_of(request) or {})  # going to sign is leaving edit mode
     view, error = load_view(target)
     keys, copy = await asyncio.gather(
         _keys(await box_status(settings.box_url, "")),
@@ -1295,6 +1303,7 @@ async def sign_upload(
     status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user)
     if status != "ok":
         return back(here, err=f"Signature not accepted: {detail}")
+    editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
     saved(user)
     return back(here, msg=f"{party} signature verified and stored.")
 

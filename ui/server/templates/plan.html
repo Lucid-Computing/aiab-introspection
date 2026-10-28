@@ -92,7 +92,7 @@
 {% if aid == "plan" %}
 <div class="notice"><p><strong>Deployed plan</strong>, read only: this is what the box runs. Edit, sign and deploy the agreement it was made from, under <a class="link" href="/agreements">Agreements</a>.</p></div>
 {% elif editor %}
-<div class="notice"><p>{{ editor.user }} ({{ editor.party }}) is editing this agreement since {{ editor.since | hhmm }}. You can read it; editing opens up when they finish or after 15 minutes without activity.</p></div>
+<div class="notice"><p>{{ editor.user }} ({{ editor.party }}) is editing this agreement since {{ editor.since | hhmm }}. You can read it; editing opens up when they leave, sign or stay idle for 15 minutes.</p></div>
 {% else %}
 <div class="row" style="gap: var(--space-4)">
   {% if not edit %}
