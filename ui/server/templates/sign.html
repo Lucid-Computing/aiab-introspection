@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set active = "agreements" %}
 {% block title %}Sign · AIAB agreement{% endblock %}
-{% block head %}{% if keys and keys.busy %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
+{% block head %}{% if keys and keys.busy and not key_wait %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/agreements" class="link">← Agreements</a>{% if view %} · <a href="{{ base }}/plan" class="link">{{ view.plan_id }}</a>{% endif %}</p>
 <h1>Sign</h1>
@@ -64,7 +64,7 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
         <summary>Submit a new public key</summary>
         <div class="info-body">
           <p class="explain">Signatures are checked against the key production trusts, shown above, read from GitHub: by this UI, by the check on the plan pull request and by the box alike. Submitting a new key opens a pull request that changes it; the check merges it within a minute and the status line follows the pull request. No release starts from that merge: the box takes the key together with the next plan you sign with it and deploy, because it only starts with a plan signed by the keys it trusts. Sign with the new key once the status line says it is trusted on production.</p>
-          <form method="post" action="{{ base }}/sign/key">
+          <form method="post" action="{{ base }}/sign/key" data-busy="Submitting your public key: making the branch and opening the pull request. A few seconds.">
             <input type="hidden" name="party" value="{{ party }}">
             <div class="field"><label for="key-{{ party }}">Public key</label><input id="key-{{ party }}" name="public_key" class="json" placeholder="the 44-character line ending in =, or the ssh-ed25519 line from 1Password" required></div>
             <p style="margin-top: var(--space-4)"><button class="btn btn--ghost">Submit this public key</button></p>

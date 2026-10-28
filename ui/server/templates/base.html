@@ -74,5 +74,33 @@
     });
   })();
 </script>
+{% if key_wait %}
+<script>
+  // A public key submission is in flight: block this page (clicks and keyboard), ask the
+  // server every few seconds where the pull request stands, show that as progress, and
+  // reload once production trusts the key or the check rejected it. The server stops
+  // waiting after five minutes.
+  (function () {
+    var busy = document.getElementById("busy"), text = document.getElementById("busy-text");
+    if (!busy || !text) return;
+    var party = {{ key_wait.party | tojson }}, waiting = true;
+    text.textContent = "Public key of the " + party + " · waiting for the pull request";
+    busy.hidden = false;
+    document.querySelectorAll("nav, main").forEach(function (el) { el.setAttribute("inert", ""); });
+    window.addEventListener("pageshow", function () { if (waiting) busy.hidden = false; });
+    function poll() {
+      fetch("/keys/status.json", { cache: "no-store", credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d.waiting) { waiting = false; window.location.reload(); return; }
+          if (d.label) text.textContent = "Public key of the " + party + " · " + d.label;
+          setTimeout(poll, 4000);
+        })
+        .catch(function () { setTimeout(poll, 4000); });
+    }
+    setTimeout(poll, 1500);
+  })();
+</script>
+{% endif %}
 </body>
 </html>

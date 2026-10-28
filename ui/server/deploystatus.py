@@ -352,6 +352,15 @@ async def production_trust(settings: Settings) -> dict[str, Any] | None:
         return None
 
 
+def forget_keys() -> None:
+    """Drop the cached answers the key status depends on, so the next look is live. Used
+    while a key submission is in flight and the page polls for its progress."""
+    for key in list(_answers):
+        path = key[0]
+        if path.endswith("/pulls") or path.endswith("/trust.json") or "/actions/runs" in path:
+            _answers.pop(key, None)
+
+
 def production_trust_cached(settings: Settings) -> dict[str, Any] | None:
     """Production's trust file from the last GitHub answer, without waiting for one."""
     key = (

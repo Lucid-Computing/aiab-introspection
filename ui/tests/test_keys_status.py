@@ -54,3 +54,17 @@ def test_pull_now_says_why_it_did_not_move(tmp_path):
     assert publish.pull_now(copy) is True
     assert publish.last_pull["error"] is None
     assert publish.copy_status(copy)["behind"] == 0
+
+
+def test_forget_keys_drops_only_the_key_related_answers(monkeypatch):
+    monkeypatch.setattr(ds, "_answers", {})
+    now = time.monotonic()
+    ds._answers[("/repos/o/r/pulls", (), False)] = (now, [])
+    ds._answers[("/repos/o/r/contents/static/aiab/baked/trust.json", (("ref", "p"),), True)] = (
+        now,
+        "{}",
+    )
+    ds._answers[("/repos/o/r/actions/runs", (("head_sha", "x"),), False)] = (now, {})
+    ds._answers[("/repos/o/r/branches/p", (), False)] = (now, {})
+    ds.forget_keys()
+    assert list(ds._answers) == [("/repos/o/r/branches/p", (), False)]

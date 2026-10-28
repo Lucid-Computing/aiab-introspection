@@ -248,6 +248,7 @@ def render(request: Request, template: str, **context: Any) -> Response:
     context.setdefault("chat_enabled", bool(settings.anthropic_api_key))
     context.setdefault("msg", request.query_params.get("msg"))
     context.setdefault("err", request.query_params.get("err"))
+    context.setdefault("key_wait", _key_wait() if user_of(request) else None)
     context.update(
         user=user_of(request),
         settings=settings,
@@ -493,6 +494,52 @@ async def _in_flight(aid: str) -> str | None:
     if current and current["id"] == aid and current["state"] and current["state"]["busy"]:
         return f"{current['name']} is being deployed ({current['state']['label']}); wait for it."
     return None
+
+
+KEY_WAIT_MAX = 5 * 60  # a key submission older than this is no longer waited for
+
+
+def _key_marker() -> Path:
+    return settings.agreements_dir / ".key-submission.json"
+
+
+def _remember_key(party: str, public_key: str, user: dict[str, str], pr_url: str | None) -> None:
+    """A public key submission in flight: every page blocks until production trusts it."""
+    try:
+        settings.agreements_dir.mkdir(parents=True, exist_ok=True)
+        _key_marker().write_text(
+            json.dumps(
+                {
+                    "party": party,
+                    "key": public_key,
+                    "user": user.get("username"),
+                    "pr_url": pr_url,
+                    "at": time.time(),
+                }
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _key_wait() -> dict | None:
+    """The key submission pages wait for, or None: none, or older than KEY_WAIT_MAX."""
+    try:
+        marker = json.loads(_key_marker().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(marker.get("at", 0)) > KEY_WAIT_MAX:
+        _forget_key()
+        return None
+    return marker
+
+
+def _forget_key() -> None:
+    try:
+        _key_marker().unlink()
+    except OSError:
+        pass
 
 
 def _deploy_marker() -> Path:
@@ -1266,8 +1313,34 @@ async def set_key(
         return back(here, err=f"The {party} key was not submitted: {pushed.error}")
     pv.record_change(target, user, "key", f"public key: {party}", f"submitted {public_key}")
     where = pushed.pr_url or pushed.compare_url or f"branch {pushed.branch}"
+    _remember_key(party, public_key, user, pushed.pr_url)  # every page blocks until trusted
     return back(
         here,
-        msg=f"The {party} key is submitted ({where}). The check merges it within a minute and"
-        " production trusts it then; the status line follows it. Sign once it says trusted.",
+        msg=f"The {party} key is submitted ({where}). The check merges it within a minute;"
+        " every page waits until production trusts it. Sign once it says trusted.",
+    )
+
+
+@app.get("/keys/status.json")
+async def keys_status_json(request: Request) -> JSONResponse:
+    """Progress of the key submission in flight, looked up live on GitHub. Clears the
+    marker once production trusts the key or the check rejected it, so pages stop
+    blocking."""
+    if user_of(request) is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    wait = _key_wait()
+    if wait is None:
+        return JSONResponse({"waiting": False})
+    deploystatus.forget_keys()
+    keys = await deploystatus.keys(settings, _ui_keys(), None)
+    info = keys["parties"].get(wait["party"]) or {}
+    trusted = info.get("production") == wait["key"]
+    settled = not info.get("busy") and (trusted or info.get("tone") == "bad")
+    if settled:
+        _forget_key()
+    label = info.get("label")
+    if not settled and not info.get("busy"):
+        label = "waiting for GitHub to show the pull request"
+    return JSONResponse(
+        {"waiting": not settled, "party": wait["party"], "label": label, "tone": info.get("tone")}
     )
