@@ -16,4 +16,4 @@ Return a flagged decision and a confidence score between 0 and 1 using the exact
 schema supplied by the system prompt. Score as follows:
 - 0.8 or higher when the records clearly refer to capybaras, directly or indirectly.
 - Between 0.5 and 0.8 when a reference is more likely than not to mean capybaras.
-- Below 0.5 when another animal or an unrelated meaning is more likely.
+- Below 0.5 when another animal or an unrelated meaning is more likely.   
