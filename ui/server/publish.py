@@ -122,12 +122,14 @@ def push_deploy(
     actor: dict[str, str],
     base: str | None = None,
 ) -> PushResult:
-    """Replace plan/ on the branch for this version, commit, push.
+    """Put plan/ for this version on its branch, rebuilt from the base, and open the pull
+    request.
 
-    One branch per version: plan/<name>-<digest8>. The first Deploy starts it from the
-    base (origin's default branch); a later Deploy of the same version, for example after
-    the second party signed, adds a commit to that same branch so the open pull request
-    simply updates. If the branch already has these exact files, nothing is pushed.
+    One branch per version: plan/<name>-<digest8>, always rebuilt from the current tip of
+    the base so the pull request changes plan/ and nothing else, and force-pushed: an open
+    pull request for the branch simply updates, a merged one from an earlier deploy of the
+    same version is history and a new pull request follows. ``unchanged`` means the base
+    already holds exactly these files: nothing to deploy.
     """
     result = PushResult()
     base = base or default_branch(repo)
@@ -136,11 +138,7 @@ def push_deploy(
     worktree = Path(tempfile.mkdtemp(prefix="aiab-deploy-"))
     try:
         _git(repo, "fetch", "origin", base)
-        on_remote = bool(_git(repo, "ls-remote", "--heads", "origin", branch))
-        if on_remote:
-            _git(repo, "fetch", "origin", branch)
-        start = f"origin/{branch}" if on_remote else f"origin/{base}"
-        _git(repo, "worktree", "add", "--detach", str(worktree), start)
+        _git(repo, "worktree", "add", "--detach", str(worktree), f"origin/{base}")
         _git(worktree, "checkout", "-q", "-B", branch)
         copy_into_plan(agreement, worktree / "plan")
         _git(worktree, "add", "-A", "plan")
@@ -149,21 +147,25 @@ def push_deploy(
             result.compare_url = f"https://github.com/{slug}/compare/{base}...{branch}?expand=1"
         if not _git(worktree, "status", "--porcelain", "--", "plan"):
             result.unchanged = True
-            result.branch = branch
+            result.branch = base
             return result
         message = (
             f"Deploy agreement {name}\n\nplan_digest: {digest}\nSelected for deployment by {who}.\n"
         )
         _git(worktree, "commit", "-q", "-m", message)
         result.commit = _git(worktree, "rev-parse", "--short", "HEAD")
-        _git(worktree, "push", "-u", "origin", branch, timeout=300)
+        _git(worktree, "push", "--force", "-u", "origin", branch, timeout=300)
         result.branch = branch
-        if slug and not on_remote:
-            body = (
-                f"Plan digest `{digest}`.\n\nSelected for deployment by {who}. "
-                "Plan-only change; CI verifies both signatures and the restrictions."
-            )
-            result.pr_url = _open_pr(slug, base, branch, f"Deploy agreement {name}", body, worktree)
+        if slug:
+            result.pr_url = _open_pull_request(slug, branch)  # an open one follows the push
+            if not result.pr_url:
+                body = (
+                    f"Plan digest `{digest}`.\n\nSelected for deployment by {who}. "
+                    "Plan-only change; CI verifies both signatures and the restrictions."
+                )
+                result.pr_url = _open_pr(
+                    slug, base, branch, f"Deploy agreement {name}", body, worktree
+                )
     except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
         result.error = str(exc)[-400:]
     finally:

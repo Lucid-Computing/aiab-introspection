@@ -1077,6 +1077,14 @@ async def deploy(request: Request, aid: str) -> Response:
         )
         if pushed.error:
             _remember_deploy(aid, plan_id, digest, phase="failed", error=pushed.error)
+        elif pushed.unchanged:
+            _remember_deploy(
+                aid,
+                plan_id,
+                digest,
+                phase="failed",
+                error=f"{settings.deploy_base} already holds exactly this plan; nothing to deploy",
+            )
         else:
             _remember_deploy(
                 aid, plan_id, digest, phase="pushed", pr_url=pushed.pr_url, branch=pushed.branch
