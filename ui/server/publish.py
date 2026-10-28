@@ -371,18 +371,27 @@ def copy_status(repo: Path) -> dict[str, Any]:
         "dirty": 0,
         "behind": 0,
         "ahead": 0,
+        "changes": [],  # the first few local changes, as git status prints them
         "last_pull": dict(last_pull),
         "error": None,
     }
     try:
         out["branch"] = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
         out["head"] = _git(repo, "rev-parse", "--short", "HEAD")
-        out["dirty"] = len(_git(repo, "status", "--porcelain").splitlines())
+        changes = [line.strip() for line in _git(repo, "status", "--porcelain").splitlines()]
+        out["dirty"], out["changes"] = len(changes), changes[:8]
         counts = _git(repo, "rev-list", "--left-right", "--count", f"HEAD...origin/{out['branch']}")
         out["ahead"], out["behind"] = (int(x) for x in counts.split())
     except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
         out["error"] = str(exc)[-200:]
     return out
+
+
+def set_aside(repo: Path) -> str:
+    """Move the copy's local changes, tracked and untracked, into a git stash so the copy is
+    clean and can catch up. Nothing is deleted: ``git stash list`` shows the entry."""
+    out = _git(repo, "stash", "push", "--include-untracked", "-m", "set aside by the agreement UI")
+    return out.splitlines()[-1] if out else "nothing to set aside"
 
 
 def start_auto_pull(repo: Path, every: int = 60) -> None:

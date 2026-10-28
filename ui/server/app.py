@@ -663,6 +663,28 @@ async def health() -> JSONResponse:
     )
 
 
+@app.post("/copy/reset")
+async def copy_reset(request: Request) -> Response:
+    """Set this server's copy's local changes aside (into a git stash, nothing deleted) and
+    catch up with GitHub."""
+    if user_of(request) is None:
+        return to_login(request)
+    path = urlsplit(request.headers.get("referer", "")).path or "/agreements"
+    try:
+        note = await asyncio.to_thread(publish.set_aside, settings.git_dir)
+    except RuntimeError as exc:
+        return back(path, err=f"Could not set the local changes aside: {str(exc)[-200:]}")
+    moved = await asyncio.to_thread(publish.pull_now, settings.git_dir)
+    status = await asyncio.to_thread(publish.copy_status, settings.git_dir)
+    if status["last_pull"]["error"]:
+        return back(path, err=f"{note}; catch-up still failed: {status['last_pull']['error']}")
+    return back(
+        path,
+        msg=f"{note}. This server's copy is at {status['head']}, "
+        + ("moved." if moved else "already up to date."),
+    )
+
+
 @app.post("/copy/pull")
 async def copy_pull(request: Request) -> Response:
     """Catch this server's copy up with its branch on GitHub now, and say what happened."""

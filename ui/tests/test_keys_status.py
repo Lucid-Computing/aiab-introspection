@@ -68,3 +68,25 @@ def test_forget_keys_drops_only_the_key_related_answers(monkeypatch):
     ds._answers[("/repos/o/r/branches/p", (), False)] = (now, {})
     ds.forget_keys()
     assert list(ds._answers) == [("/repos/o/r/branches/p", (), False)]
+
+
+def test_set_aside_stashes_local_changes_so_the_copy_can_catch_up(tmp_path):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git("init", "-q", "-b", "main", cwd=origin)
+    (origin / "a.txt").write_text("one\n")
+    _git("add", "a.txt", cwd=origin)
+    _git("commit", "-q", "-m", "one", cwd=origin)
+    copy = tmp_path / "copy"
+    _git("clone", "-q", str(origin), str(copy), cwd=tmp_path)
+    (copy / "a.txt").write_text("edited\n")
+    (copy / "new.txt").write_text("untracked\n")
+    assert publish.copy_status(copy)["changes"] == ["M a.txt", "?? new.txt"]
+    note = publish.set_aside(copy)
+    assert "set aside" in note or "Saved" in note
+    assert publish.copy_status(copy)["dirty"] == 0
+    assert (copy / "a.txt").read_text() == "one\n" and not (copy / "new.txt").exists()
+    assert (
+        "set aside by the agreement UI"
+        in subprocess.run(["git", "stash", "list"], cwd=copy, capture_output=True, text=True).stdout
+    )
