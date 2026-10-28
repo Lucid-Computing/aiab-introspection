@@ -3,6 +3,7 @@
 {% block head %}{% if busy or (keys and keys.busy) %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
 <div class="row" style="justify-content: space-between; margin-bottom: var(--space-6)"><h1 style="margin: 0">Agreements</h1><a class="btn btn--primary" href="/agreements/new">New agreement</a></div>
+{% if copy and (copy.behind or copy.last_pull.error or copy.error) %}<p class="form-message error">This server's copy of <span class="mono">{{ copy.branch }}</span> is at {{ copy.head }}{% if copy.behind %}, {{ copy.behind }} commit{{ "s" if copy.behind != 1 }} behind GitHub{% endif %}.{% if copy.last_pull.error %} Last catch-up failed: <span class="mono">{{ copy.last_pull.error }}</span>.{% elif copy.error %} <span class="mono">{{ copy.error }}</span>.{% endif %} <form method="post" action="/copy/pull" class="inline"><button class="btn btn--ghost btn--sm">Catch up now</button></form></p>{% endif %}
 <div class="card" style="margin-bottom: var(--space-6)">
   <div class="card-header">Running in the box</div>
   <div class="card-body">

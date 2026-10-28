@@ -137,6 +137,16 @@ class PlanView:
 
 
 def load_trust(settings: Settings) -> dict[str, Any]:
+    """The keys and pins signatures are checked against: production's trust file as GitHub
+    last served it, the same file the plan check and the next release use. This server's
+    copy of the repository stands in when GitHub has not answered yet, or always when
+    AIAB_TRUST_FILE names a dev trust file."""
+    if settings.trust_follows_production:
+        from server import deploystatus
+
+        trust = deploystatus.production_trust_cached(settings)
+        if trust is not None:
+            return trust
     return decode(settings.trust_file.read_bytes())
 
 
@@ -679,15 +689,44 @@ def delete_agreement(settings: Settings, agreement_id: str) -> str | None:
     return None
 
 
-def check_public_key(public_key: str) -> str | None:
-    """A base64 Ed25519 public key, or why it is not one. The trust file itself is never
-    written by the UI: a key changes through a pull request against the deploy branch."""
+SSH_ED25519_HEADER = b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20"
+
+
+def normalize_public_key(text: str) -> tuple[str | None, str | None]:
+    """The 44-character base64 form of an Ed25519 public key (what trust.json holds), from
+    either that form or an OpenSSH line, "ssh-ed25519 AAAA... comment", as 1Password and
+    ssh-keygen print it. Returns (key, None) or (None, why it is neither). The trust file
+    itself is never written by the UI: a key changes through a pull request."""
     import base64
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+    parts = text.split()
+    if len(parts) >= 2 and parts[0] == "ssh-ed25519":
+        try:
+            blob = base64.b64decode(parts[1], validate=True)
+        except ValueError:
+            blob = b""
+        if len(blob) != 51 or not blob.startswith(SSH_ED25519_HEADER):
+            return None, "that ssh-ed25519 line is not complete; copy the whole public key"
+        raw = blob[len(SSH_ED25519_HEADER) :]
+    elif len(parts) == 1:
+        try:
+            raw = base64.b64decode(parts[0], validate=True)
+        except ValueError:
+            raw = b""
+    else:
+        return None, "paste one key: the 44-character line ending in =, or the ssh-ed25519 line"
     try:
-        Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key.strip(), validate=True))
+        Ed25519PublicKey.from_public_bytes(raw)
     except Exception:  # noqa: BLE001 - any decoding or key error means "not a key"
-        return "that is not a base64 Ed25519 public key (44 characters, ending in =)"
-    return None
+        return None, (
+            "that is not an Ed25519 public key: expected the 44-character line ending in =,"
+            " or the ssh-ed25519 line from 1Password"
+        )
+    return base64.b64encode(raw).decode(), None
+
+
+def check_public_key(public_key: str) -> str | None:
+    """Why ``public_key`` is not an Ed25519 public key in either accepted form, or None."""
+    return normalize_public_key(public_key)[1]

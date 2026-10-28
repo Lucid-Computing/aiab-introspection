@@ -452,7 +452,11 @@ async def _agreements_page(request: Request, **extra) -> Response:
     box = await box_status(settings.box_url, deployed.get("digest") or "")
     rows = pv.list_agreements(settings)
     box_digest = (box.get("manifest") or {}).get("plan_digest")
-    current, keys = await asyncio.gather(_current_deployment(box), _keys(box))
+    current, keys, copy = await asyncio.gather(
+        _current_deployment(box),
+        _keys(box),
+        asyncio.to_thread(publish.copy_status, settings.git_dir),
+    )
     for r in rows:
         r["editor"] = editing.holder(r["id"])
         r["running"] = bool(r["digest"]) and r["digest"] == box_digest
@@ -464,6 +468,7 @@ async def _agreements_page(request: Request, **extra) -> Response:
         deployed=deployed,
         box=box,
         keys=keys,
+        copy=copy,
         current=current,
         busy=bool(current and current["state"] and current["state"]["busy"]),
         **extra,
@@ -568,7 +573,9 @@ async def _current_deployment(box: dict) -> dict | None:
 
 
 def _ui_keys() -> dict[str, str | None]:
-    """The party keys this UI verifies signatures against (its trust file)."""
+    """The party keys in this server's copy of the repository. Signatures are checked
+    against production's trust file as GitHub serves it (plan_view.load_trust); the copy
+    stands in when GitHub has not answered."""
     try:
         trust = json.loads(settings.trust_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -577,9 +584,53 @@ def _ui_keys() -> dict[str, str | None]:
 
 
 async def _keys(box: dict) -> dict:
-    """Each party's key here, on production and in the box, with a verdict."""
+    """Each party's key on production, in this server's copy and in the box, with a verdict."""
     manifest = box.get("manifest") or {}
     return await deploystatus.keys(settings, _ui_keys(), manifest.get("parties"))
+
+
+@app.get("/health")
+async def health() -> JSONResponse:
+    """Where this server stands, without a login and without secrets: its copy of the
+    repository against GitHub, whether GitHub answers, and the keys each side trusts."""
+    copy = await asyncio.to_thread(publish.copy_status, settings.git_dir)
+    production = (
+        deploystatus.production_trust_cached(settings)
+        if settings.trust_follows_production
+        else None
+    )
+    copy_keys = _ui_keys()
+    return JSONResponse(
+        {
+            "copy": copy,
+            "github": deploystatus.github_state(),
+            "trust_source": "production on GitHub" if production else "this server's copy",
+            "keys": {
+                party: {
+                    "production": (production or {}).get(f"{party}_key"),
+                    "copy": copy_keys[party],
+                }
+                for party in PARTIES
+            },
+        }
+    )
+
+
+@app.post("/copy/pull")
+async def copy_pull(request: Request) -> Response:
+    """Catch this server's copy up with its branch on GitHub now, and say what happened."""
+    if user_of(request) is None:
+        return to_login(request)
+    path = urlsplit(request.headers.get("referer", "")).path or "/agreements"
+    moved = await asyncio.to_thread(publish.pull_now, settings.git_dir)
+    status = await asyncio.to_thread(publish.copy_status, settings.git_dir)
+    if status["last_pull"]["error"]:
+        return back(path, err=f"Catch-up failed: {status['last_pull']['error']}")
+    return back(
+        path,
+        msg=f"This server's copy is at {status['head']}, "
+        + ("moved." if moved else "already up to date."),
+    )
 
 
 @app.get("/agreements/new")
@@ -1129,9 +1180,19 @@ async def sign(request: Request, aid: str) -> Response:
     if redirect:
         return redirect
     view, error = load_view(target)
-    keys = await _keys(await box_status(settings.box_url, ""))
+    keys, copy = await asyncio.gather(
+        _keys(await box_status(settings.box_url, "")),
+        asyncio.to_thread(publish.copy_status, settings.git_dir),
+    )
     return render(
-        request, "sign.html", view=view, error=error, base=f"/a/{aid}", aid=aid, keys=keys
+        request,
+        "sign.html",
+        view=view,
+        error=error,
+        base=f"/a/{aid}",
+        aid=aid,
+        keys=keys,
+        copy=copy,
     )
 
 
@@ -1193,9 +1254,9 @@ async def set_key(
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
         return back(here, err="You can only replace your own party's public key.")
-    public_key = public_key.strip()
-    if problem := pv.check_public_key(public_key):
-        return back(here, err=problem)
+    public_key, problem = pv.normalize_public_key(public_key)
+    if problem or public_key is None:
+        return back(here, err=problem or "that is not an Ed25519 public key")
     if pv.load_trust(settings).get(f"{party}_key") == public_key:
         return back(here, msg=f"Production already trusts this {party} key. Nothing to submit.")
     pushed = publish.push_key_change(

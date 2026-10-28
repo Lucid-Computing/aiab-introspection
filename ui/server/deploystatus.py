@@ -14,6 +14,7 @@ answers are cached for a short while and a token is used when one is around
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import time
@@ -38,6 +39,10 @@ _cache: dict[tuple, tuple[float, Any]] = {}
 # a page load never waits for GitHub after the first time.
 _answers: dict[tuple, tuple[float, Any]] = {}
 _refreshing: set[tuple] = set()
+# The last refusal or failure and the last success, so a page can say why GitHub did not
+# answer ("HTTP 401, token rejected") instead of only that it did not.
+_last_failure: dict[str, Any] | None = None
+_last_success_at: float | None = None
 
 
 def _token() -> str | None:
@@ -60,11 +65,14 @@ def _client() -> httpx.AsyncClient:
 
 
 async def _fetch(path: str, params: dict | None, raw: bool):
+    global _last_failure, _last_success_at
     headers = {"Accept": "application/vnd.github.raw+json"} if raw else None
     async with _client() as client:
         response = await client.get(API + path, params=params, headers=headers)
     if response.status_code != 200:
+        _last_failure = {"path": path, "status": response.status_code, "at": time.time()}
         return None
+    _last_success_at = time.time()
     return response.text if raw else response.json()
 
 
@@ -74,10 +82,40 @@ async def _refresh(key: tuple, path: str, params: dict | None, raw: bool) -> Non
     _refreshing.add(key)
     try:
         _answers[key] = (time.monotonic(), await _fetch(path, params, raw))
-    except (httpx.HTTPError, ValueError):
-        pass
+    except (httpx.HTTPError, ValueError) as exc:
+        global _last_failure
+        _last_failure = {
+            "path": path,
+            "status": None,
+            "error": type(exc).__name__,
+            "at": time.time(),
+        }
     finally:
         _refreshing.discard(key)
+
+
+def github_state() -> dict[str, Any]:
+    """Whether GitHub answered more recently than it failed, and the last failure."""
+    ok = _last_success_at is not None and (
+        _last_failure is None or _last_failure["at"] <= _last_success_at
+    )
+    return {"ok": ok, "last_success_at": _last_success_at, "last_failure": _last_failure}
+
+
+def github_why() -> str:
+    """The last failure in a few words, for a status line."""
+    failure = _last_failure
+    if failure is None:
+        return "no answer yet"
+    status = failure.get("status")
+    if status:
+        hint = {
+            401: "token rejected",
+            403: "forbidden or rate limited",
+            404: "not found: repository, branch or token access",
+        }.get(status, "")
+        return f"HTTP {status}" + (f", {hint}" if hint else "") + f" for {failure['path']}"
+    return f"{failure.get('error')} for {failure['path']}"
 
 
 async def _get(client, path: str, params: dict | None = None, raw=False):
@@ -314,25 +352,44 @@ async def production_trust(settings: Settings) -> dict[str, Any] | None:
         return None
 
 
+def production_trust_cached(settings: Settings) -> dict[str, Any] | None:
+    """Production's trust file from the last GitHub answer, without waiting for one."""
+    key = (
+        f"/repos/{settings.repo}/contents/static/aiab/baked/trust.json",
+        (("ref", settings.deploy_base),),
+        True,
+    )
+    hit = _answers.get(key)
+    if not hit or not hit[1]:
+        return None
+    try:
+        return json.loads(hit[1])
+    except ValueError:
+        return None
+
+
 async def keys(
-    settings: Settings, ui_keys: dict[str, str | None], box_keys: dict[str, str] | None
+    settings: Settings, copy_keys: dict[str, str | None], box_keys: dict[str, str] | None
 ) -> dict[str, Any]:
-    """Per party: the key this UI holds, the key production trusts, the key the box trusts,
-    the pull request in between, and a one-line verdict. ``ready`` says whether every
-    party's key is trusted on production, i.e. a plan signed with these keys passes the
-    check on its pull request."""
+    """Per party: the key production trusts (what this UI checks signatures against), the
+    key in this server's copy of the repository, the key the box trusts, the pull request
+    in between, and a one-line verdict. ``ready`` says whether every party's key is trusted
+    on production, i.e. a plan signed with these keys passes the check on its pull request.
+    When GitHub does not answer, the copy's keys stand in and the verdict says so."""
     trust = await production_trust(settings)
     out: dict[str, Any] = {
         "parties": {},
         "ready": False,
         "busy": False,
         "github": trust is not None,
+        "github_why": None if trust is not None else github_why(),
     }
-    for party, ui_key in ui_keys.items():
+    for party, copy_key in copy_keys.items():
         prod_key = (trust or {}).get(f"{party}_key")
         box_key = (box_keys or {}).get(f"{party}_key")
         info: dict[str, Any] = {
-            "ui": ui_key,
+            "ui": prod_key if trust is not None else copy_key,
+            "copy": copy_key,
             "production": prod_key,
             "box": box_key,
             "pr": None,
@@ -360,26 +417,31 @@ async def keys(
                             info["submitted"] = json.loads(text).get(f"{party}_key")
             except (httpx.HTTPError, ValueError, KeyError):
                 pass
-        info["label"], info["tone"], info["busy"] = _key_summary(info, trust is not None)
+        info["label"], info["tone"], info["busy"] = _key_summary(
+            info, trust is not None, out["github_why"]
+        )
         out["parties"][party] = info
-    # The keys this UI verifies against are production's own trust file (the checkout is
-    # kept at production). GitHub only confirms it; when GitHub does not answer, that
-    # must not turn every Deploy button grey.
-    out["ready"] = all(p["ui"] for p in out["parties"].values()) and (
-        trust is None or all(p["ui"] == p["production"] for p in out["parties"].values())
-    )
+    # When GitHub does not answer, the copy's keys stand in: that must not turn every
+    # Deploy button grey, the verdict line says what happened instead.
+    out["ready"] = all(p["ui"] for p in out["parties"].values())
     out["busy"] = any(p["busy"] for p in out["parties"].values())
     return out
 
 
-def _key_summary(info: dict[str, Any], github_ok: bool) -> tuple[str, str, bool]:
-    """One line per party. ``ui`` is the key this UI checks against (the checkout's copy of
-    production's trust file), ``production`` the one on GitHub, ``box`` the box's,
-    ``submitted`` the key in the party's latest pull request."""
-    ui, prod, box, sub = info["ui"], info["production"], info["box"], info["submitted"]
+def _key_summary(
+    info: dict[str, Any], github_ok: bool, why: str | None = None
+) -> tuple[str, str, bool]:
+    """One line per party. ``production`` is the key on GitHub, which this UI checks
+    against; ``box`` the box's; ``submitted`` the key in the party's latest pull request."""
+    prod, box, sub = info["production"], info["box"], info["submitted"]
     pr, check, release = info["pr"], info["check"], info["release"]
     if not github_ok:
-        return "could not read the trusted keys from GitHub", "bad", False
+        return (
+            f"could not read the trusted keys from GitHub ({why or 'no answer'}) · checking"
+            " against this server's copy meanwhile",
+            "bad",
+            False,
+        )
     if not prod:
         return "no key trusted on production", "bad", False
     if pr is not None and sub and sub != prod:
@@ -392,9 +454,7 @@ def _key_summary(info: dict[str, Any], github_ok: bool) -> tuple[str, str, bool]
             if check["conclusion"] == "success":
                 return f"submission {short} · pull request #{n} · merging", "now", True
             return f"submission {short} · pull request #{n} · rejected by the check", "bad", False
-        return f"submission {short} merged · production catching up", "now", True
-    if ui != prod:
-        return "production trusts a newer key · this page catches up within a minute", "now", True
+        return f"submission {short} merged · GitHub still shows the old key", "now", True
     if box is None:
         return "trusted on production", "ok", False
     if box == prod:

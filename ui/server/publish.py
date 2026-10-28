@@ -16,6 +16,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -242,7 +243,8 @@ def push_key_change(
 
     One branch per key: keys/<party>-<key8>, always rebuilt from the current base, so a
     branch left behind by an earlier, closed pull request is simply overwritten and a new
-    pull request opened. The check on it merges it; the release puts the key in the box."""
+    pull request opened. The check on it merges it; the next plan deploy puts the key in
+    the box."""
     result = PushResult()
     base = base or default_branch(repo)
     branch = f"keys/{party}-{public_key[:8].replace('+', '').replace('/', '')}"
@@ -280,7 +282,8 @@ def push_key_change(
                 body = (
                     f"Replaces the {party} public key in `static/aiab/baked/trust.json` with "
                     f"`{public_key}`.\n\nSubmitted by {who}. approve-keys.yml checks the change "
-                    "and merges it; the release that follows puts the key into the box."
+                    "and merges it. No release starts from this merge: the box takes the key "
+                    "with the next plan deployed and signed with it."
                 )
                 result.pr_url = _open_pr(
                     slug, base, branch, f"Trust the {party} public key", body, worktree
@@ -330,20 +333,56 @@ def _open_pull_request(slug: str, branch: str) -> str | None:
 #      pins, the deployed plan shown on the Agreements page is current within a minute.
 
 
+# The last catch-up attempt, so a page can say why the copy did not move instead of
+# promising that it will.
+last_pull: dict[str, Any] = {"at": None, "moved": False, "error": None}
+
+
 def pull_now(repo: Path) -> bool:
     """Fast-forward the checkout to its remote branch once, only when nothing is modified
-    locally (agreement drafts are git-ignored, so normally nothing is). True when it moved."""
+    locally (agreement drafts are git-ignored, so normally nothing is). True when it moved;
+    otherwise ``last_pull["error"]`` says why."""
+    last_pull["at"] = time.time()
     try:
-        if _git(repo, "status", "--porcelain"):
+        dirty = _git(repo, "status", "--porcelain")
+        if dirty:
+            n = len(dirty.splitlines())
+            last_pull.update(moved=False, error=f"{n} local change(s) in the copy; not pulling")
             return False
         before = _git(repo, "rev-parse", "HEAD")
         branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
         _git(repo, "fetch", "--quiet", "origin", branch)
         _git(repo, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
-        return _git(repo, "rev-parse", "HEAD") != before
+        moved = _git(repo, "rev-parse", "HEAD") != before
+        last_pull.update(moved=moved, error=None)
+        return moved
     except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
+        last_pull.update(moved=False, error=str(exc)[-200:])
         log.warning("pull: %s", str(exc)[-200:])
         return False
+
+
+def copy_status(repo: Path) -> dict[str, Any]:
+    """Where this server's copy of the repository stands: branch, commit, local changes,
+    commits behind and ahead of the remote branch as last fetched, and the last catch-up."""
+    out: dict[str, Any] = {
+        "branch": None,
+        "head": None,
+        "dirty": 0,
+        "behind": 0,
+        "ahead": 0,
+        "last_pull": dict(last_pull),
+        "error": None,
+    }
+    try:
+        out["branch"] = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+        out["head"] = _git(repo, "rev-parse", "--short", "HEAD")
+        out["dirty"] = len(_git(repo, "status", "--porcelain").splitlines())
+        counts = _git(repo, "rev-list", "--left-right", "--count", f"HEAD...origin/{out['branch']}")
+        out["ahead"], out["behind"] = (int(x) for x in counts.split())
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
+        out["error"] = str(exc)[-200:]
+    return out
 
 
 def start_auto_pull(repo: Path, every: int = 60) -> None:

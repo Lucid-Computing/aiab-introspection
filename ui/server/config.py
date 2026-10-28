@@ -39,6 +39,10 @@ class Settings:
 
     run_plan_dir: Path | None = None
     anthropic_api_key: str | None = field(default=None, repr=False)
+    # Signatures are checked against production's trust file as GitHub serves it, the same
+    # file the plan check and the next release use; the copy on disk stands in only when
+    # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
+    trust_follows_production: bool = False
 
     @property
     def deployed_plan_dir(self) -> Path:
@@ -100,6 +104,7 @@ def load_settings() -> Settings:
     box_url = env.get("AIAB_BOX_URL", "").rstrip("/")
     if not box_url and release_file.is_file():
         box_url = "https://" + json.loads(release_file.read_text())["host"]
+    repo = env.get("AIAB_REPO") or _repo_from_git()
     return Settings(
         run_plan_dir=Path(env["AIAB_RUN_PLAN_DIR"]).resolve()
         if env.get("AIAB_RUN_PLAN_DIR")
@@ -118,7 +123,8 @@ def load_settings() -> Settings:
         box_url=box_url or None,
         accounts_file=Path(env.get("UI_ACCOUNTS_FILE", UI_ROOT / "accounts.json")).resolve(),
         session_secret=secret.encode("utf-8") if secret else secrets.token_bytes(32),
-        repo=env.get("AIAB_REPO") or _repo_from_git(),
+        repo=repo,
+        trust_follows_production=bool(repo) and not env.get("AIAB_TRUST_FILE"),
         runs_dir=Path(env.get("AIAB_RUNS_DIR", UI_ROOT / "runs")).resolve(),
         demo_keys_dir=Path(
             env.get("AIAB_DEMO_KEYS", Path.home() / ".local/share/aiab-audit-demo")
