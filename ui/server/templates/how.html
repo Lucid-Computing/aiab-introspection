@@ -1,57 +1,18 @@
 {% extends "base.html" %}
 {% block title %}How it works · AIAB agreement{% endblock %}
 {% block content %}
-<h1>One plan, two signatures, one attested box.</h1>
-<p class="lead">The lab and the auditor agree on an audit plan here. Both sign its digest. The plan is built into the box, and the running box proves it runs exactly that plan.</p>
+<h1>Auditor in a Box</h1>
+<p class="lead">Using LLMs to provide privacy-preserving and verifiable audits.</p>
 
-<ol class="stages">
-  {% for title, summary, lines in stages %}
-  <li>
-    <details>
-      <summary><span class="n">{{ loop.index }}</span><strong>{{ title }}</strong><span>{{ summary }}</span></summary>
-      <div class="stage-detail">{% for line in lines %}<p>{{ line }}</p>{% endfor %}</div>
-    </details>
-  </li>
-  {% endfor %}
+<ol class="howto">
+  <li>The lab and the auditor agree on a plan: the question, the examples, the threshold, the code and the prompt.</li>
+  <li>Both sign the plan with their own private keys. Any change after that voids both signatures.</li>
+  <li>The plan, signed by the lab and the auditor, is built into a container image. The build is reproducible, so anyone can check that the image matches the plan.</li>
+  <li>The image runs in a confidential VM on Tinfoil. The hardware encrypts its memory, so not even the server's operator can read what's inside.</li>
+  <li>The chip signs a report, checkable by anyone, that the image built from the plan they signed is running.</li>
+  <li>The logging proxy signs the lab's recorded model traffic with its own key and sends it to the box.</li>
+  <li>The box runs the plan over the logs with the agreed model.</li>
+  <li>Only a short answer comes out. The logs are held only in memory, never written to disk, and dropped once the answer is signed.</li>
+  <li>The box signs the answer, so anyone can check it came from this plan and wasn't changed. The auditor checks it offline.</li>
 </ol>
-
-<details class="info">
-  <summary>The three parts of AIAB</summary>
-  <div class="info-body">
-  <div class="stack">
-    <div class="card"><div class="card-header">static/ · the box</div><div class="card-body">How logs come in and are verified, how a plan is run and bounded, how the image is built and attested. Fixed between agreements.</div></div>
-    <div class="card"><div class="card-header">plan/ · the agreement</div><div class="card-body">Five Python functions, one prompt, agreed settings and both signatures. Changes with every agreement. The deploy slot: what the image is built from.</div></div>
-    <div class="card"><div class="card-header">ui/ · this app</div><div class="card-body">A front end over the agreement folders and the box's read-only endpoints. Not trusted: every digest comes with the command that reproduces it.</div></div>
-  </div>
-  </div>
-</details>
-
-<details class="info">
-  <summary>What happens after both signatures, automatically</summary>
-  <div class="info-body">
-  <ol class="after">{% for line in after %}<li>{{ line }}</li>{% endfor %}</ol>
-  </div>
-</details>
-
-<details class="info">
-  <summary>Check the UI yourself, without trusting it</summary>
-  <div class="info-body">
-  <p class="explain">Everything shown here is computed by the same code the box runs. From <span class="mono">static/</span>:</p>
-<pre class="cmd">uv run python -m auditor.baked --folder ../plan digest   # the plan digest on the Sign screen
-uv run python -m aiab.baked.check ../plan                   # the loader verdict on the Plan screen
-uv run python -m auditor.baked --folder ../plan verify   # the signature status on the Sign screen</pre>
-  </div>
-</details>
-
-<details class="info">
-  <summary>The words</summary>
-  <div class="info-body">
-  <table class="kv">
-    <tr><th>Plan digest</th><td>A fingerprint of the plan files, byte for byte. This is what both parties sign.</td></tr>
-    <tr><th>Image digest</th><td>A fingerprint of the whole container image, box plus plan, from the reproducible build.</td></tr>
-    <tr><th>Attestation</th><td>The hardware's signed statement of which image is running. Comparing it with the published image digest proves the box runs what was built.</td></tr>
-    <tr><th>Locked</th><td>A valid signature exists for this version, so edits are disabled. An edit would change the digest and void the signature.</td></tr>
-  </table>
-  </div>
-</details>
 {% endblock %}
