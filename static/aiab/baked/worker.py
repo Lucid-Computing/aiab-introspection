@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import ctypes
-import dataclasses
 import json
-import math
 import os
 import platform
 import resource
 import sys
-import typing
 
-from aiab import plan_api
+from aiab.baked import graph
+
+# The fixed code a failure in each kind of node is reported as; nothing else leaves.
+STAGES = {
+    "input_logs": "plan_query_failed",
+    "run_python": "plan_metric_failed",
+    "classifier": "plan_classify_failed",
+    "run_llm": "plan_classify_failed",
+    "final_report": "plan_report_failed",
+}
 
 
 def isolate(seconds):
@@ -66,68 +72,38 @@ stage = "plan_start_failed"
 def main():
     global stage
     request = receive()
-    cfg = request["config"]
-    records = [plan_api.LogRecord(**r) for r in request["records"]]
-    source = compile(request["source"], "plan/plan.py", "exec")
-    # Import dependencies before restricting syscalls; signed module code only
-    # runs after the boundary is installed. No parent secrets reach this process.
-    assert typing.Literal and dataclasses.dataclass
-    isolate(cfg["limits"]["max_runtime_seconds_per_run"])
-    namespace = {"__name__": "plan.plan"}
-    exec(source, namespace)
-    # Input selection happens at run time now; a plan may still carry the old filter step.
-    kept = records
-    if "filter_logs" in namespace and "filter" in cfg:
-        kept = namespace["filter_logs"](
-            records,
-            rules=plan_api.FilterRules(
-                keywords=tuple(cfg["filter"]["keywords"]),
-                kinds=tuple(cfg["filter"]["kinds"]),
-                agents=tuple(cfg.get("input_scope", {}).get("agents", ())),
-            ),
-        )
+    plan, order, records = request["plan"], request["order"], request["records"]
+    nodes = {n["id"]: n for n in plan["nodes"]}
+    # Compile the plan's code and import everything before restricting syscalls; plan code
+    # only runs after the boundary is installed. No parent secrets reach this process.
+    compiled = {
+        nid: compile(nodes[nid]["config"]["code"], f"plan/{nid}.py", "exec")
+        for nid in order
+        if nodes[nid]["type"] == "run_python"
+    }
+    for module in ("re", "math", "collections", "itertools", "statistics", "json"):
+        __import__(module)
+    isolate(request["limits"]["max_runtime_seconds_per_run"])
+
+    def llm(node_id, texts):
+        send({"kind": "llm", "node": node_id, "texts": texts})
+        response = receive()
         if (
-            not isinstance(kept, list)
-            or len(kept) > len(records)
-            or any(r not in records for r in kept)
+            not isinstance(response, dict)
+            or set(response) != {"answers"}
+            or not isinstance(response["answers"], list)
+            or len(response["answers"]) != len(texts)
         ):
             raise ValueError
-    stage = "plan_query_failed"
-    queries = namespace["build_query"](kept, window=cfg["window"])
-    if not isinstance(queries, list) or len(queries) > cfg["limits"]["max_model_calls_per_run"]:
-        raise ValueError
-    send({"kind": "queries", "queries": [dataclasses.asdict(q) for q in queries]})
-    if receive() != {"ready": True}:
-        raise ValueError
-    calls = 0
+        return response["answers"]
 
-    def run_llm(prompt_id, item):
-        nonlocal calls
-        if prompt_id != cfg["classification"]["prompt_id"] or item not in queries:
-            raise ValueError
-        calls += 1
-        if calls > cfg["limits"]["max_model_calls_per_run"]:
-            raise ValueError
-        send({"kind": "classify", "prompt_id": prompt_id, "query": dataclasses.asdict(item)})
-        response = receive()
-        return plan_api.ClassifierResult(**response)
+    def progress(node):
+        global stage
+        stage = STAGES[node["type"]]
 
-    plan_api.install_run_llm(run_llm)
-    stage = "plan_classify_failed"
-    scores = [
-        namespace["classify"](
-            q, model_id=cfg["model"]["id"], prompt_id=cfg["classification"]["prompt_id"]
-        )
-        for q in queries
-    ]
-    if calls != len(queries) or any(
-        type(s) not in (float, int) or not math.isfinite(s) or not 0 <= s <= 1 for s in scores
-    ):
-        raise ValueError
-    stage = "plan_metric_failed"
-    verdict = namespace["metric"](scores, threshold=cfg["classification"]["threshold"])
+    result = graph.run_plan(plan, order, records, llm, compiled, progress)
     stage = "plan_report_failed"
-    send({"kind": "result", "result": namespace["emit_report"](verdict)})
+    send({"kind": "result", "result": result})
 
 
 if __name__ == "__main__":

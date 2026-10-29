@@ -1,5 +1,6 @@
 import { useReactFlow } from "@xyflow/react";
 import type { Dispatch } from "react";
+import { NODE_H, NODE_W } from "../plan/layout";
 import { addNode } from "../plan/ops";
 import { NODE_TYPES, type Plan } from "../plan/types";
 import type { Action, State } from "../state/store";
@@ -20,7 +21,7 @@ export default function Palette({
     const { plan: next, id } = addNode(plan, type);
     const el = document.querySelector(".canvas")?.getBoundingClientRect();
     const p = el ? flow.screenToFlowPosition({ x: el.left + el.width / 2, y: el.top + el.height / 2 }) : { x: 0, y: 0 };
-    dispatch({ type: "setPlan", plan: next, layout: { ...layout, [id]: { x: p.x - 110, y: p.y - 40 } }, select: id });
+    dispatch({ type: "setPlan", plan: next, layout: { ...layout, [id]: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 } }, select: id });
   };
   return (
     <aside className="palette">

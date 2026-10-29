@@ -1,0 +1,550 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Generated from static/aiab/baked/plan_ir.py: the plan document, one node, and each node type's config. Structural and semantic checks beyond the schema are in check_plan().",
+  "plan": {
+    "type": "object",
+    "properties": {
+      "version": {
+        "const": "aiab-plan-ir/v0"
+      },
+      "plan_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+      },
+      "title": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "description": {
+        "type": "string",
+        "maxLength": 16384
+      },
+      "limits": {
+        "type": "object",
+        "properties": {
+          "max_input_utf8_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "max_model_calls_per_run": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "max_runtime_seconds_per_run": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 300
+          }
+        },
+        "required": [
+          "max_input_utf8_bytes",
+          "max_model_calls_per_run",
+          "max_runtime_seconds_per_run"
+        ],
+        "additionalProperties": false
+      },
+      "nodes": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        },
+        "minItems": 1,
+        "maxItems": 64
+      }
+    },
+    "required": [
+      "version",
+      "plan_id",
+      "title",
+      "limits",
+      "nodes"
+    ],
+    "additionalProperties": false
+  },
+  "node": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$",
+        "maxLength": 64
+      },
+      "type": {
+        "enum": [
+          "input_logs",
+          "classifier",
+          "run_python",
+          "run_llm",
+          "final_report"
+        ]
+      },
+      "title": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "inputs": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "maxLength": 64
+        },
+        "additionalProperties": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+          "maxLength": 129
+        }
+      },
+      "config": {
+        "type": "object"
+      }
+    },
+    "required": [
+      "id",
+      "type",
+      "inputs",
+      "config"
+    ],
+    "additionalProperties": false
+  },
+  "configs": {
+    "input_logs": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "input_scope": {
+          "type": "object",
+          "properties": {
+            "window_start": {
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 32
+            },
+            "window_end": {
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 32
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "minItems": 0,
+              "maxItems": 100,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "agents"
+          ],
+          "additionalProperties": false
+        },
+        "filter": {
+          "type": "object",
+          "properties": {
+            "kinds": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "request",
+                  "response",
+                  "tool_call",
+                  "tool_result"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 4,
+              "uniqueItems": true
+            },
+            "keywords": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "minItems": 0,
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "kinds",
+            "keywords"
+          ],
+          "additionalProperties": false
+        },
+        "max_records": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        }
+      },
+      "required": [
+        "source",
+        "input_scope",
+        "filter",
+        "max_records"
+      ],
+      "additionalProperties": false
+    },
+    "classifier": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "temperature": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 32,
+              "maximum": 2048
+            }
+          },
+          "required": [
+            "id",
+            "temperature",
+            "max_output_tokens"
+          ],
+          "additionalProperties": false
+        },
+        "group_by": {
+          "enum": [
+            "session",
+            "record"
+          ]
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "maxLength": 64
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "flag": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "flag"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "positive_examples": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 16384
+          },
+          "minItems": 0,
+          "maxItems": 32
+        },
+        "negative_examples": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 16384
+          },
+          "minItems": 0,
+          "maxItems": 32
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "boolean"
+            },
+            "evidence_ids": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "score",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "model",
+        "group_by",
+        "window",
+        "instructions",
+        "labels",
+        "positive_examples",
+        "negative_examples",
+        "output_contract"
+      ],
+      "additionalProperties": false
+    },
+    "run_python": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "maxLength": 64
+            },
+            "type": {
+              "enum": [
+                "LogRecords",
+                "Items",
+                "Classifications",
+                "Value"
+              ]
+            },
+            "fields": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "maxLength": 64
+              },
+              "additionalProperties": {
+                "enum": [
+                  "boolean",
+                  "integer",
+                  "number",
+                  "string"
+                ]
+              },
+              "maxProperties": 16
+            }
+          },
+          "required": [
+            "name",
+            "type",
+            "fields"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "code",
+        "output"
+      ],
+      "additionalProperties": false
+    },
+    "run_llm": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "temperature": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 32,
+              "maximum": 2048
+            }
+          },
+          "required": [
+            "id",
+            "temperature",
+            "max_output_tokens"
+          ],
+          "additionalProperties": false
+        },
+        "system_prompt": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "user_prompt": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "maxLength": 64
+            },
+            "type": {
+              "enum": [
+                "LogRecords",
+                "Items",
+                "Classifications",
+                "Value"
+              ]
+            },
+            "fields": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "maxLength": 64
+              },
+              "additionalProperties": {
+                "enum": [
+                  "boolean",
+                  "integer",
+                  "number",
+                  "string"
+                ]
+              },
+              "maxProperties": 16
+            }
+          },
+          "required": [
+            "name",
+            "type",
+            "fields"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "model",
+        "system_prompt",
+        "user_prompt",
+        "output"
+      ],
+      "additionalProperties": false
+    },
+    "final_report": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "maxLength": 64
+              },
+              "type": {
+                "enum": [
+                  "boolean",
+                  "integer",
+                  "number",
+                  "string"
+                ]
+              },
+              "from": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024
+              }
+            },
+            "required": [
+              "name",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 16
+        },
+        "privacy": {
+          "type": "object",
+          "properties": {
+            "allow_free_text": {
+              "type": "boolean"
+            },
+            "min_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "max_result_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4096
+            }
+          },
+          "required": [
+            "allow_free_text",
+            "min_count",
+            "max_result_bytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "fields",
+        "privacy"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "limits": {
+    "max_input_utf8_bytes": 1000000,
+    "max_records_per_run": 2000,
+    "max_model_calls_per_run": 256,
+    "max_runtime_seconds_per_run": 300,
+    "max_result_bytes": 4096
+  },
+  "python_imports": [
+    "re",
+    "math",
+    "collections",
+    "itertools",
+    "statistics",
+    "json"
+  ]
+}

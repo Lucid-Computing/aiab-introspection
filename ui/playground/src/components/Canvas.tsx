@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react";
 import { type Dispatch, type DragEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { type FlowNode, planToFlow } from "../plan/graph";
-import { autoLayout } from "../plan/layout";
+import { autoLayout, NODE_H, NODE_W } from "../plan/layout";
 import { addNode, connect, deleteNodes, disconnect } from "../plan/ops";
 import type { Issue, NodeType } from "../plan/types";
 import type { Action, State } from "../state/store";
@@ -133,7 +133,7 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
       dispatch({
         type: "setPlan",
         plan: next,
-        layout: { ...layout, [id]: { x: pos.x - 110, y: pos.y - 40 } },
+        layout: { ...layout, [id]: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 } },
         select: id,
       });
     },

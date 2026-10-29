@@ -1,10 +1,21 @@
-# ui/playground: audit plan playground (prototype)
+# ui/playground: the plan builder
 
-A standalone editor for trying out a new shape of audit plan: a graph of five block types
-(Input Logs, Classifier, Run Python, Run LLM, Final Report) that can be edited as a graph or
-as YAML. It is an exploration, not part of the agreement flow: it does not read or write
-agreements, call any server endpoint, run Python, call a model, or sign anything. Plans
-live in the browser (localStorage) and move between browsers by Export / Import.
+The editor for audit plans: a graph of five block types (Input Logs, Classifier, Run Python,
+Run LLM, Final Report) that can be edited as a graph or as YAML. Each card shows what the
+block reads and the type and shape of what it produces, so types can be checked across every
+connection. The same rules run in the box (`static/aiab/baked/plan_ir.py`): a plan that is
+valid here is a plan the box loads.
+
+Two modes, one bundle:
+
+- **Agreement mode**, embedded in the agreement UI's plan page at
+  `/audit-plan-playground/?agreement=<id>` (`src/agreement.ts`): the plan comes from
+  `GET /a/<id>/plan.json` and goes back with `PUT`; the server runs the box's loader on every
+  save and answers with its reasons, which the builder shows on the nodes. Nothing is kept in
+  the browser. `&readonly=1` hides Save.
+- **Standalone playground**, without the parameter: sample plans (the first is the deployed
+  plan, read from `plan/plan.json` at build time), localStorage, Export / Import. Nothing runs
+  and nothing is sent anywhere; Simulate is a deterministic mock.
 
 ## Run it
 

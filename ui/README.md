@@ -34,45 +34,52 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 
 | File | What it is |
 | --- | --- |
-| [`../static/aiab/plan_api.py`](../static/aiab/plan_api.py) | The contract a plan is written against: five types and `run_llm`. |
+| [`../static/aiab/baked/plan_ir.py`](../static/aiab/baked/plan_ir.py) | The plan format: the graph's schema, the checks the box applies, the derived report schema and limits. |
 | [`../static/aiab/baked/bundle.py`](../static/aiab/baked/bundle.py) | `bundle_files`, `file_digest` (the plan digest), `load_bundle` (the boot-time checks), `restrictions`. |
-| [`../static/aiab/baked/worker.py`](../static/aiab/baked/worker.py) | The sandboxed process that runs `plan.py`'s six functions in order. |
+| [`../static/aiab/baked/graph.py`](../static/aiab/baked/graph.py), [`worker.py`](../static/aiab/baked/worker.py) | The engine that runs the graph, and the sandboxed process it runs in. |
 | [`../static/auditor/baked.py`](../static/auditor/baked.py) | `digest`, `sign`, `verify`, `commit-evaluation` and the run/report client. |
-| [`../plan/`](../plan/) | The agreement: `plan.py`, `plan.json`, prompts, tests, signatures. |
+| [`../plan/`](../plan/) | The agreement: `plan.json` (the graph), tests, signatures. |
 | [`server/config.py`](server/config.py) | Environment variables → settings. |
-| [`server/pipeline.py`](server/pipeline.py) | The graph the UI draws: the six steps and which plan.json fields each takes. |
-| [`server/plansource.py`](server/plansource.py) | Read and replace one function in `plan.py`, checked with the box's `check_source`. |
+| [`playground/`](playground/) | The plan builder: the graph-and-YAML editor embedded in the plan page, built once into `playground/dist`. |
 | [`server/auth.py`](server/auth.py) | Local accounts with hashed passwords, signed session cookie, `python -m server.auth add`. |
-| [`server/plan_view.py`](server/plan_view.py) | Turns the plan folder into what the screens show; saves settings, functions, prompts, signatures. |
+| [`server/plan_view.py`](server/plan_view.py) | Turns the plan folder into what the screens show; saves the plan through the box's loader, stores signatures, archives old-format agreements. |
 | [`server/box.py`](server/box.py) | Reads the box's manifest and health. Never writes. |
 | [`server/publish.py`](server/publish.py) | Deploy's git side: branch from the base, replace `plan/`, commit, push, open the PR with `gh`. |
 | [`server/runs.py`](server/runs.py) | The Runs screen's steps: each one a call of the static part's `auditor.baked` CLI, results on disk. |
 | [`server/proxylogs.py`](server/proxylogs.py) | The Logs screen: fetches the logging proxy's segments (every 5 minutes in the background), groups requests into sessions, converts them to box records. |
 | [`server/app.py`](server/app.py) | The routes, one per screen or form. |
-| [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm dialog, and CodeMirror (from cdnjs) for `plan.py` with Tab indentation and syntax colours. |
+| [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm dialog and the chat panel; the builder is its own bundle in an iframe. |
 | [`server/template/`](server/template/) | The minimal valid agreement that "New agreement" starts from. |
 | [`server/devkeys.py`](server/devkeys.py) | Development keys in the box's format, and a trust file pinning them. |
 | [`assets/sign_digest.py`](assets/sign_digest.py) | Standalone: sign a digest with a private key, or recompute a digest from `plan.zip`. |
 | [`tools/proxy_to_records.py`](tools/proxy_to_records.py) | Convert a test-proxy log segment into box records (plan transcripts). |
 | [`assets/`](assets/) | `swiss.css` vendored from lucidcomputing.ai; `aiab.css` adds the few things this UI needs. |
 
-## Audit plan playground (prototype)
+## The plan builder
 
-`playground/` is a standalone React app for trying out a graph-and-YAML audit plan editor
-(five block types, a Plan IR, simulated preview). It is separate from the agreement flow:
-it reads no agreement and calls no endpoint. `pnpm install && pnpm dev` in `playground/`
-runs it on its own; after `pnpm build` this server serves it at `/audit-plan-playground/`
-behind the login. It is not in the Docker image. See [playground/README.md](playground/README.md).
+`playground/` is the plan builder: a React app that edits the plan as a graph of five block
+types (Input Logs, Classifier, Run Python, Run LLM, Final Report) or as YAML, with every
+step showing what it reads and what it produces. The plan page embeds it in an iframe at
+`/audit-plan-playground/?agreement=<id>`; it loads the agreement's `plan.json` from
+`GET /a/<id>/plan.json` and saves with `PUT`, which runs the box's loader
+(`aiab.baked.bundle.load_bundle`) and refuses, with the loader's reasons per node, anything
+the box would refuse. Saving needs the edit lease and the version the page saw, like every
+other save. Without the `agreement` parameter the same page is the standalone playground
+(samples, localStorage, no server), also served behind the login.
 
-## Agreements and the deployed plan
+The builder is built once into `playground/dist` (`pnpm install && pnpm build` in
+`playground/`; the Docker image does this in a node stage). Its rules mirror the box's
+(`static/aiab/baked/plan_ir.py`): a plan the builder shows as valid is a plan the box loads.
+See [playground/README.md](playground/README.md).
 
-Agreements are folders under `agreements/<name>/`, each with the same layout as `plan/` plus `history.jsonl`, a log of who changed what (outside the digest), and its own `signatures/`. They are the only thing people edit, sign, deploy and delete, and they stay on the UI server's disk (git-ignored). `plan/` is the deployed plan: read only in the UI, shown in its own block on the Agreements page, and changed only by a merged plan pull request followed by a pull of the checkout. "New agreement" creates a folder from the minimal template or as a copy of the deployed plan. "Deploy" builds a branch holding only that agreement's files as `plan/`, pushes it and opens the pull request; the signature check merges it and the release follows, and the page follows each step. One deployment at a time: Deploy is off for everyone while one is in flight. `AIAB_AGREEMENTS_DIR` moves the folder (default `../agreements`).
-
-Several people share one UI. Editing an agreement takes it for that person until they press Finish editing or stay idle for 15 minutes (`server/editing.py`); everyone else sees who has it and reads. Saves also carry the version the editor saw and are refused when the agreement changed meanwhile, and saves on one agreement run one at a time.
+Agreements written for the previous plan format (`plan.py` and a `plan.json` of schema
+`aiab-baked-plan/v1`) are moved to `agreements/_archive/` when the server starts or the
+Agreements page loads. They are listed there read-only with a Delete button; the box no
+longer runs that format.
 
 ## What this first version does and does not do
 
-Does: login per party; the Runs screen that drives the auditor CLI against the live box; the how-it-works screen; agreements as folders with a deploy slot, create, delete; the plan flow with per-step settings, function body (with a code editor) and prompt editing, written straight to the files, and the function's docstring shown as its description; a change log with lab/auditor attribution; the box's own loader check on every load; the plan digest, a standalone signing tool and signature paste verified against the trust file; lock on a valid signature; Deploy that pushes a plan-only branch and opens the pull request; reading the box manifest and comparing plan digests.
+Does: login per party; the Runs screen that drives the auditor CLI against the live box; the how-it-works screen; agreements as folders with a deploy slot, create, delete; the plan builder (graph and YAML) saving through the box's loader; a change log with lab/auditor attribution; the box's own loader check on every load; the plan digest, a standalone signing tool and signature paste verified against the trust file; lock on a valid signature; Deploy that pushes a plan-only branch and opens the pull request; reading the box manifest and comparing plan digests.
 
 Does not yet: the dry run (deferred; the static part's `python -m aiab.dryrun` works from the terminal), merging (people and CI do that), GitHub login, comments, the attestation verifier, run submission. The state lives in the agreement folders and the box; the server keeps only login sessions, no database.
 
@@ -156,7 +163,7 @@ presentation. It remains outside the enclave image. The active target is section
 of [v0.5](../docs/AIAB_DESIGN_SPEC.md); see [operations](../docs/BAKED_PLAN_OPERATIONS.md)
 for the actual schemas and commands.
 
-The plan editor changes `plan/plan.json`, `plan/plan.py` and prompt files. Both
+The plan editor changes `plan/plan.json`. Both
 parties sign the exact folder digest offline using `python -m auditor.baked`;
 private keys never go to the UI, CI or box. The PR contains the bundle and both
 signature files. The static verifier checks signatures and restrictions, then the

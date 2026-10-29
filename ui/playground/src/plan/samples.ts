@@ -1,5 +1,11 @@
-/** The three example plans, written in the same YAML a user edits in the code view. */
-import type { Plan } from "./types";
+/**
+ * The example plans. The first is the deployed plan itself, read from plan/plan.json at
+ * build time so the builder and the box never disagree about it; the other three are
+ * written in the same YAML a user edits in the code view.
+ */
+import deployedPlan from "../../../../plan/plan.json";
+import { type Plan, PlanSchema } from "./types";
+import { validatePlan } from "./validate";
 import { yamlToPlan } from "./yaml";
 
 const SIMPLE = `version: aiab-plan-ir/v0
@@ -251,14 +257,15 @@ nodes:
 `;
 
 export const SAMPLE_SOURCES = [
-  { key: "simple", label: "1 · Simple classification", yaml: SIMPLE },
-  { key: "two-classifiers", label: "2 · Multiple classifiers", yaml: TWO_CLASSIFIERS },
-  { key: "multi-step", label: "3 · Multi-step audit", yaml: MULTI_STEP },
+  { key: "deployed", label: "1 · Destructive shell commands (demo)", yaml: "" },
+  { key: "simple", label: "2 · Simple classification", yaml: SIMPLE },
+  { key: "two-classifiers", label: "3 · Multiple classifiers", yaml: TWO_CLASSIFIERS },
+  { key: "multi-step", label: "4 · Multi-step audit", yaml: MULTI_STEP },
 ] as const;
 
 export function samplePlan(key: string): Plan {
   const s = SAMPLE_SOURCES.find((x) => x.key === key) ?? SAMPLE_SOURCES[0];
-  const r = yamlToPlan(s.yaml);
+  const r = s.key === "deployed" ? validatePlan(PlanSchema.parse(deployedPlan)) : yamlToPlan(s.yaml);
   if (!r.ok) throw new Error(`sample ${s.key} is invalid: ${r.issues.map((i) => i.message).join("; ")}`);
   return r.plan;
 }

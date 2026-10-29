@@ -37,6 +37,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .bar-status.warn::before { background: var(--ink-1); }
 .bar-status.bad { color: var(--destructive); }
 .bar-status.bad::before { background: var(--destructive); }
+.bar-note { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-2); }
+.bar-note.bad { color: var(--destructive); }
+.bar-note.ok { color: var(--ink-1); }
 
 /* ---- work area ---- */
 .work { display: grid; min-height: 0; overflow: hidden; }
@@ -64,22 +67,51 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .pal--final_report, .pn--final_report { border-left-color: var(--ink-1); border-left-style: double; border-left-width: 5px; }
 
 /* ---- nodes ---- */
-.pn { position: relative; width: 220px; background: var(--paper-1); border: 1px solid var(--rule-strong); border-left-width: 4px; padding: 6px 10px 8px; font-size: var(--text-xs); }
+/* Fixed line heights throughout the card: layout.ts predicts the height from the row count. */
+.pn { position: relative; width: 240px; background: var(--paper-1); border: 1px solid var(--rule-strong); border-left-width: 4px; padding: 6px 10px 0; font-size: var(--text-xs); }
 .pn.is-selected { border-color: var(--ink-1); box-shadow: 3px 3px 0 0 var(--ink-1); }
 .pn.has-error { border-color: var(--destructive); }
-.pn-head { display: flex; align-items: center; font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); }
+.pn-head { display: flex; align-items: center; height: 14px; line-height: 14px; font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); }
 .pn--classifier .pn-head { color: var(--amber-ink); }
 .pn-err { margin-left: auto; color: var(--paper-1); background: var(--destructive); font-weight: 600; padding: 0 5px; }
 .pn-glyph { font-family: var(--font-mono); }
-.pn-title { font-size: 14px; font-weight: 600; color: var(--ink-1); line-height: 1.25; margin-top: 2px; }
-.pn-line { color: var(--ink-2); line-height: 1.35; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-title { height: 18px; line-height: 18px; margin-top: 2px; font-size: 14px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-line { height: 16px; line-height: 16px; margin-top: 2px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pn--run_python .pn-line { font-family: var(--font-mono); font-size: 11px; }
-.pn-ins { margin: 6px -10px 0; border-top: var(--border-hairline); padding-top: 2px; }
-.pn-port { position: relative; padding: 1px 10px; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-2); }
+
+/* I/O footer: inputs on the left edge, the output on the right edge, one row each. */
+.pn-io { margin: 6px -10px 0 -10px; font-family: var(--font-mono); font-size: 10.5px; }
+.pn-ins { border-top: var(--border-hairline); padding: 2px 0; }
+.pn-out { border-top: var(--border-hairline); padding: 3px 0 5px; background: var(--paper-2); }
+.pn-row { position: relative; display: flex; align-items: center; gap: 6px; height: 20px; line-height: 20px; padding: 0 10px; white-space: nowrap; }
+.pn-row--out { padding-right: 12px; }
+.pn-port-name { color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; }
+.pn-row--out .pn-port-name { font-weight: 600; }
+.pn-port-type { color: var(--ink-3); }
+.pn-port-type.is-unbound { color: var(--destructive); }
+.pn-row--none { color: var(--ink-3); }
+.pn-row--new { color: var(--ink-3); opacity: 0.45; }
+.pn:hover .pn-row--new, .pn-row--new:has(.connectingto) { opacity: 1; }
+.pn-shape { height: 16px; line-height: 16px; padding: 0 10px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-out--report .pn-shape { color: var(--ink-1); }
+
+/* Type badges: the same look on a node's output, on the inputs that read it and in the
+   inspector, so the two ends of an edge can be compared at a glance. The output badge is
+   filled: it is the thing to look for. A red input badge is a type the node does not accept. */
+.tbadge { display: inline-block; padding: 0 6px; height: 16px; line-height: 16px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--ink-1); color: var(--ink-1); background: var(--paper-1); white-space: nowrap; }
+.tbadge::before { display: inline-block; width: 1em; margin-right: 2px; font-weight: 400; }
+.tbadge--LogRecords::before { content: "▤"; }
+.tbadge--Items::before { content: "≡"; }
+.tbadge--Classifications::before { content: "◆"; }
+.tbadge--Value::before { content: "#"; }
+.tbadge--Report::before { content: "■"; }
+.tbadge--unknown { border-style: dashed; color: var(--ink-3); }
+.pn-row--out .tbadge { background: var(--ink-1); color: var(--paper-1); }
+.pn-out--report .pn-row--out .tbadge { background: var(--paper-1); color: var(--ink-1); border-style: double; border-width: 3px; height: 16px; line-height: 10px; }
+.tbadge.is-bad { background: var(--destructive); border-color: var(--destructive); color: var(--paper-1); }
 .pn-handle.react-flow__handle { width: 9px; height: 9px; background: var(--paper-1); border: 1.5px solid var(--ink-2); }
 .pn-handle.react-flow__handle:hover, .react-flow__handle.connectingto, .react-flow__handle.connectionindicator.valid { background: var(--amber); border-color: var(--ink-1); }
-.pn-handle--new.react-flow__handle { top: auto; bottom: -5px; left: 24px; transform: none; border-style: dashed; opacity: 0; }
-.pn:hover .pn-handle--new, .react-flow__handle.pn-handle--new.connectingto { opacity: 1; }
+.pn-handle--new.react-flow__handle { border-style: dashed; }
 
 /* React Flow chrome in the house style */
 .react-flow svg { max-width: none; } /* swiss.css caps svg at 100%, which hides edges */
@@ -95,6 +127,16 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .react-flow__connectionline path { stroke: var(--amber-ink); stroke-width: 2; }
 
 /* ---- inspector ---- */
+.iostrip { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: baseline; font-size: var(--text-xs); padding: 6px 8px; border: var(--border-strong); background: var(--paper-2); }
+.iostrip-k { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); }
+.iostrip-v { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.iostrip-v .mono { color: var(--ink-1); }
+.iostrip-shape { font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); flex-basis: 100%; overflow-wrap: anywhere; }
+.iostrip-shape.big { font-size: 12px; color: var(--ink-1); }
+.iostrip .is-unbound { color: var(--destructive); }
+.arglist { margin: 2px 0 0; padding: 0; list-style: none; font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); }
+.arglist li { padding: 1px 0; overflow-wrap: anywhere; }
+.arglist .mono { color: var(--ink-1); }
 .insp { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
 .insp-head { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: var(--tracking-label); font-weight: 600; font-size: var(--text-sm); padding-bottom: var(--space-2); border-bottom: 1px solid; }
 .insp-id { margin-left: auto; width: 150px; border-color: transparent; background: transparent; text-align: right; text-transform: none; letter-spacing: 0; color: var(--ink-2); }

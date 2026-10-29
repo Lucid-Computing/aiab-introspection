@@ -9,6 +9,18 @@
 # (/data) and edits, signs and pushes from there; see docker-entrypoint.sh.
 FROM docker.io/astral/uv:0.11.6 AS uv
 
+# The plan builder (ui/playground) is a static bundle built once here; the UI serves it
+# behind its login at /audit-plan-playground/.
+FROM docker.io/library/node:22-bookworm-slim AS playground
+WORKDIR /build/ui/playground
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+COPY ui/playground/package.json ui/playground/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY ui/assets /build/ui/assets
+COPY plan/plan.json /build/plan/plan.json
+COPY ui/playground ./
+RUN pnpm build
+
 FROM docker.io/library/python:3.12-slim
 # git pushes the deploy branches, gh opens the pull requests.
 RUN apt-get update \
@@ -32,6 +44,7 @@ COPY ui/pyproject.toml ui/uv.lock /app/ui/
 WORKDIR /app/ui
 RUN uv sync --locked --no-dev
 COPY ui /app/ui
+COPY --from=playground /build/ui/playground/dist /app/ui/playground/dist
 RUN chmod +x /app/ui/docker-entrypoint.sh
 EXPOSE 8090
 ENTRYPOINT ["/app/ui/docker-entrypoint.sh"]

@@ -1,5 +1,11 @@
 {
-  "benign_coding.jsonl": { "flagged": false, "sessions": { "s-0001": false } },
-  "bio_research.jsonl": { "flagged": true, "sessions": { "s-0002": true } },
-  "mixed_sessions.jsonl": { "flagged": true, "sessions": { "s-0003": false, "s-0004": true } }
+  "benign_feature.jsonl": {
+    "flagged": false
+  },
+  "destructive_cleanup.jsonl": {
+    "flagged": true
+  },
+  "mixed_sessions.jsonl": {
+    "flagged": true
+  }
 }

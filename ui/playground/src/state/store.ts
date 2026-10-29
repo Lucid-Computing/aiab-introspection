@@ -3,6 +3,7 @@
  * editor's text, which may be invalid while the user types. Graph edits rewrite `yaml`;
  * valid code edits replace `plan` without touching the text the user is typing.
  */
+import { AGREEMENT } from "../agreement";
 import { completeLayout } from "../plan/layout";
 import { samplePlan } from "../plan/samples";
 import { type Issue, type Layout, LayoutSchema, type Plan, PlanSchema } from "../plan/types";
@@ -99,18 +100,19 @@ const STORAGE_KEY = "aiab-playground/v1";
 
 export function initialState(): State {
   const fresh: State = {
-    plan: samplePlan("simple"),
+    plan: samplePlan("deployed"),
     layout: {},
     yaml: "",
     codeIssues: [],
     selected: null,
     view: "split",
-    sample: "simple",
+    sample: "deployed",
     toast: null,
     fitSeq: 0,
   };
   fresh.layout = completeLayout(fresh.plan, {});
   fresh.yaml = planToYaml(fresh.plan);
+  if (AGREEMENT) return fresh; // the server's plan replaces this as soon as it loads
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return fresh;
@@ -135,6 +137,7 @@ export function initialState(): State {
 }
 
 export function persist(s: State): void {
+  if (AGREEMENT) return; // an agreement lives on the server, never in this browser
   try {
     localStorage.setItem(
       STORAGE_KEY,

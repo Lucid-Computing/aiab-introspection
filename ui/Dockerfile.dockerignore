@@ -2,12 +2,16 @@
 # static part it imports enter the image. Keep the directory re-includes before the
 # file-level exclusions: re-including a directory also includes its descendants.
 **
+!plan/
+plan/**
+!plan/plan.json
 !ui/
 ui/.venv
 ui/runs
+ui/logs
 ui/accounts.json
-# The plan playground prototype is not part of the deployed UI.
-ui/playground
+ui/playground/node_modules
+ui/playground/dist
 !static/
 static/**
 !static/pyproject.toml

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from aiab.audit.protocol import AuditError
 from aiab.baked.bundle import load_bundle
+from aiab.baked.plan_ir import check_plan
 
 from server.config import STATIC_DIR, Settings
 
@@ -77,14 +78,25 @@ def transcripts(settings: Settings) -> list[str]:
     return sorted(p.name for p in folder.glob("*.jsonl")) if folder.is_dir() else []
 
 
-def plan_scope(settings: Settings) -> dict | None:
-    """The deployed plan's input_scope block, or None when the plan does not load."""
+def _plan(settings: Settings) -> dict | None:
     try:
-        return json.loads((settings.deployed_plan_dir / "plan.json").read_text(encoding="utf-8"))[
-            "input_scope"
-        ]
-    except (OSError, ValueError, KeyError):
+        return json.loads((settings.deployed_plan_dir / "plan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
+
+
+def plan_scope(settings: Settings) -> dict | None:
+    """What the deployed plan's Input Logs step pins (agents, a time window), or None when
+    it pins nothing or the plan does not load."""
+    plan = _plan(settings)
+    try:
+        source = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+        scope = source["config"]["input_scope"]
+    except (TypeError, KeyError, StopIteration):
+        return None
+    if not scope.get("agents") and not scope.get("window_start") and not scope.get("window_end"):
+        return None
+    return scope
 
 
 def scope_notes(settings: Settings, who: str, first: float, last: float) -> list[str]:
@@ -94,7 +106,7 @@ def scope_notes(settings: Settings, who: str, first: float, last: float) -> list
         return []
     notes = []
     agents = scope.get("agents", [])
-    if who not in agents:
+    if agents and who not in agents:
         notes.append(f"agent '{who}' is not in the plan's scope ({', '.join(agents)})")
     try:
         start = datetime.fromisoformat(scope["window_start"]).timestamp()
@@ -111,10 +123,8 @@ def scope_notes(settings: Settings, who: str, first: float, last: float) -> list
 def check_limits(settings: Settings, records: list[dict]) -> None:
     """Refuse here what the box would refuse as input_too_large."""
     try:
-        limits = json.loads((settings.deployed_plan_dir / "plan.json").read_text(encoding="utf-8"))[
-            "limits"
-        ]
-    except (OSError, ValueError, KeyError):
+        limits = check_plan(_plan(settings)).limits
+    except (AuditError, TypeError, KeyError):
         return
     size = len(json.dumps(records, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     if len(records) > limits["max_records_per_run"]:
@@ -434,24 +444,23 @@ def outcome(state: dict) -> dict:
             "or review the plan limits."
         ),
         "invalid_output": (
-            "The plan returned a result outside its agreed output schema. Review emit_report "
-            "and the schema, then re-sign the corrected plan."
+            "The plan returned a result outside its agreed report fields. Review the Final "
+            "Report, then re-sign the corrected plan."
         ),
         "plan_start_failed": (
-            "The plan worker failed to start or load the signed code. Check the runtime and "
-            "plan imports."
+            "The plan worker failed to start or to compile the plan's Python steps. Check the "
+            "runtime and the plan."
         ),
-        "plan_query_failed": (
-            "The plan failed while grouping input records. Check build_query against the "
-            "selected record types."
-        ),
+        "plan_query_failed": ("The plan failed in its Input Logs step while selecting records."),
         "plan_classify_failed": (
-            "The plan failed in classify. Check its use of run_llm and returned scores."
+            "The plan failed in a classifier or model step: the model's answers did not fit, "
+            "or an item could not be prepared."
         ),
         "plan_metric_failed": (
-            "The plan failed while combining scores. Check metric, including empty input."
+            "A Python step failed or returned a value that does not match its declared output. "
+            "Check its code against the records it receives, including an empty input."
         ),
-        "plan_report_failed": "The plan failed while producing its result. Check emit_report.",
+        "plan_report_failed": "The plan failed while producing the report from its input.",
         "execution_timeout": (
             "The plan exceeded its signed runtime limit. Reduce the input or review and re-sign "
             "the limit."

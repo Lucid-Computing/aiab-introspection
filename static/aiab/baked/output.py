@@ -24,6 +24,15 @@ def check_schema(node, depth=0):
         ):
             raise AuditError("invalid_output_schema")
         bits = (node["maximum"] - node["minimum"]).bit_length()
+    elif kind == "number":
+        # A JSON number as the plan's proportions and scores: one double at most.
+        allowed |= {"minimum", "maximum"}
+        if any(
+            k in node and (type(node[k]) not in (int, float) or isinstance(node[k], bool))
+            for k in ("minimum", "maximum")
+        ):
+            raise AuditError("invalid_output_schema")
+        bits = 64
     elif kind == "string":
         if "enum" in node:
             allowed.add("enum")

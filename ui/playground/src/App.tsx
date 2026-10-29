@@ -1,5 +1,6 @@
 import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { AGREEMENT, loadAgreement, READONLY, saveAgreement, type ServerIssue } from "./agreement";
 import Canvas from "./components/Canvas";
 import CodePane from "./components/CodePane";
 import Inspector from "./components/Inspector";
@@ -7,6 +8,7 @@ import Palette from "./components/Palette";
 import SimulateDialog from "./components/SimulateDialog";
 import { badBindings, lintPlan } from "./plan/lint";
 import { SAMPLE_SOURCES, samplePlan } from "./plan/samples";
+import type { Issue } from "./plan/types";
 import { exportYaml, locateIssues, planToYaml, yamlToPlan } from "./plan/yaml";
 import { initialState, persist, reducer, type View } from "./state/store";
 
@@ -16,18 +18,71 @@ const VIEWS: [View, string][] = [
   ["code", "Code"],
 ];
 
+/** What the server holds for the agreement being edited (agreement mode only). */
+interface Server {
+  digest: string;
+  /** The YAML of the plan as last loaded or saved: the baseline for "unsaved changes". */
+  savedYaml: string;
+  editable: boolean;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  /** The box loader's reasons for refusing the last save; cleared by the next edit. */
+  refused: Issue[];
+}
+
+const fromServer = (issues: ServerIssue[]): Issue[] =>
+  issues.map((i) => ({ severity: "error", message: i.message, nodeId: i.node ?? undefined, path: i.path }));
+
 export default function App() {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
   const [simOpen, setSimOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const { plan, view } = state;
+  const [server, setServer] = useState<Server>({
+    digest: "",
+    savedYaml: "",
+    editable: false,
+    loading: Boolean(AGREEMENT),
+    saving: false,
+    error: null,
+    refused: [],
+  });
 
   useEffect(() => {
     const t = setTimeout(() => persist(state), 250);
     return () => clearTimeout(t);
   }, [state]);
 
-  const issues = useMemo(() => lintPlan(plan), [plan]);
+  // Agreement mode: the plan comes from the server, once, when the page opens.
+  useEffect(() => {
+    if (!AGREEMENT) return;
+    let cancelled = false;
+    loadAgreement(AGREEMENT)
+      .then((s) => {
+        if (cancelled) return;
+        dispatch({ type: "loadPlan", plan: s.plan, sample: "deployed" });
+        setServer((x) => ({
+          ...x,
+          digest: s.digest,
+          savedYaml: planToYaml(s.plan),
+          editable: s.editable && !READONLY,
+          loading: false,
+          refused: fromServer(s.issues),
+        }));
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setServer((x) => ({ ...x, loading: false, error: e.message }));
+        dispatch({ type: "toast", kind: "error", text: e.message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const lint = useMemo(() => lintPlan(plan), [plan]);
+  const issues = useMemo(() => [...server.refused, ...lint], [server.refused, lint]);
   const bad = useMemo(() => badBindings(plan), [plan]);
   const located = useMemo(
     () => (state.codeIssues.length ? issues : locateIssues(state.yaml, issues)),
@@ -38,6 +93,23 @@ export default function App() {
   const nErr = issues.filter((i) => i.severity === "error").length;
   const nWarn = issues.length - nErr;
 
+  // A new edit retires the server's objections to the previous attempt.
+  const currentYaml = planToYaml(plan);
+  useEffect(() => {
+    if (server.refused.length) setServer((x) => ({ ...x, refused: [] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentYaml]);
+
+  const dirty = Boolean(AGREEMENT) && !server.loading && !server.error && currentYaml !== server.savedYaml;
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
   const [toast, setToast] = useState(state.toast);
   useEffect(() => {
     if (!state.toast) return;
@@ -45,6 +117,20 @@ export default function App() {
     const t = setTimeout(() => setToast(null), 4500);
     return () => clearTimeout(t);
   }, [state.toast]);
+
+  const save = async () => {
+    if (!AGREEMENT || server.saving) return;
+    setServer((x) => ({ ...x, saving: true }));
+    const r = await saveAgreement(AGREEMENT, plan, server.digest);
+    if (r.ok) {
+      setServer((x) => ({ ...x, saving: false, digest: r.digest, savedYaml: currentYaml, refused: [] }));
+      dispatch({ type: "toast", text: `Saved. New version ${r.digest.slice(7, 19)}…` });
+    } else {
+      setServer((x) => ({ ...x, saving: false, refused: fromServer(r.issues) }));
+      dispatch({ type: "toast", kind: "error", text: r.message });
+      if (r.issues.length) dispatch({ type: "select", id: null });
+    }
+  };
 
   const modified = (key: string) => planToYaml(plan) !== planToYaml(samplePlan(key));
   const loadSample = (key: string) => {
@@ -75,32 +161,59 @@ export default function App() {
       });
       return;
     }
-    dispatch({ type: "loadPlan", plan: r.plan, layout: r.layout });
+    // In agreement mode the plan keeps the agreement's name, whatever the file says.
+    const imported = AGREEMENT ? { ...r.plan, plan_id: AGREEMENT } : r.plan;
+    dispatch({ type: "loadPlan", plan: imported, layout: r.layout });
     dispatch({ type: "toast", text: `Imported ${file.name}${r.layout ? "" : " (laid out automatically)"}` });
   };
 
   const showGraph = view !== "code";
   const showCode = view !== "graph";
+  const canSave = Boolean(AGREEMENT) && server.editable && dirty && nErr === 0 && !server.saving;
+  const saveNote = !AGREEMENT
+    ? null
+    : server.loading
+      ? "loading…"
+      : server.error
+        ? server.error
+        : !server.editable
+          ? "read only · press Edit this plan above to change it"
+          : server.saving
+            ? "saving…"
+            : dirty
+              ? nErr
+                ? "unsaved · fix the errors first"
+                : "unsaved changes"
+              : `saved · ${server.digest.slice(7, 19)}…`;
 
   return (
     <ReactFlowProvider>
       <div className="app">
         <header className="bar">
-          <span className="nav-wordmark" title="Prototype: nothing here runs or is sent anywhere">
-            Plan playground
-          </span>
-          <select
-            className="bar-select"
-            value={state.sample}
-            onChange={(e) => loadSample(e.target.value)}
-            title="Sample plans"
+          <span
+            className="nav-wordmark"
+            title={
+              AGREEMENT
+                ? "The plan of this agreement. Save writes it through the box's own loader."
+                : "Playground: nothing here runs or is sent anywhere"
+            }
           >
-            {SAMPLE_SOURCES.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+            {AGREEMENT ? `Plan builder · ${AGREEMENT}` : "Plan playground"}
+          </span>
+          {!AGREEMENT && (
+            <select
+              className="bar-select"
+              value={state.sample}
+              onChange={(e) => loadSample(e.target.value)}
+              title="Sample plans"
+            >
+              {SAMPLE_SOURCES.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="seg" role="tablist">
             {VIEWS.map(([v, label]) => (
               <button
@@ -127,6 +240,11 @@ export default function App() {
                   ? `${nWarn} warning${nWarn === 1 ? "" : "s"}`
                   : "Valid"}
           </button>
+          {saveNote && (
+            <span className={`bar-note${server.error ? " bad" : dirty ? "" : " ok"}`} role="status">
+              {saveNote}
+            </span>
+          )}
           <div className="bar-spacer" />
           <button className="bar-link" onClick={() => fileInput.current?.click()}>
             Import
@@ -134,18 +252,41 @@ export default function App() {
           <button className="bar-link" onClick={download}>
             Export
           </button>
-          <button
-            className="bar-link"
-            onClick={() =>
-              window.confirm("Reset to the selected sample? Your changes will be lost.") &&
-              dispatch({ type: "loadPlan", plan: samplePlan(state.sample) })
-            }
-          >
-            Reset
-          </button>
-          <button className="btn btn--primary btn--sm" onClick={() => setSimOpen(true)}>
+          {!AGREEMENT && (
+            <button
+              className="bar-link"
+              onClick={() =>
+                window.confirm("Reset to the selected sample? Your changes will be lost.") &&
+                dispatch({ type: "loadPlan", plan: samplePlan(state.sample) })
+              }
+            >
+              Reset
+            </button>
+          )}
+          {AGREEMENT && server.editable && (
+            <button
+              className="bar-link"
+              onClick={() =>
+                dirty &&
+                window.confirm("Discard the unsaved changes and go back to the saved plan?") &&
+                (() => {
+                  const r = yamlToPlan(server.savedYaml);
+                  if (r.ok) dispatch({ type: "loadPlan", plan: r.plan });
+                })()
+              }
+              disabled={!dirty}
+            >
+              Revert
+            </button>
+          )}
+          <button className="btn btn--ghost btn--sm" onClick={() => setSimOpen(true)}>
             Simulate
           </button>
+          {AGREEMENT && server.editable && (
+            <button className="btn btn--primary btn--sm" onClick={save} disabled={!canSave} title="Save a new version">
+              Save
+            </button>
+          )}
           <input
             ref={fileInput}
             type="file"

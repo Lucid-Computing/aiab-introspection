@@ -6,13 +6,15 @@
  */
 import type { Edge, Node } from "@xyflow/react";
 import { splitRef } from "./ports";
+import { describeNode, type NodeShape } from "./shape";
 import type { Issue, Layout, Plan, PlanNode } from "./types";
 import { type Result, validatePlan } from "./validate";
 
 /** Target handle on dynamic-input nodes that creates a new named input when connected. */
 export const NEW_INPUT = "__new__";
 
-export type FlowNodeData = { node: PlanNode; issues: Issue[] };
+/** `io` is what the card shows for ports: inputs with the type each receives, the output and its shape. */
+export type FlowNodeData = { node: PlanNode; issues: Issue[]; io: NodeShape };
 export type FlowNode = Node<FlowNodeData, PlanNode["type"]>;
 export type FlowEdgeData = { invalid: boolean };
 export type FlowEdge = Edge<FlowEdgeData>;
@@ -27,7 +29,7 @@ export function planToFlow(
     id: n.id,
     type: n.type,
     position: layout[n.id] ?? { x: 0, y: 0 },
-    data: { node: n, issues: issues.filter((i) => i.nodeId === n.id) },
+    data: { node: n, issues: issues.filter((i) => i.nodeId === n.id), io: describeNode(plan, n) },
   }));
   const edges: FlowEdge[] = plan.nodes.flatMap((n) =>
     Object.entries(n.inputs).map(([name, r]) => {

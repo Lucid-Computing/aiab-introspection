@@ -157,11 +157,20 @@ export const PlanNode = z.discriminatedUnion("type", [
   FinalReportNode,
 ]);
 
+/** The run limits the box enforces; the box's own ceilings are in static/aiab/baked/plan_ir.py. */
+export const Limits = z.strictObject({
+  max_input_utf8_bytes: z.number().int().min(1).max(1_000_000).default(100_000),
+  max_model_calls_per_run: z.number().int().min(1).max(256).default(64),
+  max_runtime_seconds_per_run: z.number().int().min(1).max(300).default(120),
+});
+
 export const PlanSchema = z.strictObject({
   version: z.literal(PLAN_VERSION),
-  plan_id: ident,
+  /** The agreement's name: the folder it is saved in. */
+  plan_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/, "letters, digits, _ and -, not starting with _"),
   title: z.string().default(""),
   description: z.string().optional(),
+  limits: Limits.default({ max_input_utf8_bytes: 100_000, max_model_calls_per_run: 64, max_runtime_seconds_per_run: 120 }),
   nodes: z.array(PlanNode),
 });
 

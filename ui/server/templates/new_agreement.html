@@ -4,15 +4,15 @@
 {% block content %}
 <p class="crumb"><a href="/agreements" class="link">← Agreements</a></p>
 <h1>New agreement</h1>
-<p class="lead">Name it and state the question. Everything else is edited on the agreement's steps afterwards.</p>
+<p class="lead">Name it and state the question. The plan itself is built on the next screen: a graph of the logs, Python steps, model steps, a classifier and the report.</p>
 <form method="post" action="/agreements/new" class="card" data-confirm="Create this agreement?">
   <div class="card-body stack">
-    <div class="field"><label for="plan_id">Name</label><input id="plan_id" name="plan_id" value="{{ form.plan_id or '' }}" placeholder="bio-demo-002" required></div>
+    <div class="field"><label for="plan_id">Name</label><input id="plan_id" name="plan_id" value="{{ form.plan_id or '' }}" placeholder="destructive-commands-2" required></div>
     <div class="field"><label>Start from</label>
-      <label class="choice"><input type="radio" name="source" value="template" checked> a minimal template: the five functions in their simplest valid form, a generic prompt, the pinned model</label>
-      {% if view %}<label class="choice"><input type="radio" name="source" value="copy"> a copy of {{ view.plan_id }}, the agreement selected for deployment</label>{% endif %}
+      <label class="choice"><input type="radio" name="source" value="template" checked> a minimal plan: the logs, one classifier asking your question, a report releasing whether any session was flagged</label>
+      {% if view and not view.issue %}<label class="choice"><input type="radio" name="source" value="copy"> a copy of {{ view.plan_id }}, the deployed plan</label>{% endif %}
     </div>
-    <div class="field"><label for="problem">Question the classifier answers</label><textarea id="problem" name="problem" class="question" required>{{ form.problem or '' }}</textarea></div>
+    <div class="field"><label for="problem">The question this audit answers</label><textarea id="problem" name="problem" class="question" required>{{ form.problem or '' }}</textarea></div>
     <div class="row">
       <button class="btn btn--primary" name="chat" value="1" {% if not chat_enabled %}disabled{% endif %}>Create with AI</button>
       <button class="btn btn--ghost">Create draft</button>

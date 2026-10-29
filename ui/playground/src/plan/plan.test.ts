@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { flowToPlan, planToFlow } from "./graph";
 import { completeLayout } from "./layout";
-import { lintPlan } from "./lint";
+import { lintPlan, pythonIssues } from "./lint";
 import { addNode, connect, deleteNodes, renameInput, renameNode, renameOutput } from "./ops";
 import { SAMPLE_SOURCES, samplePlan } from "./samples";
+import { classificationShape, describeNode, describeOutput, reportShape } from "./shape";
 import { simulate } from "./simulate";
 import type { Plan } from "./types";
 import { validatePlan } from "./validate";
@@ -28,6 +29,22 @@ function errors(text: string) {
 describe("samples", () => {
   it.each(samples)("%s is a valid plan with no lint errors", (_, plan) => {
     expect(lintPlan(plan).filter((i) => i.severity === "error")).toEqual([]);
+  });
+
+  it("the first sample is the deployed plan, every block type once, straight through", () => {
+    const deployed = samplePlan("deployed");
+    expect(deployed.plan_id).toBe("destructive-commands");
+    expect(deployed.nodes.map((n) => n.type)).toEqual([
+      "input_logs",
+      "run_python",
+      "run_llm",
+      "classifier",
+      "final_report",
+    ]);
+    expect(deployed.limits.max_model_calls_per_run).toBe(128);
+    expect(lintPlan(deployed).filter((i) => i.severity === "warning").map((i) => i.message)).toEqual([
+      expect.stringContaining("proxy/coding-agents"),
+    ]);
   });
 
   it("cover the three requested shapes", () => {
@@ -116,6 +133,42 @@ describe("Plan IR validation", () => {
     const r = validatePlan(p);
     expect(r.ok).toBe(false);
     expect(!r.ok && r.issues[0].message).toMatch(/^Cycle: .*disclosure.*sessions/);
+  });
+});
+
+describe("lint mirrors the box's rules", () => {
+  it("fills the run limits with the box's defaults", () => {
+    expect(simple().limits).toEqual({
+      max_input_utf8_bytes: 100_000,
+      max_model_calls_per_run: 64,
+      max_runtime_seconds_per_run: 120,
+    });
+  });
+
+  it("refuses Python the box would refuse: imports, run() signature, reflective builtins", () => {
+    expect(pythonIssues("import os\ndef run(records):\n    return []\n", ["records"])).toEqual([
+      expect.stringContaining("import os is not allowed"),
+    ]);
+    expect(pythonIssues("def go(records):\n    return []\n", ["records"])).toEqual([
+      expect.stringContaining("define run"),
+    ]);
+    expect(pythonIssues("def run(a, b):\n    return {}\n", ["records"])).toEqual([
+      expect.stringContaining("does not match the inputs"),
+    ]);
+    expect(pythonIssues("def run(records):\n    return open('x')\n", ["records"])).toEqual([
+      expect.stringContaining("open is not allowed"),
+    ]);
+    expect(pythonIssues("import re\nP = re.compile('x')\ndef run(**inputs):\n    return []\n", ["a", "b"])).toEqual([]);
+  });
+
+  it("a model step produces Items or a declared Value, nothing else", () => {
+    const p = clone(samplePlan("multi-step"));
+    const llm = p.nodes.find((n) => n.id === "summarise")!;
+    if (llm.type !== "run_llm") throw new Error();
+    llm.config.output = { name: "summaries", type: "LogRecords", fields: {} };
+    expect(lintPlan(p).map((i) => i.message)).toContainEqual(expect.stringContaining("produces Items"));
+    llm.config.output = { name: "summaries", type: "Value", fields: {} };
+    expect(lintPlan(p).map((i) => i.message)).toContainEqual(expect.stringContaining("declare its fields"));
   });
 });
 
@@ -376,5 +429,61 @@ describe("simulation", () => {
 
   it("never claims Python ran", () => {
     expect(simulate(samplePlan("two-classifiers")).notes.join()).toMatch(/Python not executed/);
+  });
+});
+
+describe("port shapes (what the cards and inspector show)", () => {
+  const node = (plan: Plan, id: string) => plan.nodes.find((n) => n.id === id)!;
+
+  it("describes each node's output type and the shape of one value", () => {
+    const plan = samplePlan("two-classifiers");
+    expect(describeOutput(node(plan, "logs"))).toMatchObject({ name: "records", type: "LogRecords" });
+    expect(describeOutput(node(plan, "physics"))).toMatchObject({
+      name: "results",
+      type: "Classifications",
+      shape: "[{item_id, label: physics_research | other | abstain, score, evidence_ids}]",
+      note: "2 labels",
+    });
+    expect(describeOutput(node(plan, "combine"))).toMatchObject({
+      name: "verdict",
+      type: "Value",
+      shape: "{flagged: boolean, physics_share: number, biology_share: number, sessions: integer}",
+      note: "4 fields",
+    });
+    expect(describeOutput(node(plan, "report"))).toMatchObject({ name: "releases", type: "Report" });
+    expect(reportShape(node(plan, "report") as never)).toBe(
+      "{flagged: boolean, physics_share: number, biology_share: number, sessions: integer}",
+    );
+  });
+
+  it("lists inputs with the type and shape they receive, and marks unconnected ones", () => {
+    const plan = samplePlan("two-classifiers");
+    const combine = describeNode(plan, node(plan, "combine")).inputs;
+    expect(combine.map((i) => [i.name, i.ref, i.type])).toEqual([
+      ["physics", "physics.results", "Classifications"],
+      ["biology", "biology.results", "Classifications"],
+    ]);
+    expect(combine[0].shape).toContain("label: physics_research | other | abstain");
+
+    const { plan: withClassifier, id } = addNode(plan, "classifier");
+    expect(describeNode(withClassifier, node(withClassifier, id)).inputs).toEqual([
+      { name: "items", ref: null, type: null, shape: null },
+    ]);
+  });
+
+  it("the classifier's shape follows its labels, threshold and output contract", () => {
+    const plan = clone(samplePlan("simple"));
+    const c = node(plan, "physics");
+    if (c.type !== "classifier") throw new Error("expected a classifier");
+    c.config.threshold = undefined;
+    c.config.output_contract = { score: false, evidence_ids: false };
+    expect(classificationShape(c)).toBe("[{item_id, label: physics_research | other}]");
+    c.config.labels = [];
+    expect(classificationShape(c)).toBe("[{item_id, label: …}]");
+  });
+
+  it("a Value output with no fields says so", () => {
+    const { plan, id } = addNode(samplePlan("simple"), "run_python");
+    expect(describeOutput(node(plan, id))).toMatchObject({ type: "Value", shape: "no fields declared", note: "0 fields" });
   });
 });

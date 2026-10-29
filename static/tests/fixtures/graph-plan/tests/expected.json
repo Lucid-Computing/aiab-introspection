@@ -1,0 +1,11 @@
+{
+  "benign_feature.jsonl": {
+    "flagged": false
+  },
+  "destructive_cleanup.jsonl": {
+    "flagged": true
+  },
+  "mixed_sessions.jsonl": {
+    "flagged": true
+  }
+}

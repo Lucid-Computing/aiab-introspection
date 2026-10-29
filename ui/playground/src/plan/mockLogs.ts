@@ -131,8 +131,11 @@ export const LOG_SOURCES: Record<string, { label: string; sessions: Session[] }>
   "synthetic/support-chat": { label: "Support chat (synthetic)", sessions: SUPPORT },
 };
 
+/** Unknown sources (the real plan names the logs the parties mean) simulate with this one. */
+export const FALLBACK_SOURCE = "synthetic/research-agents";
+
 export function sourceRecords(source: string): LogRecord[] {
-  const s = LOG_SOURCES[source];
+  const s = LOG_SOURCES[source] ?? LOG_SOURCES[FALLBACK_SOURCE];
   if (!s) return [];
   const out: LogRecord[] = [];
   const start = Date.UTC(2026, 9, 1, 9, 0, 0);

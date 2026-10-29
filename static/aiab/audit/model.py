@@ -50,8 +50,13 @@ class PinnedModel:
         await self.connection.start()
 
     async def check_context(self, text: str, policy: dict):
-        model = self.model
         content = messages(text, policy)
+        await self.check_messages(content, self.model["max_output_tokens"])
+        return content
+
+    async def check_messages(self, content: list[dict], max_output_tokens: int):
+        """Refuse a prompt that, with its answer budget, would not fit the model's context."""
+        model = self.model
         # Ask the exact attested serving tokenizer to count the assembled prompt.
         # This is not an inference call; no truncation or fallback estimate is used.
         status, count = await self.connection.request(
@@ -62,9 +67,32 @@ class PinnedModel:
         )
         if status != 200 or not isinstance(count, dict) or type(count.get("count")) is not int:
             raise AuditError("model_unavailable")
-        if count["count"] + model["max_output_tokens"] > model["context_tokens"]:
+        if count["count"] + max_output_tokens > model["context_tokens"]:
             raise AuditError("input_too_large", 413)
-        return content
+
+    async def complete(self, content: list[dict], schema: dict, max_output_tokens: int) -> dict:
+        """One strict-JSON answer in ``schema`` for a prompt the box built (baked plans)."""
+        model = self.model
+        if not 1 <= max_output_tokens <= 2048:
+            raise AuditError("model_unavailable")
+        request = {
+            "model": model["id"],
+            "messages": content,
+            "temperature": model["temperature"],
+            "reasoning_effort": "low",
+            "max_tokens": max_output_tokens,
+            "stream": False,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "audit_answer", "strict": True, "schema": schema},
+            },
+        }
+        status, result = await self.connection.request(
+            "POST", "/v1/chat/completions", canonical(request), self.credential
+        )
+        if status != 200:
+            raise AuditError("model_unavailable")
+        return parse_answer(result, schema)
 
     async def classify(self, text: str, policy: dict, model: dict) -> float:
         if model != self.model:
@@ -112,3 +140,27 @@ class PinnedModel:
 
     async def close(self):
         await self.connection.close()
+
+
+def parse_answer(result, schema: dict) -> dict:
+    """The one JSON object a chat completion returned, checked against ``schema``."""
+    try:
+        choices = result["choices"]
+        if len(choices) != 1:
+            raise ValueError
+        if choices[0]["finish_reason"] == "length":
+            raise AuditError("model_output_truncated")
+        if choices[0]["finish_reason"] != "stop":
+            raise ValueError
+        message = choices[0]["message"]
+        if message.get("refusal"):
+            raise ValueError
+        parsed = decode(message["content"])
+        validate(parsed, schema, "model_output_invalid")
+        return parsed
+    except AuditError as exc:
+        if exc.code == "model_output_truncated":
+            raise
+        raise AuditError("model_output_invalid") from None
+    except (KeyError, TypeError, ValueError):
+        raise AuditError("model_output_invalid") from None

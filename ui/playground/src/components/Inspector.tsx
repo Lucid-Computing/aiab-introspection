@@ -3,6 +3,7 @@ import { LOG_SOURCES, selectRecords, sourceAgents } from "../plan/mockLogs";
 import { connect, deleteNodes, disconnect, renameInput, renameNode, renameOutput, updateNode } from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportJsonSchema, reportSource } from "../plan/report";
+import { describeNode } from "../plan/shape";
 import { simulate } from "../plan/simulate";
 import {
   type Classifier,
@@ -23,6 +24,7 @@ import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
 import { Advanced, CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
 import { MODEL_OPTIONS, NODE_META } from "./nodeMeta";
+import { TypeBadge } from "./PlanNodeView";
 
 interface Props {
   plan: Plan;
@@ -61,6 +63,7 @@ export default function Inspector({ plan, selected, issues, dispatch }: Props) {
           ))}
         </ul>
       )}
+      <IoStrip plan={plan} node={node} />
       <Field label="Title">
         <input
           value={node.title ?? ""}
@@ -89,6 +92,55 @@ export default function Inspector({ plan, selected, issues, dispatch }: Props) {
 }
 
 type Op = (r: { ok: true; plan: Plan } | { ok: false; message: string }, select?: string) => void;
+
+/** What this node reads and what it produces, with the output type first: the thing to match. */
+function IoStrip({ plan, node }: { plan: Plan; node: PlanNode }) {
+  const { inputs, output } = describeNode(plan, node);
+  return (
+    <div className="iostrip">
+      <span className="iostrip-k">Out</span>
+      <span className="iostrip-v">
+        {output ? (
+          <>
+            <TypeBadge type={output.type} />
+            <span className="mono">{output.name}</span>
+            {output.note && <span className="muted">· {output.note}</span>}
+            <span className="iostrip-shape big">{output.shape}</span>
+          </>
+        ) : (
+          <span className="muted">none</span>
+        )}
+      </span>
+      <span className="iostrip-k">In</span>
+      <span className="iostrip-v">
+        {node.type === "input_logs" ? (
+          <span className="muted">none · starts from the log source</span>
+        ) : inputs.length === 0 ? (
+          <span className="is-unbound">no inputs connected</span>
+        ) : (
+          inputs.map((i) => {
+            const bad = i.type !== null && !accepts(node.type, i.type);
+            return (
+              <span key={i.name} className="iostrip-v" style={{ flexBasis: "100%" }}>
+                <span className="mono">{i.name}</span>
+                {i.ref ? (
+                  <>
+                    <span className="muted">←</span>
+                    <TypeBadge type={i.type} bad={bad} />
+                    <span className="mono muted">{i.ref}</span>
+                    {i.shape && <span className="iostrip-shape">{i.shape}</span>}
+                  </>
+                ) : (
+                  <span className="is-unbound">not connected</span>
+                )}
+              </span>
+            );
+          })
+        )}
+      </span>
+    </div>
+  );
+}
 
 function PlanPanel({ plan, issues, dispatch }: { plan: Plan; issues: Issue[]; dispatch: Dispatch<Action> }) {
   const setMeta = (patch: Partial<Plan>) => dispatch({ type: "update", f: (p) => ({ ...p, ...patch }) });
@@ -188,7 +240,11 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
                     </option>
                   ))}
                 </select>
-                {node.inputs[name] && <span className="io-type">{inputType(plan, node, name)}</span>}
+                {node.inputs[name] && (
+                  <span className="io-type">
+                    <TypeBadge type={inputType(plan, node, name)} />
+                  </span>
+                )}
               </td>
               {rule.kind === "dynamic" && (
                 <td>
@@ -364,16 +420,6 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
 function ClassifierForm({ node, set }: { node: Classifier; set: (n: PlanNode) => void }) {
   const c = node.config;
   const cfg = (patch: Partial<Classifier["config"]>) => set({ ...node, config: { ...c, ...patch } });
-  const contract = {
-    item_id: "s01",
-    label:
-      c.labels
-        .map((l) => l.name)
-        .concat(c.threshold !== undefined ? ["abstain"] : [])
-        .join(" | ") || "…",
-    ...(c.output_contract.score ? { score: "0.0 – 1.0" } : {}),
-    ...(c.output_contract.evidence_ids ? { evidence_ids: ["r001", "r003"] } : {}),
-  };
   return (
     <>
       <Field label="Instructions" hint="The question the classifier answers about each item.">
@@ -479,7 +525,6 @@ function ClassifierForm({ node, set }: { node: Classifier; set: (n: PlanNode) =>
             </label>
           </div>
         </Field>
-        <pre className="contract">{JSON.stringify(contract, null, 2)}</pre>
         <Field label="Positive examples" hint="One per line: should get a flagged label.">
           <LinesInput value={c.positive_examples} onChange={(positive_examples) => cfg({ positive_examples })} />
         </Field>
@@ -572,14 +617,25 @@ function OutputEditor({
 }
 
 function RunPythonForm({ plan, node, set, op }: { plan: Plan; node: RunPython; set: (n: PlanNode) => void; op: Op }) {
-  const args = Object.keys(node.inputs);
+  const args = describeNode(plan, node).inputs;
   return (
     <>
       <Field
         label="Python"
         hint={
           <>
-            Called as <code>run({args.join(", ") || "…"})</code>.
+            Called as <code>run({args.map((a) => a.name).join(", ") || "…"})</code>
+            {args.length ? ", where each argument is:" : "."}
+            {args.length > 0 && (
+              <ul className="arglist">
+                {args.map((a) => (
+                  <li key={a.name}>
+                    <span className="mono">{a.name}</span> <TypeBadge type={a.type} />{" "}
+                    {a.shape ?? (a.ref ? "" : "not connected")}
+                  </li>
+                ))}
+              </ul>
+            )}
           </>
         }
       >
