@@ -101,3 +101,68 @@ def test_long_tool_results_are_cut_and_empty_calls_give_nothing():
     reminder = [{"role": "user", "content": "<system-reminder>a file changed</system-reminder>"}]
     error = json.dumps({"type": "error", "error": {"type": "overloaded_error", "message": "x"}})
     assert P.to_box_records([P.parse_request(entry(reminder, error))]) == []
+
+
+# ---- the light index: what the Logs and Runs pages read ----------------------------------
+
+
+def _write_logs(tmp_path):
+    """A sealed segment and a live part that repeats one call (the live copy wins)."""
+    import zstandard
+
+    side = entry([{"role": "user", "content": "quota"}], "{}", when=1_700_000_000.0)
+    main = entry(
+        [
+            {"role": "user", "content": FIRST},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "now test it"},
+        ],
+        sse({"type": "content_block_start", "index": 0, "content_block": {"type": "text"}}),
+        when=1_700_000_060.0,
+    )
+    later = entry([{"role": "user", "content": "again"}], "{}", when=1_700_000_120.0)
+    segment = "".join(json.dumps(e) + "\n" for e in (side, main)).encode()
+    (tmp_path / "requests-1-2.jsonl.zst").write_bytes(zstandard.compress(segment))
+    main_live = dict(main, who="tester-live")
+    (tmp_path / "live.jsonl").write_text("".join(json.dumps(e) + "\n" for e in (later, main_live)))
+    return [side, main_live, later]
+
+
+def _settings(tmp_path):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(logs_dir=tmp_path)
+
+
+def test_index_dedups_orders_and_keeps_no_conversation(tmp_path):
+    expected = _write_logs(tmp_path)
+    index = P.load_index(_settings(tmp_path))
+    assert [r.id for r in index] == [e["id"] for e in expected]
+    assert index[1].who == "tester-live" and index[1].source == "live.jsonl"
+    assert index[0].source == "requests-1-2.jsonl.zst"
+    assert all(r.messages == [] and r.raw == {} for r in index)
+    assert index[1].message_count == 3
+
+
+def test_session_title_comes_from_the_fullest_call_not_the_side_request(tmp_path):
+    _write_logs(tmp_path)
+    (session,) = P.sessions(P.load_index(_settings(tmp_path)))
+    assert session.title == FIRST
+    assert [r.session_id for r in session.requests] == ["s1", "s1", "s1"]
+
+
+def test_load_full_reads_the_call_back_from_its_file(tmp_path):
+    expected = _write_logs(tmp_path)
+    settings = _settings(tmp_path)
+    for light, want in zip(P.load_index(settings), expected, strict=True):
+        full = P.load_full(settings, light)
+        assert full.raw["_source"] == light.source
+        assert full.raw["id"] == want["id"] and full.who == want["who"]
+        assert full.message_count == len(full.messages) == light.message_count
+
+
+def test_box_records_from_the_index_match_the_full_parse(tmp_path):
+    expected = _write_logs(tmp_path)
+    light = P.load_index(_settings(tmp_path))
+    full = [P.parse_request(e) for e in expected]
+    assert P.to_box_records(light) == P.to_box_records(full)

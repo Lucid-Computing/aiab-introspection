@@ -36,5 +36,7 @@ services:
         sync: false
       - key: LOGGER_KEY         # optional, for the Runs screen: the demo logger's private key (base64)
         sync: false
-      - key: AIAB_PROXY_KEY     # optional, for the Logs screen: the logging proxy's shared key ("tester:<key>" or the key alone)
+      - key: AIAB_LOG_KEY       # optional, for the Logs screen: production's log reader key (LOG_READER_KEY in 1Password); wins over AIAB_PROXY_KEY
+        sync: false
+      - key: AIAB_PROXY_KEY     # optional, for the Logs screen: the test proxy's shared key ("tester:<key>" or the key alone)
         sync: false
