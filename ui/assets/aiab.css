@@ -29,6 +29,9 @@ textarea.prose { min-height: 160px; font-family: var(--font-sans); }
 textarea:disabled, input:disabled { background: var(--paper-2); color: var(--ink-3); }
 .field + .field { margin-top: var(--space-4); }
 .field input.json { font-family: var(--font-mono); font-size: var(--text-sm); }
+.field-hint { margin: var(--space-2) 0 0; font-size: var(--text-sm); color: var(--ink-3); }
+.field-hint--error { color: var(--destructive); }
+.field input.is-invalid, .field input.is-invalid:focus { border-color: var(--destructive); box-shadow: 0 0 0 1px var(--destructive); }
 .issues { list-style: none; padding: 0; margin: 0; }
 .issues li { padding: var(--space-2) 0; border-bottom: var(--border-hairline); font-size: var(--text-sm); color: var(--ink-2); }
 .issues li .mono { color: var(--ink-1); }

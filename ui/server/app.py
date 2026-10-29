@@ -763,7 +763,14 @@ async def new_agreement_form(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     view, error = load_view(settings)
-    return render(request, "new_agreement.html", view=view, error=error, form={})
+    return render(
+        request,
+        "new_agreement.html",
+        view=view,
+        error=error,
+        form={},
+        taken=pv.taken_names(settings),
+    )
 
 
 @app.post("/agreements/new")
@@ -779,13 +786,20 @@ async def new_agreement(request: Request) -> Response:
             view=view,
             error=error,
             form=form,
+            taken=pv.taken_names(settings),
             err="AI creation is unavailable on this server. Create a draft manually instead.",
         )
     errors, created = pv.new_agreement(settings, form, user_of(request) or {})
     if errors or created is None:
         view, error = load_view(settings)
         return render(
-            request, "new_agreement.html", view=view, error=error, form=form, err="; ".join(errors)
+            request,
+            "new_agreement.html",
+            view=view,
+            error=error,
+            form=form,
+            taken=pv.taken_names(settings),
+            err="; ".join(errors),
         )
     saved(user_of(request))
     chat = "&chat=1" if form.get("chat") == "1" else ""

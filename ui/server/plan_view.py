@@ -593,6 +593,15 @@ def _copy_folder(source: Path, target: Path) -> None:
     )
 
 
+def taken_names(settings: Settings) -> list[str]:
+    """Names a new agreement cannot take: existing folders under agreements/ (archived or
+    not) and the deploy slot's. The form checks these as the user types."""
+    names = {"plan"}
+    if settings.agreements_dir.is_dir():
+        names |= {f.name for f in settings.agreements_dir.iterdir()}
+    return sorted(names)
+
+
 def new_agreement(
     settings: Settings, form: dict[str, str], actor: dict[str, str]
 ) -> tuple[list[str], str | None]:
@@ -605,7 +614,8 @@ def new_agreement(
     plan_id = form.get("plan_id", "").strip()
     if not re.fullmatch(ID_PATTERN, plan_id):
         errors.append(
-            "name: letters, digits, _ and - only, up to 128 characters, not starting with _"
+            "name: letters, digits, _ and - only, up to 128 characters,"
+            " starting with a letter or digit"
         )
     elif plan_id == "plan" or (settings.agreements_dir / plan_id).exists():
         errors.append(f"name: an agreement called {plan_id} already exists")

@@ -210,3 +210,18 @@ def test_copying_an_old_format_deploy_slot_is_refused(settings, tmp_path):
         old_slot, {"plan_id": "from-template", "problem": "q", "source": "template"}, ACTOR
     )
     assert not errors and pv.load_plan_view(pv.for_agreement(old_slot, created)).issue is None
+
+
+def test_new_agreement_form_checks_the_name_live(draft, settings, monkeypatch):
+    """The form carries the names already taken and the hint the script fills in, so a bad
+    name is explained as it is typed rather than after the submit."""
+    (settings.agreements_dir / "_archive").mkdir(exist_ok=True)
+    assert pv.taken_names(settings) == ["_archive", "builder-test", "plan"]
+    _web, client = client_for(monkeypatch, settings)
+    page = client.get("/agreements/new").text
+    assert 'id="plan_id-hint"' in page
+    assert 'pattern="[A-Za-z0-9][A-Za-z0-9_\\-]{0,127}"' in page
+    assert 'var taken = ["_archive", "builder-test", "plan"]' in page
+    refused = client.post("/agreements/new", data={"plan_id": "_x", "problem": "q"})
+    assert "starting with a letter or digit" in refused.text
+    assert 'value="_x"' in refused.text  # the typed name stays, and the script explains it

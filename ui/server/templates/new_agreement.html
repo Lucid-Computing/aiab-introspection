@@ -7,7 +7,10 @@
 <p class="lead">Name it and state the question. The plan itself is built on the next screen: a graph of the logs, Python steps, model steps, a classifier and the report.</p>
 <form method="post" action="/agreements/new" class="card" data-confirm="Create this agreement?">
   <div class="card-body stack">
-    <div class="field"><label for="plan_id">Name</label><input id="plan_id" name="plan_id" value="{{ form.plan_id or '' }}" placeholder="destructive-commands-2" required></div>
+    <div class="field"><label for="plan_id">Name</label>
+      <input id="plan_id" name="plan_id" value="{{ form.plan_id or '' }}" placeholder="destructive-commands-2" required autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,127}" aria-describedby="plan_id-hint">
+      <p id="plan_id-hint" class="field-hint" aria-live="polite">Letters, digits, _ and -, up to 128 characters. It becomes the address /a/&lt;name&gt;/plan.</p>
+    </div>
     <div class="field"><label>Start from</label>
       <label class="choice"><input type="radio" name="source" value="template" checked> a minimal plan: the logs, one classifier asking your question, a report releasing whether any session was flagged</label>
       {% if view and not view.issue %}<label class="choice"><input type="radio" name="source" value="copy"> a copy of {{ view.plan_id }}, the deployed plan</label>{% endif %}
@@ -21,4 +24,35 @@
     {% else %}<p class="text-muted">AI creation is unavailable: this server has no Anthropic key configured. You can still create a draft manually.</p>{% endif %}
   </div>
 </form>
+<script>
+  // The name is checked as it is typed, with the same rule the server applies, so the
+  // reason appears under the field instead of after a round trip. An invalid name also
+  // blocks the submit (setCustomValidity).
+  (function () {
+    var input = document.getElementById("plan_id"), hint = document.getElementById("plan_id-hint");
+    if (!input || !hint) return;
+    var taken = {{ taken | tojson }}, neutral = hint.textContent;
+    function problem(name) {
+      if (!name) return "";
+      var bad = name.replace(/[A-Za-z0-9_-]/g, "");
+      if (bad) {
+        var shown = Array.from(new Set(bad.split(""))).map(function (c) { return c === " " ? "space" : "\u201c" + c + "\u201d"; });
+        return "Not allowed: " + shown.join(", ") + ". Use letters, digits, _ and -.";
+      }
+      if (!/^[A-Za-z0-9]/.test(name)) return "Must start with a letter or digit, not " + name[0] + ".";
+      if (name.length > 128) return "Too long: 128 characters at most, this is " + name.length + ".";
+      if (taken.indexOf(name) !== -1) return "An agreement called " + name + " already exists.";
+      return "";
+    }
+    function check() {
+      var name = input.value, why = problem(name);
+      input.setCustomValidity(why);
+      hint.textContent = why || (name ? "Available. Its page will be /a/" + name + "/plan." : neutral);
+      hint.classList.toggle("field-hint--error", !!why);
+      input.classList.toggle("is-invalid", !!why);
+    }
+    input.addEventListener("input", check);
+    check();
+  })();
+</script>
 {% endblock %}
