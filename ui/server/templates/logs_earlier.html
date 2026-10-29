@@ -1,0 +1,3 @@
+{# The messages before the last few of one call, fetched when the Logs page opens them. #}
+{% from "_logmsgs.html" import message %}
+{% for m in messages %}{{ message(m) }}{% endfor %}

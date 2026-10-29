@@ -166,3 +166,38 @@ def test_box_records_from_the_index_match_the_full_parse(tmp_path):
     light = P.load_index(_settings(tmp_path))
     full = [P.parse_request(e) for e in expected]
     assert P.to_box_records(light) == P.to_box_records(full)
+
+
+def test_logs_page_pages_sessions_and_loads_earlier_messages_on_demand(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+
+    from server import app as web
+    from server.auth import Account
+    from server.config import load_settings
+
+    long_talk = [{"role": "user", "content": f"turn {i}"} for i in range(10)]
+    lines = []
+    for i in range(web.LOGS_PAGE_SIZE + 5):  # one session each, newest last
+        talk = long_talk if i == 0 else [{"role": "user", "content": f"s{i}"}]
+        e = entry(talk, "{}", when=float(i))
+        e["request_headers"] = {"x-claude-code-session-id": f"s{i}"}
+        lines.append(json.dumps(e) + "\n")
+    (tmp_path / "live.jsonl").write_text("".join(lines))
+    monkeypatch.setattr(web, "settings", replace(load_settings(), logs_dir=tmp_path))
+    client = TestClient(web.app)
+    client.cookies.set(web.COOKIE, web.signer.issue(Account("lab", "lab", "Lab", "unused")))
+
+    first = client.get("/logs").text
+    assert "page 1 of 2" in first and "older →" in first
+    assert first.count('class="logs-item') == web.LOGS_PAGE_SIZE
+    second = client.get("/logs?page=2").text
+    assert second.count('class="logs-item') == 5 and "← newer" in second
+
+    oldest = client.get("/logs?page=2&session=s0").text
+    assert 'data-src="/logs/earlier/0.0"' in oldest
+    shown = '<pre class="msg-text msg-text--user">turn {}</pre>'.format
+    assert shown(0) not in oldest and shown(9) in oldest  # the folded part is not sent
+    earlier = client.get("/logs/earlier/0.0").text
+    assert shown(0) in earlier and shown(3) in earlier and shown(4) not in earlier
