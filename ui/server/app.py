@@ -15,7 +15,7 @@ from typing import Annotated, Any
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
@@ -369,6 +369,30 @@ async def how(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     return render(request, "how.html", stages=STAGES, after=AFTER_SIGNING)
+
+
+# The audit plan playground (ui/playground): a standalone prototype, served from its build
+# output when `pnpm build` has been run there. Static: it reads no agreement and calls no
+# endpoint; plans live in the browser.
+PLAYGROUND_DIR = UI_ROOT / "playground" / "dist"
+
+
+@app.get("/audit-plan-playground")
+@app.get("/audit-plan-playground/{path:path}")
+async def playground(request: Request, path: str = "") -> Response:
+    if user_of(request) is None:
+        return to_login(request)
+    root = PLAYGROUND_DIR.resolve()
+    if not (root / "index.html").is_file():
+        return Response(
+            "The playground is not built: run `pnpm install && pnpm build` in ui/playground.",
+            status_code=404,
+            media_type="text/plain",
+        )
+    target = (root / (path or "index.html")).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        return Response(status_code=404)
+    return FileResponse(target)
 
 
 @app.get("/logs")

@@ -56,6 +56,14 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | [`tools/proxy_to_records.py`](tools/proxy_to_records.py) | Convert a test-proxy log segment into box records (plan transcripts). |
 | [`assets/`](assets/) | `swiss.css` vendored from lucidcomputing.ai; `aiab.css` adds the few things this UI needs. |
 
+## Audit plan playground (prototype)
+
+`playground/` is a standalone React app for trying out a graph-and-YAML audit plan editor
+(five block types, a Plan IR, simulated preview). It is separate from the agreement flow:
+it reads no agreement and calls no endpoint. `pnpm install && pnpm dev` in `playground/`
+runs it on its own; after `pnpm build` this server serves it at `/audit-plan-playground/`
+behind the login. It is not in the Docker image. See [playground/README.md](playground/README.md).
+
 ## Agreements and the deployed plan
 
 Agreements are folders under `agreements/<name>/`, each with the same layout as `plan/` plus `history.jsonl`, a log of who changed what (outside the digest), and its own `signatures/`. They are the only thing people edit, sign, deploy and delete, and they stay on the UI server's disk (git-ignored). `plan/` is the deployed plan: read only in the UI, shown in its own block on the Agreements page, and changed only by a merged plan pull request followed by a pull of the checkout. "New agreement" creates a folder from the minimal template or as a copy of the deployed plan. "Deploy" builds a branch holding only that agreement's files as `plan/`, pushes it and opens the pull request; the signature check merges it and the release follows, and the page follows each step. One deployment at a time: Deploy is off for everyone while one is in flight. `AIAB_AGREEMENTS_DIR` moves the folder (default `../agreements`).

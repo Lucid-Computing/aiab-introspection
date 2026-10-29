@@ -6,6 +6,8 @@
 ui/.venv
 ui/runs
 ui/accounts.json
+# The plan playground prototype is not part of the deployed UI.
+ui/playground
 !static/
 static/**
 !static/pyproject.toml
