@@ -10,7 +10,7 @@
   "containers": [
     {
       "name": "aiab",
-      "image": "ghcr.io/lucid-computing/aiab-introspection-enclave@sha256:7c2aab0f23f03b3e518a41621de7442cd0640c6c645b3f515d3e8a9b6070b137",
+      "image": "ghcr.io/lucid-computing/aiab-introspection-enclave-staging@sha256:7c2aab0f23f03b3e518a41621de7442cd0640c6c645b3f515d3e8a9b6070b137",
       "command": [
         "python",
         "-m",
@@ -41,7 +41,7 @@
           "XDG_DATA_HOME": "/tmp/aiab-data"
         },
         {
-          "AIAB_RELEASE_TAG": "v0.2.19"
+          "AIAB_RELEASE_TAG": "v0.0.1"
         }
       ],
       "secrets": [
