@@ -1,9 +1,8 @@
 # Manual publication only; keep this workflow in the PRIVATE source repository.
 name: Build reviewed enclave image
+# Started only by release.py (release.yml) on an environment branch, production or staging,
+# with the environment's image name. No push trigger: a push to master builds nothing.
 on:
-  push:
-    branches: [master]   # production is built by release.yml through release.py
-    paths: ['plan/**', 'static/**', '.dockerignore', '.github/workflows/build-image.yml']
   workflow_dispatch:
     inputs:
       image:

@@ -1,13 +1,15 @@
-# Put what is on production live: run the release procedure (static/deploy/tinfoil/audit/release.py)
-# from CI instead of an operator's laptop. Started by a merge into production, then:
-# build-image.yml on the production branch, measured config pushed to the public config repo,
-# Tinfoil told to run the new tag, the live box asked for its identity and health, and the
-# new release pins committed back to production so the UI and clients know what runs.
+# Put what is on an environment branch (production, staging) live: run the release procedure
+# (static/deploy/tinfoil/audit/release.py) from CI instead of an operator's laptop. Started by
+# a merge into the branch, then: build-image.yml on that branch, measured config pushed to the
+# environment's public config repo (the "repo" in its release.json), Tinfoil told to run the
+# new tag on the environment's instance (the "instance" in release.json), the live box asked
+# for its identity and health, and the new release pins committed back to the same branch so
+# the UI and clients know what runs.
 #
-# Repository secrets:
+# Repository secrets, shared by both branches (the staging box is given the same lab token):
 #   TINFOIL_API_KEY    Lucid's Tinfoil control-plane key (what ~/.tinfoil/config.json holds)
 #   RELEASE_GH_TOKEN   a token that may run workflows and download runs in this repository and
-#                      push commits/tags and download releases in the public config repository
+#                      push commits/tags and download releases in both public config repositories
 #   AUDIT_LAB_TOKEN    the lab API token, for the live verification step
 #   AUDIT_LOGGER_KEY   the demo logger private key (no longer used by the release; kept for now)
 name: Release to the live box
@@ -23,7 +25,7 @@ on:
         required: false
         type: boolean
         default: false
-  # A push to production starts the release whenever it changes anything that goes into the
+  # A push to production or staging starts the release whenever it changes anything that goes into the
   # box image: the plan, the static part (code, trust keys, dependencies, the Dockerfile and
   # release tooling) or the build's ignore file. Merges made by approve-plan.yml and
   # approve-keys.yml do not count as pushes here (GitHub's rule for the workflow token), so
@@ -31,10 +33,10 @@ on:
   # never reach the box, so they do not release. The pins commit below says [skip ci], so it
   # does not start another one. The Actions tab button remains for re-runs and dry runs.
   push:
-    branches: [production]
+    branches: [production, staging]
     paths: ['plan/**', 'static/**', '.dockerignore']
 concurrency:
-  group: audit-release
+  group: audit-release-${{ github.ref_name }}
   cancel-in-progress: false
 permissions:
   contents: write
@@ -44,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          ref: production
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
@@ -62,14 +64,14 @@ jobs:
           printf '{"controlplane_url":"https://api.tinfoil.sh","api_key":"%s"}\n' "$TINFOIL_API_KEY" > ~/.tinfoil/config.json
           printf '%s\n' "$AUDIT_LAB_TOKEN" > "$RUNNER_TEMP/keys/lab.token"
           printf '%s\n' "$AUDIT_LOGGER_KEY" > "$RUNNER_TEMP/keys/logger.key"
-      - name: The plan on production must be signed with the keys production trusts
+      - name: The plan on this branch must be signed with the keys the branch trusts
         working-directory: static
         run: |
           # The box verifies these signatures at start-up with the same trust entry. If they
           # do not match, a release would leave the box unable to start, so stop here.
           uv sync --locked
           uv run --locked python -m auditor.baked --folder ../plan --trust aiab/baked/trust.json verify \
-            || { echo "::error::plan/ on production is not signed by the keys in static/aiab/baked/trust.json. Sign the plan with the trusted keys and deploy it; that deploy releases both together."; exit 1; }
+            || { echo "::error::plan/ on ${{ github.ref_name }} is not signed by the keys in static/aiab/baked/trust.json. Sign the plan with the trusted keys and deploy it; that deploy releases both together."; exit 1; }
       - name: Choose the tag
         id: tag
         env:
@@ -107,9 +109,9 @@ jobs:
           EXECUTE=--execute
           if [ "${{ inputs.dry_run }}" = "true" ]; then EXECUTE=""; echo "Dry run: planning only" >> "$GITHUB_STEP_SUMMARY"; fi
           uv run --locked python deploy/tinfoil/audit/release.py \
-            $EXECUTE --source-ref production --tag "${{ steps.tag.outputs.tag }}" \
+            $EXECUTE --source-ref "${{ github.ref_name }}" --tag "${{ steps.tag.outputs.tag }}" \
             --key-directory "$RUNNER_TEMP/keys" --output "$RUNNER_TEMP/release-out"
-      - name: Commit the new release pins to production
+      - name: Commit the new release pins to the branch
         # Runs even when the health check after the deploy failed: release.py writes
         # release.json only once the box has been redeployed, so if that file exists the live
         # box changed and the repository records it. The UI and the clients read these pins
@@ -134,7 +136,7 @@ jobs:
             static/deploy/tinfoil/audit/manifest.json \
             static/deploy/tinfoil/audit/policy-digest.txt
           git commit -m "Release ${{ steps.tag.outputs.tag }}: update pins [skip ci]"
-          git push origin HEAD:production
+          git push origin "HEAD:${{ github.ref_name }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()   # on failure the journal holds the reason
         with:
