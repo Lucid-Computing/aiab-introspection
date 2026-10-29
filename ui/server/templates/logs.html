@@ -15,7 +15,7 @@
   <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><button class="btn btn--ghost" {% if not settings.proxy_key %}disabled{% endif %}>Refresh</button></form>
 </div>
 <p class="logs-status">{{ total_requests }} requests on disk ·
-    {% if not settings.proxy_key %}no proxy key configured (<span class="mono">AIAB_PROXY_KEY</span>), nothing is fetched
+    {% if not settings.proxy_key %}no proxy key configured (<span class="mono">AIAB_LOG_KEY</span> or <span class="mono">AIAB_PROXY_KEY</span>), nothing is fetched
     {% elif fetch.running %}fetching now
     {% elif fetch.error %}last fetch failed: {{ fetch.error }}
     {% elif fetch.ago is not none %}fetched {% if fetch.ago < 5 %}just now{% else %}{{ fetch.ago }} s ago{% endif %}, again every {{ fetch.every }} s in the background
