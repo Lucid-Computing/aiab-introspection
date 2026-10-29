@@ -22,7 +22,7 @@ Deploy pushes: it copies the agreement into `plan/`, makes a branch from the dep
 
 ## Logs: what the logging proxy recorded
 
-The Logs screen shows every call that went through the logging proxy, grouped into sessions, one request's full transcript at a time (system prompt, tools and system reminders folded). It needs the proxy's shared key in `AIAB_PROXY_KEY` (locally in `ui/.env`, git-ignored; on Render an environment variable) and `AIAB_PROXY_URL` (default the test proxy). Segments are downloaded into `AIAB_LOGS_DIR` (default `ui/logs/`, git-ignored; on Render `/data/logs` on the disk, so they survive redeploys), checked against the sha256 the proxy lists, and never deleted. A background thread fetches new segments every minute from the moment the server starts; Refresh fetches at once.
+The Logs screen shows every call that went through the logging proxy, grouped into sessions, one request's full transcript at a time (system prompt, tools and system reminders folded). For production it needs the reader key in `AIAB_LOG_KEY` (`LOG_READER_KEY` from the `logging-proxy-production-logs` item in 1Password; sent as `x-log-key`; the URL defaults to `https://llm-proxy.lucidcompute.com` and segments go in a `prod/` subfolder of `AIAB_LOGS_DIR`). For the test proxy it needs the shared key in `AIAB_PROXY_KEY` instead (sent as `x-proxy-key`). Either goes locally in `ui/.env`, git-ignored, and on Render in an environment variable; `AIAB_LOG_KEY` wins if both are set. `AIAB_PROXY_URL` overrides the address. Segments are downloaded into `AIAB_LOGS_DIR` (default `ui/logs/`, git-ignored; on Render `/data/logs` on the disk, so they survive redeploys), checked against the sha256 the proxy lists, and never deleted. A background thread fetches new segments every minute from the moment the server starts; Refresh fetches at once.
 
 ## Runs: the deployed plan against the live box
 
@@ -123,7 +123,8 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
    - `GITHUB_TOKEN`: a GitHub token that can push branches and open pull requests on this repository (fine-grained token with Contents and Pull requests read/write, or a bot account's token). Deploy pushes with it.
    - `UI_BOOTSTRAP_ACCOUNTS`: the UI logins to create on first boot, `teddy:lab:<password>,caleb:auditor:<password>`. Remove the variable afterwards.
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
-   - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the logging proxy's shared key from 1Password.
+   - `AIAB_LOG_KEY`: optional, only for the Logs screen; production's log reader key from 1Password.
+   - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Ignored when `AIAB_LOG_KEY` is set.
 3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo`, creates the accounts, and copies the box's trust file to `/data/trust.json`.
 4. Open the service URL, log in, and submit each party's public key on a Sign screen, as locally.
 

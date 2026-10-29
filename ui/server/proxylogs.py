@@ -1,7 +1,8 @@
 """The logging proxy's recorded traffic, for the Logs page and the run input picker.
 
 The proxy (Alex's, in a confidential VM) keeps every request and reply that went through
-it and offers a small download API behind the shared "tester" key:
+it and offers a small download API. The test proxy takes its shared "tester" key as
+x-proxy-key; production takes its reader key as x-log-key and refuses x-proxy-key:
 
     GET /_logs            listing: sealed segments (name, sha256, first, last, bytes) + live
     GET /_logs/<name>     one sealed segment: zstd-compressed JSON lines, one request each
@@ -43,15 +44,15 @@ class ProxyError(RuntimeError):
 
 def _get(settings: Settings, path: str) -> tuple[bytes, dict[str, str]]:
     if not settings.proxy_key:
-        raise ProxyError("no proxy key configured (AIAB_PROXY_KEY)")
+        raise ProxyError("no proxy key configured (AIAB_LOG_KEY or AIAB_PROXY_KEY)")
     request = urllib.request.Request(
-        settings.proxy_url + path, headers={"x-proxy-key": settings.proxy_key}
+        settings.proxy_url + path, headers={settings.proxy_header: settings.proxy_key}
     )
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             return response.read(), {k.lower(): v for k, v in response.headers.items()}
     except urllib.error.HTTPError as error:
-        if error.code == 401:
+        if error.code in (401, 403):
             raise ProxyError("the proxy refused the key; it may have changed") from None
         raise ProxyError(f"the proxy answered HTTP {error.code} for {path}") from None
     except (urllib.error.URLError, TimeoutError) as error:
