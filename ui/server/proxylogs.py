@@ -9,22 +9,30 @@ x-proxy-key; production takes its reader key as x-log-key and refuses x-proxy-ke
     GET /_logs/live       the requests not sealed yet, plain JSON lines
 
 Segments are saved under ``settings.logs_dir`` byte for byte and checked against the
-sha256 the proxy lists; the live part is replaced on every sync. A background thread
-syncs every minute once the server is up (``start_prefetch``), so the page never waits
-for the proxy. Everything below that reads records is tolerant: a record that does not
-parse is shown raw, never dropped.
+sha256 the proxy lists; the live part is replaced on every sync. Downloads stream to disk:
+production's live part alone is hundreds of megabytes. A background thread syncs every
+minute once the server is up (``start_prefetch``) and re-indexes after each sync, so the
+page never waits for the proxy.
+
+The pages work from a light index (``load_index``): one ``Request`` per call with the
+listing fields, the message count, the first user text, the parts a run sends to the box,
+and where the line sits on disk, but no conversation. A call's full conversation is parsed
+only when it is opened (``load_full``). Holding every parsed call in memory took about
+1 GB for 344 production calls; the service has 512 MB. Everything below that reads
+records is tolerant: a record that does not parse is shown raw, never dropped.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -52,11 +60,42 @@ def _get(settings: Settings, path: str) -> tuple[bytes, dict[str, str]]:
         with urllib.request.urlopen(request, timeout=60) as response:
             return response.read(), {k.lower(): v for k, v in response.headers.items()}
     except urllib.error.HTTPError as error:
-        if error.code in (401, 403):
-            raise ProxyError("the proxy refused the key; it may have changed") from None
-        raise ProxyError(f"the proxy answered HTTP {error.code} for {path}") from None
+        raise _http_error(error, path) from None
     except (urllib.error.URLError, TimeoutError) as error:
         raise ProxyError(f"the proxy is not answering: {error}") from None
+
+
+def _download(settings: Settings, path: str, target: Path) -> tuple[str, int, dict[str, str]]:
+    """Stream one download to ``target`` (through a .part file, renamed when complete).
+    Returns (sha256, newline count, headers)."""
+    if not settings.proxy_key:
+        raise ProxyError("no proxy key configured (AIAB_LOG_KEY or AIAB_PROXY_KEY)")
+    request = urllib.request.Request(
+        settings.proxy_url + path, headers={settings.proxy_header: settings.proxy_key}
+    )
+    part = target.with_name(target.name + ".part")
+    digest, lines = hashlib.sha256(), 0
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, part.open("wb") as out:
+            headers = {k.lower(): v for k, v in response.headers.items()}
+            while chunk := response.read(1 << 20):
+                digest.update(chunk)
+                lines += chunk.count(b"\n")
+                out.write(chunk)
+        os.replace(part, target)
+    except urllib.error.HTTPError as error:
+        raise _http_error(error, path) from None
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise ProxyError(f"the proxy is not answering: {error}") from None
+    finally:
+        part.unlink(missing_ok=True)
+    return digest.hexdigest(), lines, headers
+
+
+def _http_error(error: urllib.error.HTTPError, path: str) -> ProxyError:
+    if error.code in (401, 403):
+        return ProxyError("the proxy refused the key; it may have changed")
+    return ProxyError(f"the proxy answered HTTP {error.code} for {path}")
 
 
 def sync(settings: Settings) -> dict:
@@ -76,24 +115,27 @@ def sync(settings: Settings) -> dict:
         target = out / name
         if target.exists() and _sha256(target) == seg["sha256"]:
             continue
-        raw, _ = _get(settings, f"/_logs/{name}")
-        if hashlib.sha256(raw).hexdigest() != seg["sha256"]:
+        sha, _, _ = _download(settings, f"/_logs/{name}", target)
+        if sha != seg["sha256"]:
+            target.unlink()
             raise ProxyError(f"{name}: downloaded bytes do not match the listed sha256")
-        target.write_bytes(raw)
         new += 1
-    live, headers = _get(settings, "/_logs/live")
-    (out / "live.jsonl").write_bytes(live)
+    _, live_entries, headers = _download(settings, "/_logs/live", out / "live.jsonl")
     (out / "listing.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
     return {
         "new": new,
         "segments": len(listing.get("segments", [])),
-        "live_entries": live.count(b"\n"),
+        "live_entries": live_entries,
         "live_first": headers.get("x-first-seq"),
     }
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _decompress(raw: bytes) -> bytes:
@@ -123,7 +165,8 @@ def sync_now(settings: Settings) -> dict:
             _state.update(error=str(exc), running=False)
             raise
         _state.update(at=time.time(), error=None, result=result, running=False)
-        return result
+    load_index(settings)  # re-index now, so the next page load finds it ready
+    return result
 
 
 def start_prefetch(settings: Settings, every: int = PREFETCH_SECONDS) -> None:
@@ -171,6 +214,11 @@ class Request:
     stop_reason: str | None
     size: int  # bytes of the request body
     raw: dict = field(repr=False)
+    message_count: int = 0
+    first_user_text: str = ""  # the first user message with text, for the session title
+    parts: list[tuple[str, str]] | None = None  # call_parts, kept by the light index
+    source: str = ""  # the file the line is in, and where: set by the light index
+    offset: int = -1
 
     @property
     def when(self) -> str:
@@ -206,11 +254,10 @@ class Session:
     def title(self) -> str:
         """The first thing the person said, taken from the fullest request: side requests
         (a quota check, a title request) share the session id but are not the conversation."""
-        fullest = max(self.requests, key=lambda r: (len(r.messages), r.time))
+        fullest = max(self.requests, key=lambda r: (r.message_count, r.time))
         for r in [fullest, *self.requests]:
-            for m in r.messages:
-                if m["role"] == "user" and m["text"]:
-                    return _one_line(m["text"], 80)
+            if r.first_user_text:
+                return _one_line(r.first_user_text, 80)
         return "(no user text)"
 
     @property
@@ -226,34 +273,108 @@ class Session:
         return next((r.model for r in self.requests if r.model), "") or ""
 
 
-_cache: tuple[tuple, list[dict]] | None = None
+_index_lock = threading.Lock()
+_index: dict = {"stamp": None, "requests": [], "by_line": {}}
 
 
-def load_records(settings: Settings) -> list[dict]:
-    """Every recorded request on disk, oldest first, one dict per request, de-duplicated."""
-    global _cache
+def _paths(settings: Settings) -> list[Path]:
     out = settings.logs_dir
     if not out.is_dir():
         return []
-    paths = [p for p in sorted(out.glob("*.jsonl.zst")) + [out / "live.jsonl"] if p.is_file()]
-    stamp = tuple((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
-    if _cache and _cache[0] == stamp:
-        return _cache[1]
-    seen: dict[str, dict] = {}
-    for path in paths:
-        data = _decompress(path.read_bytes()) if path.suffix == ".zst" else path.read_bytes()
-        for line in data.splitlines():
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            entry["_source"] = path.name
-            seen[str(entry.get("id") or len(seen))] = entry
-    records = sorted(seen.values(), key=lambda e: e.get("time", 0))
-    _cache = (stamp, records)
-    return records
+    return [p for p in sorted(out.glob("*.jsonl.zst")) + [out / "live.jsonl"] if p.is_file()]
+
+
+def _lines(path: Path):
+    """(offset, line) for every line of a log file; offsets into the decompressed text."""
+    if path.suffix == ".zst":
+        data = _decompress(path.read_bytes())  # a sealed segment is about 1 MB
+        offset = 0
+        for line in data.splitlines(keepends=True):
+            yield offset, line
+            offset += len(line)
+        return
+    with path.open("rb") as f:
+        offset = 0
+        for line in f:
+            yield offset, line
+            offset += len(line)
+
+
+def _read_line(settings: Settings, source: str, offset: int) -> bytes:
+    path = settings.logs_dir / source
+    if path.suffix == ".zst":
+        data = _decompress(path.read_bytes())
+        end = data.find(b"\n", offset)
+        return data[offset : end if end >= 0 else len(data)]
+    with path.open("rb") as f:
+        f.seek(offset)
+        return f.readline()
+
+
+def load_index(settings: Settings) -> list[Request]:
+    """Every recorded call on disk as a light Request, oldest first, de-duplicated by id
+    (a later file wins). Rebuilt when a file changes; a line already indexed is not parsed
+    again, since the live part is re-downloaded whole every minute."""
+    with _index_lock:
+        paths = _paths(settings)
+        stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
+        if _index["stamp"] == stamp:
+            return _index["requests"]
+        known, by_line = _index["by_line"], {}
+        seen: dict[str, Request] = {}
+        for path in paths:
+            for offset, line in _lines(path):
+                if not line.strip():
+                    continue
+                key = hashlib.blake2b(line, digest_size=16).digest()
+                light = known.get(key) or by_line.get(key)
+                if light is None:
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    light = _light(parse_request(entry))
+                by_line[key] = light
+                light = replace(light, source=path.name, offset=offset)
+                seen[light.id or f"{path.name}:{offset}"] = light
+        requests = sorted(seen.values(), key=lambda r: r.time)
+        _index.update(stamp=stamp, requests=requests, by_line=by_line)
+        return requests
+
+
+def _light(r: Request) -> Request:
+    """The index's copy of a call: what the listings and runs use, without the conversation."""
+    return replace(
+        r,
+        system_text="",
+        tool_names=[],
+        messages=[],
+        response_blocks=[],
+        raw={},
+        parts=call_parts(r),
+    )
+
+
+def load_full(settings: Settings, light: Request) -> Request:
+    """The call with its whole conversation, parsed from its line on disk."""
+    if light.offset < 0:
+        return light
+    entry = raw_entry(settings, light)
+    if entry is None:
+        return light
+    full = parse_request(entry)
+    full.session_id = light.session_id
+    return full
+
+
+def raw_entry(settings: Settings, light: Request) -> dict | None:
+    """The call as the proxy recorded it, with ``_source`` naming its file."""
+    try:
+        entry = json.loads(_read_line(settings, light.source, light.offset))
+    except (OSError, ValueError):
+        return None
+    entry["_source"] = light.source
+    return entry
 
 
 def parse_request(entry: dict) -> Request:
@@ -279,6 +400,7 @@ def parse_request(entry: dict) -> Request:
         if not session:
             session = _session_from_metadata(body.get("metadata"))
     response_blocks, stop = _response_blocks(reply)
+    first_user = next((m["text"] for m in messages if m["role"] == "user" and m["text"]), "")
     raw_req = entry.get("request_raw") or {}
     size = (
         len(raw_req.get("text") or raw_req.get("base64") or "") if isinstance(raw_req, dict) else 0
@@ -298,16 +420,18 @@ def parse_request(entry: dict) -> Request:
         stop_reason=stop,
         size=size,
         raw=entry,
+        message_count=len(messages),
+        first_user_text=first_user[:500],
     )
 
 
-def sessions(records: list[dict]) -> list[Session]:
+def sessions(requests: list[Request]) -> list[Session]:
     """Group requests into sessions: by the Claude Code session id when present, otherwise
-    by who sent them and a 30-minute gap. Newest session first."""
-    parsed = [parse_request(e) for e in records]
+    by who sent them and a 30-minute gap. Newest session first. The requests are copied, not
+    changed, so the shared index keeps the session ids as recorded."""
     groups: dict[str, list[Request]] = {}
     last_by_who: dict[str, tuple[str, float]] = {}
-    for r in parsed:
+    for r in sorted(requests, key=lambda x: x.time):
         key = r.session_id
         if not key:
             prev = last_by_who.get(r.who)
@@ -316,8 +440,7 @@ def sessions(records: list[dict]) -> list[Session]:
             else:
                 key = f"{r.who}-{int(r.time)}"
             last_by_who[r.who] = (key, r.time)
-        r.session_id = key
-        groups.setdefault(key, []).append(r)
+        groups.setdefault(key, []).append(replace(r, session_id=key))
     result = [Session(id=k, who=v[0].who, requests=v) for k, v in groups.items()]
     result.sort(key=lambda s: s.requests[-1].time, reverse=True)
     return result
@@ -343,6 +466,8 @@ def call_parts(r: Request) -> list[tuple[str, str]]:
     tool results it carries), then the model's answer (its text and the tool calls it
     makes). Earlier turns went to the box with their own calls, so they are not repeated;
     empty parts, harness reminders and API errors are left out."""
+    if r.parts is not None:
+        return r.parts
     parts: list[tuple[str, str]] = []
     newest = next((m for m in reversed(r.messages) if m["role"] == "user"), None)
     text: list[str] = []
