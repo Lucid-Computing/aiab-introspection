@@ -97,6 +97,27 @@ def render(config, trust, build, release_tag):
     return config, trust, manifest
 
 
+PRODUCTION_REPO = "Lucid-Computing/aiab-signed-audit-enclave"
+PRODUCTION_INSTANCE = "28c10708-7f8b-4981-8280-dca928a2654b"
+PRODUCTION_IMAGE = "ghcr.io/lucid-computing/aiab-introspection-enclave"
+
+
+def environment(prior, instance=None):
+    """What differs between environments (production, staging), read from the branch's
+    release.json: the Tinfoil instance to update and the image name. ``instance`` is None for
+    an environment whose first measured release has not yet been used to create one; the
+    release then stops after measuring. Production's release.json predates both fields, so
+    its values are the literals."""
+    legacy = prior.get("repo") == PRODUCTION_REPO
+    instance = instance or prior.get("instance") or (PRODUCTION_INSTANCE if legacy else None)
+    if instance is not None and not re.fullmatch(r"[0-9a-f-]{36}", instance):
+        raise ValueError("Invalid instance ID")
+    image = prior.get("image") or (PRODUCTION_IMAGE if legacy else None)
+    if not image or not re.fullmatch(r"ghcr.io/[a-z0-9-]+/[a-z0-9._-]+", image):
+        raise ValueError("release.json needs the environment's image name")
+    return instance, image
+
+
 class ControlPlane:
     def __init__(self, path):
         settings = json.loads(path.read_text())
@@ -160,16 +181,13 @@ def main():
     baseline = Path(__file__).parent
     source_repo = "Lucid-Computing/aiab-introspection"
     # Everything that differs between environments (production, staging) is in release.json
-    # on the environment's branch: the public config repo, the Tinfoil instance and the image
-    # name. The literals are the production values from before those fields existed.
+    # on the environment's branch: the public config repo, the Tinfoil instance and the image.
     prior = json.loads((baseline / "release.json").read_text())
     repo = prior["repo"]
-    args.instance = args.instance or prior.get("instance") or "28c10708-7f8b-4981-8280-dca928a2654b"
-    if not re.fullmatch(r"[0-9a-f-]{36}", args.instance):
-        parser.error("Invalid instance ID")
-    image = prior.get("image") or "ghcr.io/lucid-computing/aiab-introspection-enclave"
-    if not re.fullmatch(r"ghcr.io/[a-z0-9-]+/[a-z0-9._-]+", image):
-        raise RuntimeError("Invalid image name in release.json")
+    try:
+        instance, image = environment(prior, args.instance)
+    except ValueError as exc:
+        parser.error(str(exc))
     sha = command("git", "rev-parse", "HEAD", cwd=root)
     if command("git", "status", "--porcelain", cwd=root):
         raise RuntimeError("Commit local changes before planning a release")
@@ -184,7 +202,7 @@ def main():
         "schema": "aiab-release-attempt/v1",
         "source_commit": sha,
         "tag": args.tag,
-        "instance": args.instance,
+        "instance": instance,
         "previous_release": prior,
         "status": "planned",
     }
@@ -279,7 +297,7 @@ def main():
             raise RuntimeError("Invalid release measurement")
         release = {
             **prior,
-            "instance": args.instance,
+            **({"instance": instance} if instance else {}),
             "image": image,
             "tag": args.tag,
             "reviewed_config_commit": config_sha,
@@ -293,13 +311,27 @@ def main():
             ),
         }
         (args.output / "release.json").write_bytes(canonical(release) + b"\n")
+        if instance is None:
+            # A new environment: nothing runs this config yet. The measured release is what
+            # the instance gets created from (Tinfoil dashboard or CLI, once the project
+            # secrets exist); its id and hostname then go into release.json as "instance" and
+            # "host", and the next release deploys to it.
+            record(
+                "measured",
+                status="succeeded",
+                next_step="create the instance from release "
+                + args.tag
+                + ", then record its id and hostname in release.json",
+            )
+            print("No instance in release.json: measured only, nothing deployed.", flush=True)
+            return
         record("deploying", target_release=release)
         cp.request(
-            "POST", "/api/containers/" + args.instance + "/update", {"tag": args.tag, "hold": False}
+            "POST", "/api/containers/" + instance + "/update", {"tag": args.tag, "hold": False}
         )
         deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
-            live = cp.request("GET", "/api/containers/" + args.instance)
+            live = cp.request("GET", "/api/containers/" + instance)
             if live.get("current_tag") == args.tag and live.get("status") == "running":
                 break
             if live.get("update_status") == "failed" or live.get("status") == "failed":

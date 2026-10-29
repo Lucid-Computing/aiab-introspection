@@ -22,7 +22,7 @@ Deploy pushes: it copies the agreement into `plan/`, makes a branch from the dep
 
 ## Logs: what the logging proxy recorded
 
-The Logs screen shows every call that went through the logging proxy, grouped into sessions, one request's full transcript at a time (system prompt, tools and system reminders folded). It needs the proxy's shared key in `AIAB_PROXY_KEY` (locally in `ui/.env`, git-ignored; on Render an environment variable) and `AIAB_PROXY_URL` (default the test proxy). Segments are downloaded into `AIAB_LOGS_DIR` (default `ui/logs/`, git-ignored; on Render `/data/logs` on the disk, so they survive redeploys), checked against the sha256 the proxy lists, and never deleted. A background thread fetches new segments every minute from the moment the server starts; Refresh fetches at once.
+The Logs screen shows every call that went through the logging proxy, grouped into sessions, one request's full transcript at a time (system prompt, tools and system reminders folded). For production it needs the reader key in `AIAB_LOG_KEY` (`LOG_READER_KEY` from the `logging-proxy-production-logs` item in 1Password; sent as `x-log-key`; the URL defaults to `https://llm-proxy.lucidcompute.com` and segments go in a `prod/` subfolder of `AIAB_LOGS_DIR`). For the test proxy it needs the shared key in `AIAB_PROXY_KEY` instead (sent as `x-proxy-key`). Either goes locally in `ui/.env`, git-ignored, and on Render in an environment variable; `AIAB_LOG_KEY` wins if both are set. `AIAB_PROXY_URL` overrides the address. Segments are downloaded into `AIAB_LOGS_DIR` (default `ui/logs/`, git-ignored; on Render `/data/logs` on the disk, so they survive redeploys), checked against the sha256 the proxy lists, and never deleted. A background thread fetches new segments every minute from the moment the server starts; Refresh fetches at once.
 
 ## Runs: the deployed plan against the live box
 
@@ -123,7 +123,8 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
    - `GITHUB_TOKEN`: a GitHub token that can push branches and open pull requests on this repository (fine-grained token with Contents and Pull requests read/write, or a bot account's token). Deploy pushes with it.
    - `UI_BOOTSTRAP_ACCOUNTS`: the UI logins to create on first boot, `teddy:lab:<password>,caleb:auditor:<password>`. Remove the variable afterwards.
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
-   - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the logging proxy's shared key from 1Password.
+   - `AIAB_LOG_KEY`: optional, only for the Logs screen; production's log reader key from 1Password.
+   - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Ignored when `AIAB_LOG_KEY` is set.
 3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo`, creates the accounts, and copies the box's trust file to `/data/trust.json`.
 4. Open the service URL, log in, and submit each party's public key on a Sign screen, as locally.
 
@@ -179,19 +180,17 @@ the run still verifies attestation through the Tinfoil SDK against pinned measur
 
 `https://aiab-ui-latest.onrender.com` is service `srv-db911ck9v7es73e644o0`
 in workspace `tea-db8urpei0phs7393qci0`. This existing service is **image-backed**,
-not Git-backed: pushing `master` or changing `render.yaml` does not deploy it.
+not Git-backed: `master` reaches it only through the image workflow below, and
+changing `render.yaml` does nothing to it.
 The blueprint above describes a separate Git-backed setup.
 
-The tested UI code from commit `bde6e99` is published privately as
-`ghcr.io/lucid-computing/aiab-ui:bde6e99`, pinned for deployment to
-`sha256:58a021525ab2983344e8f880d73efe7535917ff2fa049ce299b6d81daf22c9b0`.
-Render uses registry credential `Lucid AIAB UI (derpyplops)` to pull it.
-
-For future UI changes, build `ui/Dockerfile` from the repository root with `--platform linux/amd64`, push a new
-commit-tagged image to that repository, then update this service's image digest
-with `render services update <service-id> --image <image@sha256:digest>` and run
-`render deploys create <service-id> --wait`. Confirm the deployment succeeds,
-then test `/runs` through offline report verification. Preserve `/data` and the
+The image is `ghcr.io/lucid-computing/aiab-ui` (private), built by
+[`build-ui-image.yml`](../.github/workflows/build-ui-image.yml) on every push to `master`
+that touches what `ui/Dockerfile` copies (or by hand: Actions, *Build agreement UI image*,
+*Run workflow*). It is tagged with the commit and `latest`, and the workflow then calls
+the service's deploy hook (repository secret `RENDER_DEPLOY_HOOK_URL`) with the exact
+digest. Render pulls it with registry credential `Lucid AIAB UI (derpyplops)`. After a
+deploy, test `/runs` through offline report verification and check `/logs`. Preserve `/data` and the
 existing service environment; do not replace its disk to refresh a deployment.
 
 ### Diagnosing a run

@@ -377,7 +377,7 @@ async def logs_page(request: Request) -> Response:
     who = request.query_params.get("who", "").strip()
     wanted = request.query_params.get("session", "")
     wanted_req = request.query_params.get("req", "")
-    records = proxylogs.load_records(settings)
+    records = proxylogs.load_index(settings)
     all_sessions = proxylogs.sessions(records)
     whos = sorted({s.who for s in all_sessions})
     shown = [s for s in all_sessions if not who or s.who == who]
@@ -389,8 +389,9 @@ async def logs_page(request: Request) -> Response:
     )
     req = None
     if current:
-        req = (
-            next((r for r in current.requests if r.id == wanted_req), None) or current.requests[-1]
+        req = proxylogs.load_full(
+            settings,
+            next((r for r in current.requests if r.id == wanted_req), None) or current.requests[-1],
         )
     return render(
         request,
@@ -411,7 +412,8 @@ async def logs_raw(request: Request, rid: str) -> Response:
     """The recorded request as the proxy stored it, with the JSON bodies unpacked."""
     if user_of(request) is None:
         return to_login(request)
-    entry = next((e for e in proxylogs.load_records(settings) if str(e.get("id")) == rid), None)
+    light = next((r for r in proxylogs.load_index(settings) if r.id == rid), None)
+    entry = proxylogs.raw_entry(settings, light) if light else None
     if entry is None:
         return Response("no such request", status_code=404)
     shown = dict(entry)
@@ -781,7 +783,7 @@ async def runs_index(request: Request) -> Response:
     qp = request.query_params
     win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
     lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
-    all_sessions = proxylogs.sessions(proxylogs.load_records(settings))
+    all_sessions = proxylogs.sessions(proxylogs.load_index(settings))
     whos = sorted({s.who for s in all_sessions})
     sessions = []
     for s in all_sessions:
@@ -852,7 +854,7 @@ async def runs_start(request: Request) -> Response:
         if True:  # the input is always recorded sessions; test transcripts are gone
             chosen = set(form.getlist("session"))
             picked = [
-                s for s in proxylogs.sessions(proxylogs.load_records(settings)) if s.id in chosen
+                s for s in proxylogs.sessions(proxylogs.load_index(settings)) if s.id in chosen
             ]
             if not picked:
                 return back("/runs", err="Pick at least one recorded session.")

@@ -1,0 +1,66 @@
+# The agreement UI's image for the live Render service (srv-db911ck9v7es73e644o0), which is
+# image-backed: pushing master alone does not deploy it. Every push to master that touches
+# what ui/Dockerfile copies builds ghcr.io/lucid-computing/aiab-ui, tagged with the commit
+# and latest, then asks Render to deploy that exact digest through the service's deploy hook
+# (repository secret RENDER_DEPLOY_HOOK_URL; without it the image is pushed but not deployed).
+name: Build agreement UI image
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'ui/**'
+      - 'static/pyproject.toml'
+      - 'static/uv.lock'
+      - 'static/README.md'
+      - 'static/aiab/**'
+      - 'static/auditor/**'
+      - 'static/deploy/tinfoil/audit/release.json'
+      - '.github/workflows/build-ui-image.yml'
+  workflow_dispatch:
+concurrency:
+  group: ui-image
+  cancel-in-progress: false
+permissions:
+  contents: read
+  packages: write
+env:
+  IMAGE: ghcr.io/lucid-computing/aiab-ui
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        id: build
+        with:
+          context: .
+          file: ui/Dockerfile
+          platforms: linux/amd64   # Render runs amd64 only
+          provenance: false
+          sbom: false
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          # Links the package to this repository, so this workflow's token may push to it.
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - name: Deploy the digest on Render
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          echo "$REF" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not set; image pushed, not deployed" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          curl -fsS -X POST -G "$HOOK" --data-urlencode "imgURL=$REF" -o /dev/null
+          echo "Render deploy requested" >> "$GITHUB_STEP_SUMMARY"
