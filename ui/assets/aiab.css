@@ -404,6 +404,7 @@ details.more[open] .more-btn::before { content: attr(data-open); }
 .earlier { margin: 0 0 var(--space-2); }
 .earlier > summary { padding-left: 0; }
 .earlier .msg { opacity: 0.85; }
+.logs-pager { display: flex; justify-content: space-between; gap: var(--space-2); padding: var(--space-3) var(--space-4); font-size: 0.85em; }
 .md { white-space: normal; }
 .md p { margin: 0 0 var(--space-2); }
 .md p:last-child { margin-bottom: 0; }

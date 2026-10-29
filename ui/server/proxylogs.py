@@ -10,8 +10,8 @@ x-proxy-key; production takes its reader key as x-log-key and refuses x-proxy-ke
 
 Segments are saved under ``settings.logs_dir`` byte for byte and checked against the
 sha256 the proxy lists; the live part is replaced on every sync. Downloads stream to disk:
-production's live part alone is hundreds of megabytes. A background thread syncs every
-minute once the server is up (``start_prefetch``) and re-indexes after each sync, so the
+production's live part alone is hundreds of megabytes. A background thread syncs every five
+minutes once the server is up (``start_prefetch``) and re-indexes after each sync, so the
 page never waits for the proxy.
 
 The pages work from a light index (``load_index``): one ``Request`` per call with the
@@ -39,7 +39,8 @@ from pathlib import Path
 from server.config import Settings
 
 SESSION_GAP_SECONDS = 30 * 60  # records from one person this close together form one session
-PREFETCH_SECONDS = 60  # how often the background thread asks the proxy for new segments
+PREFETCH_SECONDS = 300  # how often the background thread asks the proxy for new segments;
+# production's live part is re-downloaded whole each time (185 MB on 2026-10-29)
 REMINDER = re.compile(r"(<system-reminder>.*?</system-reminder>)", re.DOTALL)
 
 
@@ -314,7 +315,7 @@ def _read_line(settings: Settings, source: str, offset: int) -> bytes:
 def load_index(settings: Settings) -> list[Request]:
     """Every recorded call on disk as a light Request, oldest first, de-duplicated by id
     (a later file wins). Rebuilt when a file changes; a line already indexed is not parsed
-    again, since the live part is re-downloaded whole every minute."""
+    again, since the live part is re-downloaded whole on every sync."""
     with _index_lock:
         paths = _paths(settings)
         stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)

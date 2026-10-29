@@ -48,6 +48,8 @@ app = FastAPI(
 app.mount("/assets", StaticFiles(directory=UI_ROOT / "assets"), name="assets")
 templates = Jinja2Templates(directory=UI_ROOT / "server" / "templates")
 COOKIE = "aiab_ui"
+LOGS_PAGE_SIZE = 50  # sessions per page on the Logs screen
+LOGS_RECENT = 6  # messages of a call shown unfolded; earlier ones load when opened
 
 
 def pretty_json(text: str) -> str:
@@ -380,10 +382,16 @@ async def logs_page(request: Request) -> Response:
     records = proxylogs.load_index(settings)
     all_sessions = proxylogs.sessions(records)
     whos = sorted({s.who for s in all_sessions})
-    shown = [s for s in all_sessions if not who or s.who == who]
+    matched = [s for s in all_sessions if not who or s.who == who]
     if q:
         needle = q.lower()
-        shown = [s for s in shown if needle in s.title.lower()]
+        matched = [s for s in matched if needle in s.title.lower()]
+    pages = max(1, -(-len(matched) // LOGS_PAGE_SIZE))
+    try:
+        page = min(max(1, int(request.query_params.get("page", "1"))), pages)
+    except ValueError:
+        page = 1
+    shown = matched[(page - 1) * LOGS_PAGE_SIZE : page * LOGS_PAGE_SIZE]
     current = next((s for s in all_sessions if s.id == wanted), None) or (
         shown[0] if shown else None
     )
@@ -402,9 +410,25 @@ async def logs_page(request: Request) -> Response:
         q=q,
         who=who,
         whos=whos,
+        page=page,
+        pages=pages,
+        recent=LOGS_RECENT,
+        matched=len(matched),
         total_requests=len(records),
         fetch=proxylogs.status(),
     )
+
+
+@app.get("/logs/earlier/{rid}")
+async def logs_earlier(request: Request, rid: str) -> Response:
+    """The messages the Logs page folds away for one call, rendered when it unfolds them."""
+    if user_of(request) is None:
+        return Response("not signed in", status_code=401)
+    light = next((r for r in proxylogs.load_index(settings) if r.id == rid), None)
+    if light is None:
+        return Response("no such request", status_code=404)
+    full = proxylogs.load_full(settings, light)
+    return render(request, "logs_earlier.html", messages=full.messages[:-LOGS_RECENT])
 
 
 @app.get("/logs/raw/{rid}")
