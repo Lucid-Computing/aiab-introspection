@@ -2,7 +2,7 @@ name: Verify jointly signed plan change
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [production]   # plans are deployed only through the production branch
+    branches: [production, staging]   # plans are deployed only through an environment branch
     paths: ['plan/**']
 permissions:
   contents: write
@@ -39,7 +39,7 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
           uv sync --project static --locked
           PYTHONPATH=static static/.venv/bin/python static/deploy/check_plan_pr.py --base "$BASE_SHA" --head "$HEAD_SHA"
-      - name: Put the verified plan on top of production as it is now, then merge
+      - name: Put the verified plan on top of the base branch as it is now, then merge
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -48,18 +48,18 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          # Production may have moved since the pull request was opened (a release wrote new
-          # pins, another plan or a key landed). The newest production always wins: the
-          # verified plan/ is re-created on its tip, checked again there, and that is merged.
+          # The base branch may have moved since the pull request was opened (a release wrote
+          # new pins, another plan or a key landed). The newest base always wins: the verified
+          # plan/ is re-created on its tip, checked again there, and that is merged.
           git fetch --quiet origin "$BASE_REF"
           TIP=$(git rev-parse FETCH_HEAD)
           if [ "$TIP" != "$BASE_SHA" ]; then
-            echo "production moved from $BASE_SHA to $TIP; re-basing the plan on it"
+            echo "$BASE_REF moved from $BASE_SHA to $TIP; re-basing the plan on it"
             git checkout --quiet --detach "$TIP"
             git rm -r --quiet plan
             git checkout --quiet "$HEAD_SHA" -- plan
             git -c user.name="AIAB plan check" -c user.email="aiab-plan-check@users.noreply.github.com" \
-              commit --quiet -m "Deploy plan (same files, re-based on production $TIP)"
+              commit --quiet -m "Deploy plan (same files, re-based on $BASE_REF $TIP)"
             HEAD_SHA=$(git rev-parse HEAD)
             PYTHONPATH=static static/.venv/bin/python static/deploy/check_plan_pr.py --base "$TIP" --head "$HEAD_SHA"
             git push --quiet --force origin "HEAD:refs/heads/$HEAD_REF"

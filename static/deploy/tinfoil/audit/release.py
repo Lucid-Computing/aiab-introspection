@@ -148,17 +148,28 @@ def main():
         required=True,
         help="Local synthetic-demo role keys/tokens; never uploaded to CI",
     )
-    parser.add_argument("--instance", default="28c10708-7f8b-4981-8280-dca928a2654b")
+    parser.add_argument(
+        "--instance",
+        default=None,
+        help="Tinfoil instance to update; default: the 'instance' field of release.json",
+    )
     args = parser.parse_args()
     if not re.fullmatch(r"v\d+\.\d+\.\d+", args.tag):
         parser.error("Tag must be vMAJOR.MINOR.PATCH")
-    if not re.fullmatch(r"[0-9a-f-]{36}", args.instance):
-        parser.error("Invalid instance ID")
     root = Path(__file__).resolve().parents[4]
     baseline = Path(__file__).parent
     source_repo = "Lucid-Computing/aiab-introspection"
+    # Everything that differs between environments (production, staging) is in release.json
+    # on the environment's branch: the public config repo, the Tinfoil instance and the image
+    # name. The literals are the production values from before those fields existed.
     prior = json.loads((baseline / "release.json").read_text())
     repo = prior["repo"]
+    args.instance = args.instance or prior.get("instance") or "28c10708-7f8b-4981-8280-dca928a2654b"
+    if not re.fullmatch(r"[0-9a-f-]{36}", args.instance):
+        parser.error("Invalid instance ID")
+    image = prior.get("image") or "ghcr.io/lucid-computing/aiab-introspection-enclave"
+    if not re.fullmatch(r"ghcr.io/[a-z0-9-]+/[a-z0-9._-]+", image):
+        raise RuntimeError("Invalid image name in release.json")
     sha = command("git", "rev-parse", "HEAD", cwd=root)
     if command("git", "status", "--porcelain", cwd=root):
         raise RuntimeError("Commit local changes before planning a release")
@@ -192,7 +203,6 @@ def main():
     cp = ControlPlane(Path.home() / ".tinfoil/config.json")
     try:
         record("building", status="in_progress")
-        image = "ghcr.io/lucid-computing/aiab-introspection-enclave"
         run_id, built_sha = workflow(
             source_repo, "build-image.yml", args.source_ref, args.output, "-f", "image=" + image
         )
@@ -269,6 +279,8 @@ def main():
             raise RuntimeError("Invalid release measurement")
         release = {
             **prior,
+            "instance": args.instance,
+            "image": image,
             "tag": args.tag,
             "reviewed_config_commit": config_sha,
             "release_digest": "sha256:" + release_hash,
