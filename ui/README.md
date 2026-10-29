@@ -180,19 +180,17 @@ the run still verifies attestation through the Tinfoil SDK against pinned measur
 
 `https://aiab-ui-latest.onrender.com` is service `srv-db911ck9v7es73e644o0`
 in workspace `tea-db8urpei0phs7393qci0`. This existing service is **image-backed**,
-not Git-backed: pushing `master` or changing `render.yaml` does not deploy it.
+not Git-backed: `master` reaches it only through the image workflow below, and
+changing `render.yaml` does nothing to it.
 The blueprint above describes a separate Git-backed setup.
 
-The tested UI code from commit `bde6e99` is published privately as
-`ghcr.io/lucid-computing/aiab-ui:bde6e99`, pinned for deployment to
-`sha256:58a021525ab2983344e8f880d73efe7535917ff2fa049ce299b6d81daf22c9b0`.
-Render uses registry credential `Lucid AIAB UI (derpyplops)` to pull it.
-
-For future UI changes, build `ui/Dockerfile` from the repository root with `--platform linux/amd64`, push a new
-commit-tagged image to that repository, then update this service's image digest
-with `render services update <service-id> --image <image@sha256:digest>` and run
-`render deploys create <service-id> --wait`. Confirm the deployment succeeds,
-then test `/runs` through offline report verification. Preserve `/data` and the
+The image is `ghcr.io/lucid-computing/aiab-ui` (private), built by
+[`build-ui-image.yml`](../.github/workflows/build-ui-image.yml) on every push to `master`
+that touches what `ui/Dockerfile` copies (or by hand: Actions, *Build agreement UI image*,
+*Run workflow*). It is tagged with the commit and `latest`, and the workflow then calls
+the service's deploy hook (repository secret `RENDER_DEPLOY_HOOK_URL`) with the exact
+digest. Render pulls it with registry credential `Lucid AIAB UI (derpyplops)`. After a
+deploy, test `/runs` through offline report verification and check `/logs`. Preserve `/data` and the
 existing service environment; do not replace its disk to refresh a deployment.
 
 ### Diagnosing a run
