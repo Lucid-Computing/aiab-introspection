@@ -24,6 +24,7 @@ records is tolerant: a record that does not parse is shown raw, never dropped.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -139,15 +140,23 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _decompress(raw: bytes) -> bytes:
+def _open_log(path: Path):
+    """A log file opened for reading lines, decompressed as it is read when sealed. Sealed
+    segments are small on disk but not when decompressed: production's first one was
+    2.9 MB holding 190 MB of text, so a segment is never decompressed whole."""
+    if path.suffix != ".zst":
+        return path.open("rb")
     try:
         from compression import zstd  # Python 3.14+
 
-        return zstd.decompress(raw)
+        return zstd.open(path, "rb")
     except ImportError:
+        import io
+
         import zstandard
 
-        return zstandard.ZstdDecompressor().decompressobj().decompress(raw)
+        reader = zstandard.ZstdDecompressor().stream_reader(path.open("rb"), closefd=True)
+        return io.BufferedReader(reader)
 
 
 # ---- background prefetch -------------------------------------------------------------------
@@ -285,16 +294,13 @@ def _paths(settings: Settings) -> list[Path]:
     return [p for p in sorted(out.glob("*.jsonl.zst")) + [out / "live.jsonl"] if p.is_file()]
 
 
+_segment_lock = threading.Lock()  # one sealed segment decompressing at a time: each holds
+# the compressor's window (about 130 MB for production's segments) while it is read
+
+
 def _lines(path: Path):
     """(offset, line) for every line of a log file; offsets into the decompressed text."""
-    if path.suffix == ".zst":
-        data = _decompress(path.read_bytes())  # a sealed segment is about 1 MB
-        offset = 0
-        for line in data.splitlines(keepends=True):
-            yield offset, line
-            offset += len(line)
-        return
-    with path.open("rb") as f:
+    with _segment_lock if path.suffix == ".zst" else contextlib.nullcontext(), _open_log(path) as f:
         offset = 0
         for line in f:
             yield offset, line
@@ -303,13 +309,14 @@ def _lines(path: Path):
 
 def _read_line(settings: Settings, source: str, offset: int) -> bytes:
     path = settings.logs_dir / source
-    if path.suffix == ".zst":
-        data = _decompress(path.read_bytes())
-        end = data.find(b"\n", offset)
-        return data[offset : end if end >= 0 else len(data)]
-    with path.open("rb") as f:
-        f.seek(offset)
-        return f.readline()
+    if path.suffix != ".zst":
+        with path.open("rb") as f:
+            f.seek(offset)
+            return f.readline()
+    for at, line in _lines(path):  # a compressed stream can only be read forward
+        if at == offset:
+            return line
+    return b""
 
 
 def load_index(settings: Settings) -> list[Request]:
