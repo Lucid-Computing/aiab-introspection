@@ -60,7 +60,7 @@ jobs:
       - name: Install credentials for this job only
         env:
           TINFOIL_API_KEY: ${{ secrets.TINFOIL_API_KEY }}
-          AUDIT_LAB_TOKEN: ${{ secrets.AUDIT_LAB_TOKEN }}
+          AUDIT_LAB_TOKEN: ${{ github.ref_name == 'dev' && secrets.AUDIT_LAB_TOKEN_DEV || secrets.AUDIT_LAB_TOKEN }}
           AUDIT_LOGGER_KEY: ${{ secrets.AUDIT_LOGGER_KEY }}
         run: |
           umask 077
