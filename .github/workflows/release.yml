@@ -144,6 +144,8 @@ jobs:
             static/deploy/tinfoil/audit/manifest.json \
             static/deploy/tinfoil/audit/policy-digest.txt
           git commit -m "Release ${{ steps.tag.outputs.tag }}: update pins [skip ci]"
+          # Preserve commits that landed while the image was built and verified.
+          git pull --rebase origin "${{ github.ref_name }}"
           git push origin "HEAD:${{ github.ref_name }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()   # on failure the journal holds the reason
