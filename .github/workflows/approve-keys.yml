@@ -1,4 +1,4 @@
-# A party's public key changes through a pull request against production or staging that touches only
+# A party's public key changes through a pull request against production or dev that touches only
 # static/aiab/baked/trust.json. This job checks the change is well-formed and then merges it,
 # like approve-plan.yml does for plans. The key reaches the box with the next plan deploy,
 # since the box only starts with a plan signed by the keys it trusts. Pull requests from
@@ -7,7 +7,7 @@
 name: Check a trust key change
 on:
   pull_request:
-    branches: [production, staging]
+    branches: [production, dev]
     paths: ['static/aiab/baked/trust.json']
 permissions:
   contents: write

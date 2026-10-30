@@ -1,3 +1,11 @@
+# Dev launch update — 30 Oct 2026
+
+The environment branch is now `dev`. The initial launch reuses staging’s config repository
+and enclave image, with a separate `aiab-dev` Tinfoil instance and `aiab-ui-dev` Render
+service. UI builds use `:dev` and `RENDER_DEPLOY_HOOK_URL_DEV`. The historical plan below
+uses the old staging name. Code promotion must preserve each environment’s signed plan
+and release pins.
+
 # Staging environment: plan
 
 Draft of 29 Oct 2026, to iterate on. Goal: a second box, a second agreement UI and a second

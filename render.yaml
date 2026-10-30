@@ -3,11 +3,11 @@
 # the secrets marked sync: false. See ui/README.md, "Deploying on Render".
 services:
   - type: web
-    name: aiab-agreement-ui
+    name: aiab-ui-dev
     runtime: docker
     plan: starter               # the smallest plan that allows a persistent disk
     region: frankfurt
-    branch: master              # contains the current UI and runtime fixes
+    branch: dev              # contains the current UI and runtime fixes
     dockerfilePath: ./ui/Dockerfile
     dockerContext: .
     healthCheckPath: /login
@@ -21,11 +21,13 @@ services:
       - key: AIAB_REPO
         value: Lucid-Computing/aiab-introspection
       - key: AIAB_CHECKOUT_BRANCH
-        value: production       # the branch the image is built from; the UI works on its agreements/ and plan/
+        value: dev       # the branch the image is built from; the UI works on its agreements/ and plan/
+      - key: AIAB_RELEASE_BRANCH
+        value: dev
       - key: AIAB_AUTO_PULL
         value: "1"              # the checkout follows production every minute when clean
       - key: AIAB_DEPLOY_BASE
-        value: production       # Deploy opens its plan pull request against this branch
+        value: dev       # Deploy opens its plan pull request against this branch
       - key: UI_SESSION_SECRET
         generateValue: true
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
