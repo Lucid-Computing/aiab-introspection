@@ -287,7 +287,7 @@ Readiness requires working verification dependencies and approved runtime config
 | `auditor/policy.py` | Independently generate approved executor/trust configuration |
 | `deploy/` and `.dockerignore` | Package artifacts, expose authenticated endpoints and deploy measured release |
 | `tests/`, `demo/` | Protocol tests, real integration fixtures and repeatable acceptance driver |
-| `docs/THREAT_MODEL.md`, `docs/DEFERRED.md`, `README.md` | Explain new boundary, promote signed plans/multilog execution, retain explicit limitations |
+| `docs/AIAB_DESIGN_SPEC.md`, `docs/REQUIREMENTS_COMPLIANCE.md`, `README.md` | Explain new boundary, promote signed plans/multilog execution, retain explicit limitations |
 
 Keep existing v1 periodic-report verification behavior explicit. Dispatch by schema version rather than relaxing existing exact-field checks. Do not mix proxy counters with experiment verdicts.
 
