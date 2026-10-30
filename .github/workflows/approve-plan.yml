@@ -2,7 +2,7 @@ name: Verify jointly signed plan change
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [production, staging]   # plans are deployed only through an environment branch
+    branches: [production, staging, dev]   # plans are deployed only through an environment branch
     paths: ['plan/**']
 permissions:
   contents: write

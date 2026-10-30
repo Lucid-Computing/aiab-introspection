@@ -7,7 +7,7 @@
 name: Check a trust key change
 on:
   pull_request:
-    branches: [production, staging]
+    branches: [production, staging, dev]
     paths: ['static/aiab/baked/trust.json']
 permissions:
   contents: write

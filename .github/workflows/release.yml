@@ -38,7 +38,7 @@ on:
   # never reach the box, so they do not release. The pins commit below says [skip ci], so it
   # does not start another one. The Actions tab button remains for re-runs and dry runs.
   push:
-    branches: [production, staging]
+    branches: [production, staging, dev]
     paths: ['plan/**', 'static/**', '.dockerignore']
 concurrency:
   group: audit-release-${{ github.ref_name }}
@@ -60,7 +60,7 @@ jobs:
       - name: Install credentials for this job only
         env:
           TINFOIL_API_KEY: ${{ secrets.TINFOIL_API_KEY }}
-          AUDIT_LAB_TOKEN: ${{ secrets.AUDIT_LAB_TOKEN }}
+          AUDIT_LAB_TOKEN: ${{ github.ref_name == 'dev' && secrets.AUDIT_LAB_TOKEN_DEV || secrets.AUDIT_LAB_TOKEN }}
           AUDIT_LOGGER_KEY: ${{ secrets.AUDIT_LOGGER_KEY }}
         run: |
           umask 077

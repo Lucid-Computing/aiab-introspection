@@ -10,7 +10,7 @@
 name: Build agreement UI image
 on:
   push:
-    branches: [production, staging]
+    branches: [production, staging, dev]
     paths:
       - 'ui/**'
       - 'static/pyproject.toml'
@@ -63,12 +63,14 @@ jobs:
       - name: Deploy the digest on this branch's Render service
         env:
           HOOK_PRODUCTION: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          HOOK_DEV: ${{ secrets.RENDER_DEPLOY_HOOK_URL_DEV }}
           HOOK_STAGING: ${{ secrets.RENDER_DEPLOY_HOOK_URL_STAGING }}
           REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
         run: |
           echo "$REF" >> "$GITHUB_STEP_SUMMARY"
           case "$GITHUB_REF_NAME" in
             production) HOOK="$HOOK_PRODUCTION" ;;
+            dev) HOOK="$HOOK_DEV" ;;
             staging) HOOK="$HOOK_STAGING" ;;
             *) HOOK="" ;;
           esac
