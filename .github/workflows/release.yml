@@ -25,6 +25,11 @@ on:
         required: false
         type: boolean
         default: false
+      create_instance:
+        description: 'New environment only: create the Tinfoil instance with this name from the measured release and record it'
+        required: false
+        type: string
+        default: ''
   # A push to production or staging starts the release whenever it changes anything that goes into the
   # box image: the plan, the static part (code, trust keys, dependencies, the Dockerfile and
   # release tooling) or the build's ignore file. Merges made by approve-plan.yml and
@@ -101,6 +106,7 @@ jobs:
         working-directory: static
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+          CREATE_INSTANCE: ${{ inputs.create_instance }}
         run: |
           uv sync --locked
           git config --global user.name "AIAB release"
@@ -108,9 +114,11 @@ jobs:
           gh auth setup-git
           EXECUTE=--execute
           if [ "${{ inputs.dry_run }}" = "true" ]; then EXECUTE=""; echo "Dry run: planning only" >> "$GITHUB_STEP_SUMMARY"; fi
+          CREATE=()
+          if [ -n "$CREATE_INSTANCE" ]; then CREATE=(--create "$CREATE_INSTANCE"); echo "Creating the instance $CREATE_INSTANCE" >> "$GITHUB_STEP_SUMMARY"; fi
           uv run --locked python deploy/tinfoil/audit/release.py \
             $EXECUTE --source-ref "${{ github.ref_name }}" --tag "${{ steps.tag.outputs.tag }}" \
-            --key-directory "$RUNNER_TEMP/keys" --output "$RUNNER_TEMP/release-out"
+            --key-directory "$RUNNER_TEMP/keys" --output "$RUNNER_TEMP/release-out" "${CREATE[@]}"
       - name: Commit the new release pins to the branch
         # Runs even when the health check after the deploy failed: release.py writes
         # release.json only once the box has been redeployed, so if that file exists the live

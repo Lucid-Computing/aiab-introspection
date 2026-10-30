@@ -43,3 +43,14 @@ def test_a_new_environment_needs_an_image_name():
         release.environment({"repo": "Lucid-Computing/aiab-tinfoil-staging-config"})
     with pytest.raises(ValueError):
         release.environment({"repo": "x/y", "image": "docker.io/not/ghcr"})
+
+
+def test_instance_host_and_secret_names():
+    assert release.instance_host({"id": "x", "domain": "aiab-staging.example.dev"}) == (
+        "aiab-staging.example.dev"
+    )
+    with pytest.raises(RuntimeError):
+        release.instance_host({"id": "x", "host_name": "inf13"})
+    config = {"containers": [{"name": "aiab", "secrets": ["TINFOIL_API_KEY", "AIAB_LAB_TOKEN"]}]}
+    assert release.secret_names(config) == ["TINFOIL_API_KEY", "AIAB_LAB_TOKEN"]
+    assert release.secret_names({"containers": []}) == []
