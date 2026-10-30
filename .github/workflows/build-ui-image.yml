@@ -1,12 +1,16 @@
-# The agreement UI's image for the live Render service (srv-db911ck9v7es73e644o0), which is
-# image-backed: pushing master alone does not deploy it. Every push to master that touches
-# what ui/Dockerfile copies builds ghcr.io/lucid-computing/aiab-ui, tagged with the commit
-# and latest, then asks Render to deploy that exact digest through the service's deploy hook
-# (repository secret RENDER_DEPLOY_HOOK_URL; without it the image is pushed but not deployed).
+# The agreement UI's image for the Render services, which are image-backed: pushing a branch
+# alone does not deploy them. Every push to an environment branch (production, staging) that
+# touches what ui/Dockerfile copies builds ghcr.io/lucid-computing/aiab-ui from that branch,
+# tagged with the commit and the branch name (production also as latest), then asks that
+# branch's Render service to deploy the exact digest through its deploy hook (repository
+# secrets RENDER_DEPLOY_HOOK_URL for production, RENDER_DEPLOY_HOOK_URL_STAGING for staging;
+# without a hook the image is pushed but not deployed). The UI carries the box's own code
+# (static/aiab) for the plan checks on its pages, so it is built from the same branch as the
+# box it serves. Master is never deployed; a manual run on it only pushes a :master tag.
 name: Build agreement UI image
 on:
   push:
-    branches: [master]
+    branches: [production, staging]
     paths:
       - 'ui/**'
       - 'static/pyproject.toml'
@@ -18,7 +22,7 @@ on:
       - '.github/workflows/build-ui-image.yml'
   workflow_dispatch:
 concurrency:
-  group: ui-image
+  group: ui-image-${{ github.ref_name }}
   cancel-in-progress: false
 permissions:
   contents: read
@@ -38,6 +42,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tags for this branch
+        id: tags
+        run: |
+          TAGS="$IMAGE:$GITHUB_SHA,$IMAGE:$GITHUB_REF_NAME"
+          if [ "$GITHUB_REF_NAME" = production ]; then TAGS="$TAGS,$IMAGE:latest"; fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         id: build
         with:
@@ -47,20 +57,24 @@ jobs:
           provenance: false
           sbom: false
           push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.IMAGE }}:latest
+          tags: ${{ steps.tags.outputs.tags }}
           # Links the package to this repository, so this workflow's token may push to it.
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
-      - name: Deploy the digest on Render
+      - name: Deploy the digest on this branch's Render service
         env:
-          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          HOOK_PRODUCTION: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          HOOK_STAGING: ${{ secrets.RENDER_DEPLOY_HOOK_URL_STAGING }}
           REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
         run: |
           echo "$REF" >> "$GITHUB_STEP_SUMMARY"
+          case "$GITHUB_REF_NAME" in
+            production) HOOK="$HOOK_PRODUCTION" ;;
+            staging) HOOK="$HOOK_STAGING" ;;
+            *) HOOK="" ;;
+          esac
           if [ -z "$HOOK" ]; then
-            echo "RENDER_DEPLOY_HOOK_URL is not set; image pushed, not deployed" >> "$GITHUB_STEP_SUMMARY"
+            echo "No deploy hook for $GITHUB_REF_NAME; image pushed, not deployed" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           curl -fsS -X POST -G "$HOOK" --data-urlencode "imgURL=$REF" -o /dev/null
-          echo "Render deploy requested" >> "$GITHUB_STEP_SUMMARY"
+          echo "Render deploy requested for $GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
