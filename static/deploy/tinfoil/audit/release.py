@@ -175,8 +175,12 @@ def create_instance(cp, name, repo, tag, secrets):
     instance = created["id"]
     if not re.fullmatch(r"[0-9a-f-]{36}", instance):
         raise RuntimeError("Unexpected instance id from the control plane: " + instance)
-    cp.request("POST", "/api/containers/" + instance + "/deploy", {})
-    return instance, instance_host(cp.request("GET", "/api/containers/" + instance))
+    view = cp.request("GET", "/api/containers/" + instance)
+    # Creation can already start the deployment; starting it twice returns HTTP 409.
+    if view.get("status") not in {"deploying", "started", "running"}:
+        cp.request("POST", "/api/containers/" + instance + "/deploy", {})
+        view = cp.request("GET", "/api/containers/" + instance)
+    return instance, instance_host(view)
 
 
 async def verify(release, token_file):

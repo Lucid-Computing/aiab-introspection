@@ -54,3 +54,21 @@ def test_instance_host_and_secret_names():
     config = {"containers": [{"name": "aiab", "secrets": ["TINFOIL_API_KEY", "AIAB_LAB_TOKEN"]}]}
     assert release.secret_names(config) == ["TINFOIL_API_KEY", "AIAB_LAB_TOKEN"]
     assert release.secret_names({"containers": []}) == []
+
+
+@pytest.mark.parametrize("status", ["deploying", "started", "running", "ready"])
+def test_create_does_not_start_an_instance_twice(status):
+    instance = "11111111-2222-3333-4444-555555555555"
+    calls = []
+
+    class ControlPlane:
+        def request(self, method, path, value=None):
+            calls.append((method, path))
+            return {"id": instance, "status": status, "domain": "dev.example.com"}
+
+    assert release.create_instance(ControlPlane(), "dev", "owner/repo", "v0.0.1", []) == (
+        instance, "dev.example.com"
+    )
+    assert (("POST", "/api/containers/" + instance + "/deploy") in calls) == (
+        status == "ready"
+    )
