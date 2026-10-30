@@ -134,9 +134,49 @@ class ControlPlane:
         response = self.client.request(method, path, json=value)
         if response.status_code not in (200, 201, 202):
             raise RuntimeError(
-                "Control plane rejected operation: HTTP " + str(response.status_code)
+                "Control plane rejected operation: HTTP "
+                + str(response.status_code)
+                + " on "
+                + method
+                + " "
+                + path
+                + ": "
+                + response.text[:300]
             )
         return response.json()
+
+
+def secret_names(config):
+    """The secrets the config's audit container declares; a new instance must be granted
+    them explicitly, like the CLI's --secret flags do."""
+    containers = [c for c in config["containers"] if c["name"] == "aiab"]
+    return list(containers[0].get("secrets", [])) if containers else []
+
+
+def instance_host(view):
+    """The public hostname of a container as the control plane describes it."""
+    host = view.get("domain")
+    if not host:
+        raise RuntimeError(
+            "The control plane gave no public domain for the instance; fields: "
+            + ", ".join(sorted(view))
+        )
+    return host
+
+
+def create_instance(cp, name, repo, tag, secrets):
+    """Create a Tinfoil instance from a measured release and start it: what the CLI's
+    ``container create`` does (POST /api/containers, then POST .../deploy). Returns the
+    instance id and its public hostname, for release.json."""
+    body = {"name": name, "repo": repo, "tag": tag, "mark_latest_release": True}
+    if secrets:
+        body["secrets"] = secrets
+    created = cp.request("POST", "/api/containers", body)
+    instance = created["id"]
+    if not re.fullmatch(r"[0-9a-f-]{36}", instance):
+        raise RuntimeError("Unexpected instance id from the control plane: " + instance)
+    cp.request("POST", "/api/containers/" + instance + "/deploy", {})
+    return instance, instance_host(cp.request("GET", "/api/containers/" + instance))
 
 
 async def verify(release, token_file):
@@ -174,6 +214,13 @@ def main():
         default=None,
         help="Tinfoil instance to update; default: the 'instance' field of release.json",
     )
+    parser.add_argument(
+        "--create",
+        default=None,
+        metavar="NAME",
+        help="For an environment without an instance: create one with this name from the "
+        "measured release, start it and record its id and hostname in release.json",
+    )
     args = parser.parse_args()
     if not re.fullmatch(r"v\d+\.\d+\.\d+", args.tag):
         parser.error("Tag must be vMAJOR.MINOR.PATCH")
@@ -188,6 +235,8 @@ def main():
         instance, image = environment(prior, args.instance)
     except ValueError as exc:
         parser.error(str(exc))
+    if args.create and instance:
+        parser.error("release.json already names an instance; --create is for a new environment")
     sha = command("git", "rev-parse", "HEAD", cwd=root)
     if command("git", "status", "--porcelain", cwd=root):
         raise RuntimeError("Commit local changes before planning a release")
@@ -311,24 +360,31 @@ def main():
             ),
         }
         (args.output / "release.json").write_bytes(canonical(release) + b"\n")
-        if instance is None:
+        if instance is None and not args.create:
             # A new environment: nothing runs this config yet. The measured release is what
-            # the instance gets created from (Tinfoil dashboard or CLI, once the project
-            # secrets exist); its id and hostname then go into release.json as "instance" and
-            # "host", and the next release deploys to it.
+            # the instance gets created from (--create here, once the project secrets exist);
+            # its id and hostname then go into release.json as "instance" and "host", and
+            # the next release deploys to it.
             record(
                 "measured",
                 status="succeeded",
-                next_step="create the instance from release "
-                + args.tag
-                + ", then record its id and hostname in release.json",
+                next_step="run again with --create NAME once the project secrets exist",
             )
             print("No instance in release.json: measured only, nothing deployed.", flush=True)
             return
-        record("deploying", target_release=release)
-        cp.request(
-            "POST", "/api/containers/" + instance + "/update", {"tag": args.tag, "hold": False}
-        )
+        if instance is None:
+            # The environment's first instance, from the release just measured. The project
+            # secrets the config names must already exist in Tinfoil, or it will not start.
+            record("creating", name=args.create, target_release=release)
+            instance, host = create_instance(cp, args.create, repo, args.tag, secret_names(config))
+            release.update(instance=instance, host=host)
+            (args.output / "release.json").write_bytes(canonical(release) + b"\n")
+            record("deploying", target_release=release)
+        else:
+            record("deploying", target_release=release)
+            cp.request(
+                "POST", "/api/containers/" + instance + "/update", {"tag": args.tag, "hold": False}
+            )
         deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
             live = cp.request("GET", "/api/containers/" + instance)
