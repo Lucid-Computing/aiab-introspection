@@ -214,3 +214,25 @@ not hold the deployment lock.
 The classifier adapter uses low reasoning effort within the unchanged signed token
 budget. Default reasoning can exhaust that budget before producing a score; truncation
 is a failure, never an all-clear and never silently retried with a larger budget.
+
+
+### Live dev environment
+
+The dev UI is https://aiab-ui-dev.onrender.com, Render service
+`srv-dbi77gvb9u1s73dafbp0`, in the existing project's `dev` environment. It has
+its own 1 GB disk at `/data`. The image is `ghcr.io/lucid-computing/aiab-ui:dev`;
+`AIAB_CHECKOUT_BRANCH`, `AIAB_DEPLOY_BASE`, and `AIAB_RELEASE_BRANCH` are all `dev`.
+The build workflow uses the repository secret `RENDER_DEPLOY_HOOK_URL_DEV` when
+configured. Without that secret, it publishes the image but does not deploy it.
+
+The independent audit instance is `aiab-dev.lucid-computing.containers.tinfoil.dev`
+(`2f4ec6c2-ba3a-4ba4-bd46-bd1afe8a7ee1`). It reuses the former staging config repo
+`Lucid-Computing/aiab-tinfoil-staging-config` and enclave image name. Its runtime
+role tokens are separate from production; CI verifies releases with
+`AUDIT_LAB_TOKEN_DEV`. Signing trust keys and provider accounts remain shared.
+The dev UI uses the test proxy and does not have the production `AIAB_LOG_KEY`.
+
+Dev was bootstrapped from the signed staging baseline. It does not yet include
+master's graph-plan migration. Promote code with a review that preserves the
+target branch's signed `plan/`, trust keys, and deployment pins. Do not merge
+environment state back into master.
