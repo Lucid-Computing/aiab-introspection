@@ -1,13 +1,58 @@
 {% extends "base.html" %}
 {% block title %}Plan · AIAB agreement{% endblock %}
+{% block head %}<style>
+.builder { display: block; width: 100%; height: calc(100vh - 150px); min-height: 640px; border: 1px solid var(--line, #d9d9d9); background: #fff; }
+.nodes-table td, .nodes-table th { vertical-align: top; }
+</style>{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/agreements" class="link">← Agreements</a></p>
-<h1>{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
-<p class="lead">The box runs these four functions in this order. Which records come in is chosen when a run is started, not in the plan.</p>
+<div class="row" style="justify-content: space-between; align-items: baseline; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-3)">
+  <h1 style="margin: 0">{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
+  {% if view %}<p style="margin: 0"><span class="digest">{{ view.digest[7:19] }}…</span> <span class="badge {{ view.state_badge }}">{{ view.state }}</span></p>{% endif %}
+</div>
+{% if error %}<p class="form-message error">{{ error }}</p>{% endif %}
 {% if view %}
-{% include "plan_chat.html" %}
-<div id="plan-details">
-<div class="stack" style="margin-bottom: var(--space-10)">
+<p class="lead">{% if view.description %}{{ view.description }}{% else %}The plan as a graph: the logs of a run, Python steps, model steps, a classifier and the final report. The box runs exactly this, and releases only the report.{% endif %}</p>
+{% if view.issue %}<div class="form-message error"><p style="margin: 0">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}).</p>{% if view.issues %}<ul style="margin: var(--space-2) 0 0">{% for i in view.issues[:8] %}<li class="mono">{{ i.message }}</li>{% endfor %}</ul>{% endif %}</div>{% endif %}
+
+{% if aid == "plan" %}
+<div class="notice"><p><strong>Deployed plan</strong>, read only: this is what the box runs. Edit, sign and deploy the agreement it was made from, under <a class="link" href="/agreements">Agreements</a>.</p></div>
+{% elif editor %}
+<div class="notice"><p>{{ editor.user }} ({{ editor.party }}) is editing this agreement since {{ editor.since | hhmm }}. You can read it; editing opens up when they leave, sign or stay idle for 15 minutes.</p></div>
+{% else %}
+<div class="row" style="gap: var(--space-4); margin-bottom: var(--space-4); align-items: center; flex-wrap: wrap">
+  {% if not edit %}
+  <form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--primary">Edit this plan</button></form>
+  <a class="btn btn--ghost" href="{{ base }}/sign">Sign this plan</a>
+  {% else %}
+  <form method="post" action="{{ base }}/plan/finish" class="inline"><button class="btn btn--ghost">Finish editing</button></form>
+  <a class="btn btn--primary" href="{{ base }}/sign">Sign this plan</a>
+  {% endif %}
+  <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>
+  <span class="text-muted">{% if edit %}You are editing. Save in the builder writes a new version through the box's own loader; a plan the box would refuse is not saved. Both parties sign the new version.{% else %}Read only. Edit this plan takes the agreement for you and removes existing signatures.{% endif %}</span>
+</div>
+{% endif %}
+
+{% if aid != "plan" %}{% include "plan_chat.html" %}{% endif %}
+
+<iframe class="builder" id="builder" title="Plan builder" src="/audit-plan-playground/?agreement={{ aid }}{% if not edit %}&amp;readonly=1{% endif %}"></iframe>
+
+<div class="stack" style="margin-top: var(--space-6)">
+<details class="info">
+  <summary>The steps, in the order the box runs them</summary>
+  <div class="info-body">
+  {% if view.nodes %}
+  <table class="table nodes-table">
+    <thead><tr><th>Step</th><th>Kind</th><th>Reads</th><th>Produces</th></tr></thead>
+    <tbody>
+    {% for n in view.nodes %}
+    <tr><td><strong>{{ n.title }}</strong><br><span class="mono text-muted">{{ n.id }}</span></td><td>{{ n.label }}</td><td>{% for i in n.inputs %}<span class="mono">{{ i }}</span>{% if not loop.last %}<br>{% endif %}{% else %}<span class="text-muted">the run's records</span>{% endfor %}</td><td class="mono">{{ n.output }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="text-muted">plan.json does not hold a plan the UI can summarise.</p>{% endif %}
+  </div>
+</details>
 <details class="info" {% if changes.open %}open{% endif %}>
   <summary>Changes · who did what{% if view.history %} <span class="text-muted">({{ view.history | length }})</span>{% endif %}</summary>
   <div class="info-body">
@@ -23,22 +68,14 @@
   {% if changes.total %}
   <ul class="changes">
     {% for e in changes.entries %}
-    {% set short = e.kind not in ["code", "prompt"] and e.detail | length <= 60 %}
+    {% set short = e.kind not in ["plan", "code", "prompt"] and e.detail | length <= 60 %}
     <li>
       {% if short %}
       <div class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="mono">{{ e.detail }}</span></div>
       {% else %}
       <details class="change">
-        <summary class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="text-muted">{{ "changed" if e.kind in ["code", "prompt", "settings"] else e.kind }}</span><span class="toggle" aria-hidden="true">+</span></summary>
-        <div class="change-detail">
-          {% if e.kind == "settings" and " → " in e.detail %}
-          {% set parts = e.detail.split(" → ", 1) %}
-          <div class="change-side"><span class="label">before</span><pre class="cmd">{{ parts[0] | pretty_json }}</pre></div>
-          <div class="change-side"><span class="label">after</span><pre class="cmd">{{ parts[1] | pretty_json }}</pre></div>
-          {% else %}
-          <pre class="cmd">{{ e.detail }}</pre>
-          {% endif %}
-        </div>
+        <summary class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="text-muted">{{ "changed" if e.kind in ["plan", "code", "prompt", "settings"] else e.kind }}</span><span class="toggle" aria-hidden="true">+</span></summary>
+        <div class="change-detail"><pre class="cmd">{{ e.detail }}</pre></div>
       </details>
       {% endif %}
     </li>
@@ -58,51 +95,14 @@
   <div class="info-body">
   <table class="kv">
     <tr><th>Files</th><td class="mono">{{ view.files | join(" · ") }}</td></tr>
-    <tr><th>Outside the digest</th><td><span class="mono">tests/</span> and <span class="mono">signatures/</span></td></tr>
+    <tr><th>Outside the digest</th><td><span class="mono">tests/</span>, <span class="mono">signatures/</span> and the change log</td></tr>
+    <tr><th>Format</th><td class="mono">{{ view.restrictions.plan_format }}</td></tr>
     <tr><th>Pinned model</th><td class="mono">{{ view.restrictions.models[0].id }}</td></tr>
+    <tr><th>Python may import</th><td class="mono">{{ view.restrictions.python_imports | join(", ") }}</td></tr>
     <tr><th>Box limits</th><td class="mono">{% for k, v in view.restrictions.limits.items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>
-    {% if view.issue %}<tr><th>Loader says</th><td><span class="badge badge--danger">{{ view.issue }}</span> {{ view.issue_where }}.</td></tr>{% endif %}
   </table>
   </div>
 </details>
-</div>
-
-<ol class="vflow">
-  {% for s in view.steps if s.step.called %}
-  <li class="{% if s.issue %}has-error{% endif %}">
-    <div class="vflow-node"></div>
-    <div class="vflow-body">
-      <div class="vflow-head">
-        <h3>{{ s.step.name }}</h3>
-        <span class="badge">{{ "model call" if s.step.kind == 'run_llm' else "python" }}</span>
-        {% if s.issue %}<span class="badge badge--danger">{{ s.issue }}</span>{% endif %}
-        <a class="btn btn--ghost btn--sm" href="{{ base }}/plan/step/{{ s.step.name }}{% if edit %}?edit=1{% endif %}">{{ "Edit" if edit else "Open" }}</a>
-      </div>
-      <p>{{ s.step.summary }}</p>
-      <p class="vflow-settings">
-        {% for v in s.settings %}<span><span class="text-muted">{{ v.path }}</span> = <span class="mono">{{ v.value_json if not v.multiline else "…" }}</span></span>{% endfor %}
-        {% if s.prompt_id %}<span><span class="text-muted">prompt</span> = <span class="mono">{{ s.prompt_id }}</span></span>{% endif %}
-        {% if not s.function %}<span class="badge badge--danger">function missing in plan.py</span>{% endif %}
-      </p>
-    </div>
-  </li>
-  {% endfor %}
-</ol>
-
-{% if aid == "plan" %}
-<div class="notice"><p><strong>Deployed plan</strong>, read only: this is what the box runs. Edit, sign and deploy the agreement it was made from, under <a class="link" href="/agreements">Agreements</a>.</p></div>
-{% elif editor %}
-<div class="notice"><p>{{ editor.user }} ({{ editor.party }}) is editing this agreement since {{ editor.since | hhmm }}. You can read it; editing opens up when they leave, sign or stay idle for 15 minutes.</p></div>
-{% else %}
-<div class="row" style="gap: var(--space-4)">
-  {% if not edit %}
-  <form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost">Edit this plan</button></form>
-  {% else %}
-  <form method="post" action="{{ base }}/plan/finish" class="inline"><button class="btn btn--ghost">Finish editing</button></form>
-  {% endif %}
-  <a class="btn btn--primary" href="{{ base }}/sign">Sign this plan</a>
-</div>
-{% endif %}
 </div>
 {% endif %}
 {% endblock %}

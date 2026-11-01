@@ -19,6 +19,10 @@ from server.auth import Account, hash_password, save_account
 from server.config import load_settings
 
 
+def node(plan, node_id):
+    return next(n for n in plan["nodes"] if n["id"] == node_id)
+
+
 async def provider(request):
     body = json.loads(request.content)
     text = body["messages"][-1]["content"].lower()
@@ -46,22 +50,17 @@ async def provider(request):
                 ]
             },
         )
-    config = json.loads(authoritative["plan.json"])
-    config["classification"]["threshold"] = 0.95 if "conservative" in text else 0.85
-    files = [{"path": "plan.json", "content": json.dumps(config)}]
+    plan = json.loads(authoritative["plan.json"])
+    classifier = node(plan, "classifier")["config"]
+    classifier["threshold"] = 0.95 if "conservative" in text else 0.85
     if "repair" in text:
-        files = [{"path": "plan.py", "content": authoritative["plan.py"]}]
+        pass  # a valid plan again
     elif "invalid" in text:
-        files.append({"path": "plan.py", "content": "import os\n"})
+        node(plan, "report")["inputs"]["result"] = "logs.records"  # the box refuses raw records
     elif "conservative" not in text:
-        files.append(
-            {
-                "path": "prompts/classifier_v1.txt",
-                "content": (
-                    "Flag credential theft. Do not flag benign credential rotation.\n"
-                    "<script>bad()</script>\n"
-                ),
-            }
+        classifier["instructions"] = (
+            "Flag credential theft. Do not flag benign credential rotation.\n"
+            "<script>bad()</script>\n"
         )
     return httpx.Response(
         200,
@@ -74,8 +73,8 @@ async def provider(request):
                     "input": {
                         "summary": "Use a more conservative threshold"
                         if "conservative" in text
-                        else "Update threshold and prompt",
-                        "files": files,
+                        else "Update threshold and instructions",
+                        "files": [{"path": "plan.json", "content": json.dumps(plan)}],
                     },
                 }
             ],

@@ -8,12 +8,11 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.protocol import AuditError, canonical, decode, digest, sign_bytes
-from aiab.baked.bundle import file_digest, load_bundle
+from aiab.baked.bundle import load_bundle
 from aiab.baked.records import export_statement, scope_of
 from aiab.baked.records import verify as verify_input
 from aiab.baked.runtime import verify_report
 from aiab.config import read_private_key
-from aiab.dryrun import dataset, decision_digest
 from auditor.audit import AuditClient, write_new
 
 DEFAULT_TRUST = Path(__file__).resolve().parents[1] / "aiab/baked/trust.json"
@@ -23,19 +22,6 @@ def private(path):
     return Ed25519PrivateKey.from_private_bytes(
         base64.b64decode(read_private_key(str(path), "SIGNING_KEY"), validate=True)
     )
-
-
-def verify_evaluation(folder, bundle, evaluation):
-    files, _ = dataset(folder)
-    if (
-        evaluation.get("schema") != "aiab-folder-evaluation/v1"
-        or evaluation.get("mode") != "attested-inference"
-        or evaluation.get("decision_digest") != decision_digest(bundle)
-        or evaluation.get("test_set_digest") != file_digest(files)
-        or evaluation.get("counts", {}).get("errors") != 0
-        or not evaluation.get("cases")
-    ):
-        raise AuditError("incompatible_evaluation")
 
 
 async def remote(args, bundle):
@@ -103,9 +89,6 @@ def main(argv=None):
     sign.add_argument("--private", type=Path, required=True)
     sign.add_argument("--role", choices=["lab", "auditor"], required=True)
     sign.add_argument("--output", type=Path, required=True)
-    commit = commands.add_parser("commit-evaluation")
-    commit.add_argument("--evaluation", type=Path, required=True)
-    commit.add_argument("--output", type=Path, required=True)
     export = commands.add_parser("mock-export")
     for name in ("records", "private", "output"):
         export.add_argument("--" + name, type=Path, required=True)
@@ -127,9 +110,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         trust = decode(args.trust.read_bytes())
-        bundle = load_bundle(
-            args.folder, trust, signed=args.command not in {"digest", "sign", "commit-evaluation"}
-        )
+        bundle = load_bundle(args.folder, trust, signed=args.command not in {"digest", "sign"})
         if args.command in {"digest", "verify"}:
             print(
                 canonical(
@@ -151,15 +132,6 @@ def main(argv=None):
                 + b"\n",
                 0o644,
             )
-        elif args.command == "commit-evaluation":
-            evaluation = decode(args.evaluation.read_bytes())
-            verify_evaluation(args.folder, bundle, evaluation)
-            cfg = bundle.config
-            cfg["classification"]["evaluation"] = {
-                "test_set_digest": evaluation["test_set_digest"],
-                "results_digest": digest(evaluation),
-            }
-            write_new(args.output, canonical(cfg) + b"\n")
         elif args.command == "mock-export":
             key = private(args.private)
             if (

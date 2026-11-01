@@ -10,8 +10,8 @@ x-proxy-key; production takes its reader key as x-log-key and refuses x-proxy-ke
 
 Segments are saved under ``settings.logs_dir`` byte for byte and checked against the
 sha256 the proxy lists; the live part is replaced on every sync. Downloads stream to disk:
-production's live part alone is hundreds of megabytes. A background thread syncs every
-minute once the server is up (``start_prefetch``) and re-indexes after each sync, so the
+production's live part alone is hundreds of megabytes. A background thread syncs every five
+minutes once the server is up (``start_prefetch``) and re-indexes after each sync, so the
 page never waits for the proxy.
 
 The pages work from a light index (``load_index``): one ``Request`` per call with the
@@ -24,6 +24,7 @@ records is tolerant: a record that does not parse is shown raw, never dropped.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -39,7 +40,8 @@ from pathlib import Path
 from server.config import Settings
 
 SESSION_GAP_SECONDS = 30 * 60  # records from one person this close together form one session
-PREFETCH_SECONDS = 60  # how often the background thread asks the proxy for new segments
+PREFETCH_SECONDS = 300  # how often the background thread asks the proxy for new segments;
+# production's live part is re-downloaded whole each time (185 MB on 2026-10-29)
 REMINDER = re.compile(r"(<system-reminder>.*?</system-reminder>)", re.DOTALL)
 
 
@@ -138,15 +140,23 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _decompress(raw: bytes) -> bytes:
+def _open_log(path: Path):
+    """A log file opened for reading lines, decompressed as it is read when sealed. Sealed
+    segments are small on disk but not when decompressed: production's first one was
+    2.9 MB holding 190 MB of text, so a segment is never decompressed whole."""
+    if path.suffix != ".zst":
+        return path.open("rb")
     try:
         from compression import zstd  # Python 3.14+
 
-        return zstd.decompress(raw)
+        return zstd.open(path, "rb")
     except ImportError:
+        import io
+
         import zstandard
 
-        return zstandard.ZstdDecompressor().decompressobj().decompress(raw)
+        reader = zstandard.ZstdDecompressor().stream_reader(path.open("rb"), closefd=True)
+        return io.BufferedReader(reader)
 
 
 # ---- background prefetch -------------------------------------------------------------------
@@ -284,16 +294,13 @@ def _paths(settings: Settings) -> list[Path]:
     return [p for p in sorted(out.glob("*.jsonl.zst")) + [out / "live.jsonl"] if p.is_file()]
 
 
+_segment_lock = threading.Lock()  # one sealed segment decompressing at a time: each holds
+# the compressor's window (about 130 MB for production's segments) while it is read
+
+
 def _lines(path: Path):
     """(offset, line) for every line of a log file; offsets into the decompressed text."""
-    if path.suffix == ".zst":
-        data = _decompress(path.read_bytes())  # a sealed segment is about 1 MB
-        offset = 0
-        for line in data.splitlines(keepends=True):
-            yield offset, line
-            offset += len(line)
-        return
-    with path.open("rb") as f:
+    with _segment_lock if path.suffix == ".zst" else contextlib.nullcontext(), _open_log(path) as f:
         offset = 0
         for line in f:
             yield offset, line
@@ -302,19 +309,20 @@ def _lines(path: Path):
 
 def _read_line(settings: Settings, source: str, offset: int) -> bytes:
     path = settings.logs_dir / source
-    if path.suffix == ".zst":
-        data = _decompress(path.read_bytes())
-        end = data.find(b"\n", offset)
-        return data[offset : end if end >= 0 else len(data)]
-    with path.open("rb") as f:
-        f.seek(offset)
-        return f.readline()
+    if path.suffix != ".zst":
+        with path.open("rb") as f:
+            f.seek(offset)
+            return f.readline()
+    for at, line in _lines(path):  # a compressed stream can only be read forward
+        if at == offset:
+            return line
+    return b""
 
 
 def load_index(settings: Settings) -> list[Request]:
     """Every recorded call on disk as a light Request, oldest first, de-duplicated by id
     (a later file wins). Rebuilt when a file changes; a line already indexed is not parsed
-    again, since the live part is re-downloaded whole every minute."""
+    again, since the live part is re-downloaded whole on every sync."""
     with _index_lock:
         paths = _paths(settings)
         stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)

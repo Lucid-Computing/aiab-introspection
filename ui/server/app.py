@@ -15,7 +15,7 @@ from typing import Annotated, Any
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
@@ -25,7 +25,7 @@ from server import plan_view as pv
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
 from server.config import UI_ROOT, Settings, load_settings
-from server.pipeline import PARTIES
+from server.plan_view import PARTIES
 
 settings = load_settings()
 signer = SessionSigner(settings.session_secret)
@@ -33,6 +33,12 @@ signer = SessionSigner(settings.session_secret)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    try:
+        moved = pv.archive_old_agreements(settings)  # the box no longer runs that format
+        if moved:
+            print(f"archived {len(moved)} agreement(s) in the previous plan format: {moved}")
+    except OSError as exc:
+        print(f"warning: could not archive old agreements: {exc}")
     proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of the proxy fresh
     asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
     refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
@@ -48,6 +54,8 @@ app = FastAPI(
 app.mount("/assets", StaticFiles(directory=UI_ROOT / "assets"), name="assets")
 templates = Jinja2Templates(directory=UI_ROOT / "server" / "templates")
 COOKIE = "aiab_ui"
+LOGS_PAGE_SIZE = 50  # sessions per page on the Logs screen
+LOGS_RECENT = 6  # messages of a call shown unfolded; earlier ones load when opened
 
 
 def pretty_json(text: str) -> str:
@@ -149,9 +157,7 @@ templates.env.filters["hhmm"] = lambda t: __import__("time").strftime(
 templates.env.filters["md"] = md
 templates.env.tests["long"] = is_long
 CHANGE_KINDS = {  # filter name -> history "kind" values it covers
-    "settings": ("settings",),
-    "code": ("code",),
-    "prompt": ("prompt",),
+    "plan": ("plan", "settings", "code", "prompt"),
     "signing": ("signature", "key"),
     "deploy": ("deploy", "created"),
 }
@@ -164,16 +170,16 @@ EDIT_WARNING = (
 STAGES: list[tuple[str, str, list[str]]] = [
     (
         "Draft",
-        "Edit the settings, the code and the prompt. Every save changes the plan digest.",
+        "Build the plan as a graph. Every save changes the plan digest.",
         [
-            "Create an agreement with a name and the question the classifier answers, "
-            "from a minimal template or as a copy of the deployed one.",
-            "Open it to see the four steps the box runs, in order: "
-            "group the records into queries, classify each query, turn scores into a verdict, "
-            "emit the typed answer.",
-            "Edit a step: its settings in plan.json, its code in plan.py, and for classify "
-            "the prompt. Saves are written straight to those files, and edits made in the "
-            "files show up here on reload.",
+            "Create an agreement with a name and the question the audit answers, from a "
+            "minimal plan or as a copy of the deployed one.",
+            "Open it: the builder shows the plan as a graph of steps the box runs in order. "
+            "Five kinds of step: the logs of a run, a Python step, a model step, a classifier "
+            "and the final report. Each step shows what it reads and what it produces, so "
+            "the types can be checked across every connection.",
+            "Edit the graph or its YAML, then Save. The save goes through the box's own "
+            "loader: a plan the box would refuse is not saved, and the reasons are shown.",
             "Every save is a new version with a new digest. The Changes list on the plan "
             "shows who changed what, lab or auditor.",
         ],
@@ -369,6 +375,30 @@ async def how(request: Request) -> Response:
     return render(request, "how.html", stages=STAGES, after=AFTER_SIGNING)
 
 
+# The audit plan playground (ui/playground): a standalone prototype, served from its build
+# output when `pnpm build` has been run there. Static: it reads no agreement and calls no
+# endpoint; plans live in the browser.
+PLAYGROUND_DIR = UI_ROOT / "playground" / "dist"
+
+
+@app.get("/audit-plan-playground")
+@app.get("/audit-plan-playground/{path:path}")
+async def playground(request: Request, path: str = "") -> Response:
+    if user_of(request) is None:
+        return to_login(request)
+    root = PLAYGROUND_DIR.resolve()
+    if not (root / "index.html").is_file():
+        return Response(
+            "The playground is not built: run `pnpm install && pnpm build` in ui/playground.",
+            status_code=404,
+            media_type="text/plain",
+        )
+    target = (root / (path or "index.html")).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        return Response(status_code=404)
+    return FileResponse(target)
+
+
 @app.get("/logs")
 async def logs_page(request: Request) -> Response:
     if user_of(request) is None:
@@ -380,10 +410,16 @@ async def logs_page(request: Request) -> Response:
     records = proxylogs.load_index(settings)
     all_sessions = proxylogs.sessions(records)
     whos = sorted({s.who for s in all_sessions})
-    shown = [s for s in all_sessions if not who or s.who == who]
+    matched = [s for s in all_sessions if not who or s.who == who]
     if q:
         needle = q.lower()
-        shown = [s for s in shown if needle in s.title.lower()]
+        matched = [s for s in matched if needle in s.title.lower()]
+    pages = max(1, -(-len(matched) // LOGS_PAGE_SIZE))
+    try:
+        page = min(max(1, int(request.query_params.get("page", "1"))), pages)
+    except ValueError:
+        page = 1
+    shown = matched[(page - 1) * LOGS_PAGE_SIZE : page * LOGS_PAGE_SIZE]
     current = next((s for s in all_sessions if s.id == wanted), None) or (
         shown[0] if shown else None
     )
@@ -402,9 +438,25 @@ async def logs_page(request: Request) -> Response:
         q=q,
         who=who,
         whos=whos,
+        page=page,
+        pages=pages,
+        recent=LOGS_RECENT,
+        matched=len(matched),
         total_requests=len(records),
         fetch=proxylogs.status(),
     )
+
+
+@app.get("/logs/earlier/{rid}")
+async def logs_earlier(request: Request, rid: str) -> Response:
+    """The messages the Logs page folds away for one call, rendered when it unfolds them."""
+    if user_of(request) is None:
+        return Response("not signed in", status_code=401)
+    light = next((r for r in proxylogs.load_index(settings) if r.id == rid), None)
+    if light is None:
+        return Response("no such request", status_code=404)
+    full = proxylogs.load_full(settings, light)
+    return render(request, "logs_earlier.html", messages=full.messages[:-LOGS_RECENT])
 
 
 @app.get("/logs/raw/{rid}")
@@ -469,6 +521,7 @@ async def _agreements_page(request: Request, **extra) -> Response:
         request,
         "agreements.html",
         rows=rows,
+        archived=pv.list_archived(settings),
         deployed=deployed,
         box=box,
         keys=keys,
@@ -710,7 +763,14 @@ async def new_agreement_form(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     view, error = load_view(settings)
-    return render(request, "new_agreement.html", view=view, error=error, form={})
+    return render(
+        request,
+        "new_agreement.html",
+        view=view,
+        error=error,
+        form={},
+        taken=pv.taken_names(settings),
+    )
 
 
 @app.post("/agreements/new")
@@ -726,19 +786,24 @@ async def new_agreement(request: Request) -> Response:
             view=view,
             error=error,
             form=form,
+            taken=pv.taken_names(settings),
             err="AI creation is unavailable on this server. Create a draft manually instead.",
         )
     errors, created = pv.new_agreement(settings, form, user_of(request) or {})
     if errors or created is None:
         view, error = load_view(settings)
         return render(
-            request, "new_agreement.html", view=view, error=error, form=form, err="; ".join(errors)
+            request,
+            "new_agreement.html",
+            view=view,
+            error=error,
+            form=form,
+            taken=pv.taken_names(settings),
+            err="; ".join(errors),
         )
     saved(user_of(request))
     chat = "&chat=1" if form.get("chat") == "1" else ""
-    return back(
-        f"/a/{created}/plan?edit=1{chat}", msg=f"New agreement {created}. Code and prompt copied."
-    )
+    return back(f"/a/{created}/plan?edit=1{chat}", msg=f"New agreement {created}.")
 
 
 def _pins_differ(pre: dict, box: dict) -> bool:
@@ -928,11 +993,104 @@ async def plan(request: Request, aid: str) -> Response:
         changes=changes,
         chat_enabled=bool(settings.anthropic_api_key),
         chat_initial=(
-            "Create a plan for this question: " + view.config["classification"]["problem"]
+            "Create a plan for this question: " + view.description
             if view and q.get("chat") == "1"
             else ""
         ),
     )
+
+
+@app.get("/a/{aid}/plan.json")
+async def plan_document(request: Request, aid: str) -> Response:
+    """The plan for the builder: the document, its digest and whether it may be saved."""
+    target, redirect = agreement(request, aid)
+    if redirect:
+        return JSONResponse({"error": "Please log in again."}, status_code=401)
+    view, error = load_view(target)
+    if view is None:
+        return JSONResponse({"error": error or "the plan does not load"}, status_code=422)
+    actor = user_of(request) or {}
+    holder = editing.holder(aid) if aid != "plan" else None
+    return JSONResponse(
+        {
+            "plan": view.plan,
+            "digest": view.digest,
+            "plan_id": view.plan_id,
+            "frozen": view.frozen,
+            "editable": aid != "plan"
+            and not view.frozen
+            and bool(holder)
+            and holder["user"] == actor.get("username"),
+            "issues": list(view.issues),
+            "issue": view.issue,
+        }
+    )
+
+
+@app.put("/a/{aid}/plan.json")
+async def plan_save(request: Request, aid: str) -> Response:
+    """Save from the builder. The box's loader checks the plan first; the lease, the frozen
+    state and the version the page saw are checked like every other save."""
+    actor = user_of(request)
+    if actor is None:
+        return JSONResponse({"error": "Please log in again."}, status_code=401)
+    if aid == "plan":
+        return JSONResponse({"error": READ_ONLY}, status_code=403)
+    target = pv.for_agreement(settings, aid)
+    if target is None:
+        return JSONResponse({"error": "No such agreement."}, status_code=404)
+    origin = request.headers.get("origin")
+    if origin and urlsplit(origin).netloc != request.headers.get("host"):
+        return JSONResponse({"error": "Save from this site's plan builder."}, status_code=403)
+    if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
+        return JSONResponse({"error": "Expected a JSON request."}, status_code=415)
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 1_000_000:
+            return JSONResponse({"error": "The plan is too large."}, status_code=413)
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return JSONResponse({"error": "Could not read the request."}, status_code=422)
+    if not isinstance(payload, dict) or "plan" not in payload:
+        return JSONResponse({"error": "Expected {plan, expect}."}, status_code=422)
+    if busy := await _in_flight(aid):
+        return JSONResponse({"error": busy}, status_code=409)
+    async with _lock(aid):
+        view, error = load_view(target)
+        if view is None:
+            return JSONResponse({"error": error or "plan does not load"}, status_code=422)
+        if view.frozen:
+            return JSONResponse({"error": FROZEN}, status_code=409)
+        if held := _held(aid, actor):
+            return JSONResponse({"error": held}, status_code=409)
+        if not editing.holder(aid):
+            return JSONResponse(
+                {"error": "Press Edit this plan first; the agreement is not taken for editing."},
+                status_code=409,
+            )
+        if stale := _stale(view, str(payload.get("expect") or "")):
+            return JSONResponse({"error": stale}, status_code=409)
+        digest, issues = pv.save_plan(target, payload["plan"], actor)
+        if digest is None:
+            return JSONResponse(
+                {"error": "The box would reject this plan; nothing was saved.", "issues": issues},
+                status_code=422,
+            )
+        saved(actor)
+        return JSONResponse({"digest": digest, "message": "Saved. This is a new version."})
+
+
+@app.post("/archive/{name}/delete")
+async def delete_archived(request: Request, name: str) -> Response:
+    """Remove an agreement in the previous plan format from agreements/_archive/."""
+    if user_of(request) is None:
+        return to_login(request)
+    problem = pv.delete_archived(settings, name)
+    if problem:
+        return back("/agreements", err=problem)
+    return back("/agreements", msg=f"Archived agreement {name} deleted.")
 
 
 @app.post("/a/{aid}/plan/chat")
@@ -1118,29 +1276,6 @@ async def delete_agreement(request: Request, aid: str) -> Response:
     return back("/agreements", msg=f"{aid} deleted.")
 
 
-@app.get("/a/{aid}/plan/step/{name}")
-async def plan_step(request: Request, aid: str, name: str) -> Response:
-    target, redirect = agreement(request, aid)
-    if redirect:
-        return redirect
-    view, error = load_view(target)
-    step = view.step(name) if view else None
-    if view and step is None:
-        return back(f"/a/{aid}/plan", err=f"No step named {name}")
-    edit, editor = _edit_mode(request, aid, request.query_params.get("edit") == "1")
-    return render(
-        request,
-        "step.html",
-        view=view,
-        error=error,
-        step=step,
-        edit=edit,
-        editor=editor,
-        base=f"/a/{aid}",
-        aid=aid,
-    )
-
-
 def _edit_mode(request: Request, aid: str, wanted: bool) -> tuple[bool, dict | None]:
     """Edit mode belongs to the lease holder. Returns (edit, the other holder or None)."""
     if aid == "plan":
@@ -1157,85 +1292,6 @@ def _edit_mode(request: Request, aid: str, wanted: bool) -> tuple[bool, dict | N
     if editing.acquire(aid, actor):
         return False, editing.holder(aid)
     return True, None
-
-
-@app.post("/a/{aid}/plan/step/{name}/settings")
-async def save_settings(request: Request, aid: str, name: str) -> Response:
-    target, redirect = agreement(request, aid, write=True)
-    if redirect:
-        return redirect
-    async with _lock(aid):
-        view, error = load_view(target)
-        here = f"/a/{aid}/plan/step/{name}?edit=1"
-        if view is None:
-            return back(f"/a/{aid}/plan", err=error or "plan does not load")
-        if view.frozen:
-            return back(here, err=FROZEN)
-        form = {k: str(v) for k, v in (await request.form()).items()}
-        if held := _held(aid, user_of(request) or {}):
-            return back(here, err=held)
-        if stale := _stale(view, form.pop("expect", "")):
-            return back(here, err=stale)
-        errors = pv.save_step_settings(target, name, form, user_of(request) or {})
-        if errors:
-            return back(here, err="; ".join(errors))
-        saved(user_of(request))
-        return back(here, msg="Settings saved. This is a new version.")
-
-
-@app.post("/a/{aid}/plan/step/{name}/code")
-async def save_code(
-    request: Request, aid: str, name: str, source: str = Form(...), expect: str = Form("")
-) -> Response:
-    target, redirect = agreement(request, aid, write=True)
-    if redirect:
-        return redirect
-    async with _lock(aid):
-        view, error = load_view(target)
-        here = f"/a/{aid}/plan/step/{name}?edit=1"
-        if view is None:
-            return back(f"/a/{aid}/plan", err=error or "plan does not load")
-        if view.frozen:
-            return back(here, err=FROZEN)
-        if held := _held(aid, user_of(request) or {}):
-            return back(here, err=held)
-        if stale := _stale(view, expect):
-            return back(here, err=stale)
-        problem = pv.save_function(target, name, source, user_of(request) or {})
-        if problem:
-            return back(here, err=problem)
-        saved(user_of(request))
-        return back(here, msg=f"{name}() saved. This is a new version.")
-
-
-@app.post("/a/{aid}/plan/prompt/{prompt_id}")
-async def save_prompt(
-    request: Request,
-    aid: str,
-    prompt_id: str,
-    text: str = Form(...),
-    step: str = Form("classify"),
-    expect: str = Form(""),
-) -> Response:
-    target, redirect = agreement(request, aid, write=True)
-    if redirect:
-        return redirect
-    async with _lock(aid):
-        view, error = load_view(target)
-        here = f"/a/{aid}/plan/step/{step}?edit=1"
-        if view is None:
-            return back(f"/a/{aid}/plan", err=error or "plan does not load")
-        if view.frozen:
-            return back(here, err=FROZEN)
-        if held := _held(aid, user_of(request) or {}):
-            return back(here, err=held)
-        if stale := _stale(view, expect):
-            return back(here, err=stale)
-        problem = pv.save_prompt(target, prompt_id, text, user_of(request) or {})
-        if problem:
-            return back(here, err=problem)
-        saved(user_of(request))
-        return back(here, msg="Prompt saved. This is a new version.")
 
 
 @app.get("/a/{aid}/plan/bundle.zip")

@@ -21,23 +21,13 @@ def check(base, head):
     if not changes or any(not p.startswith("plan/") for p in changes):
         raise ValueError("Automatic approval accepts plan-only changes")
     trusted = decode(Path("static/aiab/baked/trust.json").read_bytes())
-    paths = ["__init__.py", "plan.py", "plan.json", "signatures/lab.sig", "signatures/auditor.sig"]
-    tree = git("ls-tree", "-r", head, "--", "plan/prompts").decode().splitlines()
-    for entry in tree:
-        metadata, path = entry.split("\t", 1)
-        if metadata.split()[0] != "100644" or not re.fullmatch(
-            r"plan/prompts/[A-Za-z0-9_-]{1,128}\.txt", path
-        ):
-            raise ValueError("Invalid prompt path")
-        paths.append(path.removeprefix("plan/"))
-    if len(paths) > 37:
-        raise ValueError("Too many inputs")
+    paths = ["plan.json", "signatures/lab.sig", "signatures/auditor.sig"]
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         for path in paths:
             spec = f"{head}:plan/{path}"
             entry = git("ls-tree", head, "--", "plan/" + path).decode()
-            if not entry.startswith("100644 blob ") or int(git("cat-file", "-s", spec)) > 65536:
+            if not entry.startswith("100644 blob ") or int(git("cat-file", "-s", spec)) > 262144:
                 raise ValueError("Expected bounded regular file")
             dest = folder / path
             dest.parent.mkdir(parents=True, exist_ok=True)

@@ -2,24 +2,17 @@
 
 import argparse
 import asyncio
+import re
 from pathlib import Path
 
 from aiab.audit.model import PinnedModel
-from aiab.audit.protocol import AuditError, canonical, clone, decode, digest, validate
+from aiab.audit.protocol import AuditError, canonical, decode, digest, validate
 from aiab.baked.bundle import file_digest, load_bundle
 from aiab.baked.executor import execute
 from aiab.baked.records import RECORD
 from aiab.config import read_private_key
 from auditor.audit import write_new
 from auditor.evaluate import summarize
-
-
-def decision_digest(bundle):
-    files = dict(bundle.files)
-    cfg = clone(bundle.config)
-    cfg["classification"].pop("evaluation")
-    files["plan.json"] = canonical(cfg)
-    return file_digest(files)
 
 
 def dataset(folder):
@@ -36,15 +29,63 @@ def dataset(folder):
     return files, expected
 
 
+STOP = {"about", "their", "there", "these", "this", "that", "with", "from", "into", "other"}
+
+
+def stems(text):
+    return {w[:5] for w in re.findall(r"[a-z]{4,}", text.lower()) if w not in STOP}
+
+
 class MockModel:
+    """Development-only stand-in for the pinned model: deterministic, keyword-based, and
+    never accepted as evaluation evidence. A classifier gets the label whose name and
+    description overlap most with the text; a free-form step gets its input echoed."""
+
     model = {}
 
-    async def check_context(self, text, policy):
+    async def check_messages(self, content, max_output_tokens):
         return None
 
-    async def classify(self, text, policy, model):
-        terms = ("culture", "primer", "protocol", "iptg", "od600", "assay", "soluble")
-        return min(1.0, 0.3 * sum(term in text.lower() for term in terms))
+    async def complete(self, content, schema, max_output_tokens):
+        props = schema["properties"]
+        user = content[-1]["content"]
+        if "label" in props:
+            labels = props["label"]["enum"]
+            words = stems(user)
+            # The prompt the box built (prompts.py): a description line per label, then the
+            # plan's examples: the flagged labels' examples, then the others'.
+            lines = content[0]["content"].splitlines()
+            evidence = {label: set() for label in labels}
+            flagged, section = [], None
+            for line in lines:
+                if line.startswith("Labels"):
+                    section = "labels"
+                elif line.startswith("Examples that should get"):
+                    section = "positive"
+                    flagged = [lab for lab in labels if lab in line.split(":")[0]]
+                elif line.startswith("Examples that should not"):
+                    section = "negative"
+                elif line.startswith("- ") and section:
+                    if section == "labels":
+                        label = line[2:].split(":")[0]
+                        if label in evidence:
+                            evidence[label] |= stems(line.replace("_", " "))
+                    else:
+                        targets = (
+                            flagged
+                            if section == "positive"
+                            else [lab for lab in labels if lab not in flagged]
+                        )
+                        for label in targets:
+                            evidence[label] |= stems(line)
+            hits = {label: len(evidence[label] & words) for label in labels}
+            best = max(labels, key=lambda lab: (hits[lab], -labels.index(lab)))
+            score = min(1.0, 0.5 + 0.1 * hits[best]) if hits[best] > 0 else 0.3
+            return {"label": best, "score": round(score, 3)}
+        if set(props) == {"text"}:
+            return {"text": "[mock summary] " + user[-2000:]}
+        fill = {"boolean": False, "integer": 0, "number": 0.0, "string": "mock"}
+        return {k: fill[v["type"]] for k, v in props.items()}
 
 
 async def evaluate(folder, trust, model, mode):
@@ -67,8 +108,8 @@ async def evaluate(folder, trust, model, mode):
         }
         try:
             result = await execute(bundle, records, model)
-            if set(result) != {"flagged"} or type(result["flagged"]) is not bool:
-                raise AuditError("invalid_output")
+            if type(result.get("flagged")) is not bool:
+                raise AuditError("invalid_output")  # the dataset judges one boolean, flagged
             case.update(
                 result=result,
                 outcome=("t" if result["flagged"] == label else "f")
@@ -80,7 +121,7 @@ async def evaluate(folder, trust, model, mode):
     return {
         "schema": "aiab-folder-evaluation/v1",
         "mode": mode,
-        "decision_digest": decision_digest(bundle),
+        "plan_digest": bundle.digest,
         "test_set_digest": file_digest(files),
         "cases": cases,
         **summarize(cases),

@@ -64,9 +64,27 @@
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="4" class="text-muted">No agreements yet. New agreement makes one from the template or as a copy of the deployed plan.</td></tr>
+  <tr><td colspan="4" class="text-muted">No agreements yet. New agreement makes one from a minimal plan or as a copy of the deployed plan.</td></tr>
   {% endfor %}
   </tbody>
 </table>
+
+{% if archived %}
+<details class="info" style="margin-top: var(--space-6)">
+  <summary>Archived · {{ archived | length }} agreement{{ "s" if archived | length != 1 }} in the previous plan format</summary>
+  <div class="info-body">
+  <p class="explain">These were written for the earlier plan format (Python functions and a plan.json of schema aiab-baked-plan/v1). The box no longer runs that format, so they cannot be opened, signed or deployed; they are kept under <span class="mono">agreements/_archive/</span> until deleted. Make a new agreement to express the same audit as a graph.</p>
+  <table class="table">
+    <thead><tr><th>Agreement</th><th>Format</th><th></th></tr></thead>
+    <tbody>
+    {% for a in archived %}
+    <tr><td><strong>{{ a.plan_id }}</strong><br><span class="text-muted">agreements/_archive/{{ a.id }} · {{ a.files }} file{{ "s" if a.files != 1 }}</span></td><td class="mono">{{ a.schema }}</td>
+      <td class="actions"><form method="post" action="/archive/{{ a.id }}/delete" class="inline" data-confirm="Delete the archived agreement {{ a.plan_id }}? Its folder is removed. This cannot be undone."><button class="btn btn--ghost btn--sm">Delete</button></form></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</details>
+{% endif %}
 
 {% endblock %}

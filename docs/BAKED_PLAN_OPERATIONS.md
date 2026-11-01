@@ -2,24 +2,25 @@
 
 Current deployed release: **v0.2.2**. [Deployment pins](../static/deploy/tinfoil/audit/release.json) and [live acceptance evidence](../static/demo/audit/baked-evidence/README.md).
 
-The v0.5 runtime runs one jointly signed `plan/` bundle per image. The six functions
-in `plan/plan.py` now run through the static runtime, in order: (optionally) filter, group into
-queries, classify each query, aggregate scores, emit result. Appeals remain an
-explicitly uncalled post-demo function. The UI and native logger are separate
-workstreams. The broader mandatory requirements are tracked in
+The runtime runs one jointly signed `plan/` bundle per image. The plan is a graph
+(`plan/plan.json`, format `aiab-plan-ir/v0`): the logs of a run, Python steps, model steps, a
+classifier and the final report, run in dependency order by `static/aiab/baked/graph.py`
+inside the sandboxed worker, with every model call made by the parent broker. The plan is
+written in the agreement UI's builder, which applies the same checks (`plan_ir.py`). The UI
+and native logger are separate workstreams. The broader mandatory requirements are tracked in
 [REQUIREMENTS_COMPLIANCE.md](REQUIREMENTS_COMPLIANCE.md).
 
-Machine-readable [plan](../schemas/baked-plan-v1.schema.json), [submission](../schemas/record-submission-v1.schema.json), [logger evidence](../schemas/record-export-evidence-v1.schema.json) and [report](../schemas/report-v3.schema.json) schemas are checked in. Semantic restrictions are enforced by the static runtime.
+Machine-readable [plan](../schemas/plan-ir-v0.schema.json) (generated from `plan_ir.py`), [submission](../schemas/record-submission-v1.schema.json), [logger evidence](../schemas/record-export-evidence-v1.schema.json) and [report](../schemas/report-v3.schema.json) schemas are checked in. Semantic restrictions are enforced by the static runtime.
 
 ## Contract and security decisions
 
-- Bundle schema: **`aiab-baked-plan/v1`**. The old registered-JSON plan also used
-  `aiab-plan/v1` but had different fields; new files deliberately have a distinct name.
+- Plan format: **`aiab-plan-ir/v0`** (`static/aiab/baked/plan_ir.py`). The earlier
+  `aiab-baked-plan/v1` bundles (plan.py and prompts) no longer load; the UI archives them.
 - Report: **`aiab-report/v3`**, adding `aiab_id`, `image_digest`, `egress_max_bits`.
   Existing v1/v2 verifiers and archived evidence remain unchanged.
 - `plan_digest`: SHA-256 over `AIAB/folder/v1\0`, then each sorted UTF-8 path and raw
   content, framed by 4-byte path length and 8-byte content length (big endian).
-  Included: `__init__.py`, `plan.py`, `plan.json`, `prompts/*.txt`.
+  Included: `plan.json` alone.
   Tests, signatures, READMEs and historical JSON examples are excluded and never
   executed by the loader. Changing whitespace in an included file changes the hash.
 - Each Ed25519 signature covers the existing domain-separated canonical message
@@ -34,10 +35,11 @@ Machine-readable [plan](../schemas/baked-plan-v1.schema.json), [submission](../s
   resource limits, and a seccomp syscall allowlist installed before plan code runs.
   File opens, sockets, process creation, exec and cross-process memory access are
   blocked. The source is normal compiled Python, not the older expression interpreter.
-  Static import checks admit only named API symbols published in manifest restrictions; whole modules and internal helpers are rejected. These checks are an additional restriction, not the isolation boundary.
-- The parent broker validates every query against authenticated input and limits,
-  preflights every complete query's tokenizer count before the first inference,
-  enforces prompt/model/call order, validates output, and signs the report. Worker
+  Python steps may import only re, math, collections, itertools, statistics and json; reflective builtins, private attributes and classes are refused by a static check. These checks are an additional restriction, not the isolation boundary.
+- The parent broker builds every prompt itself from the signed plan (its framing first),
+  serves each model node once, enforces the call budget and text size, preflights every
+  prompt of a node with the tokenizer before that node's first inference, validates every
+  answer against the schema it dictated, validates the result, and signs the report. Worker
   stdout is bounded protocol input; worker stderr is discarded. A failed sandbox
   startup fails the run; it never falls back to in-process execution.
 - Bounded output schemas include booleans, integer ranges, string enums/bounded
@@ -58,20 +60,11 @@ uv run python -m aiab.dryrun ../plan --mock --output /tmp/mock-evaluation.json
 uv run python -m aiab.dryrun ../plan \
   --credential-file /absolute/private/inference.key \
   --output /tmp/real-evaluation.json
-
-# Commit real metrics into an UNSIGNED replacement plan.json.
-uv run python -m auditor.baked --folder ../plan commit-evaluation \
-  --evaluation /tmp/real-evaluation.json --output /tmp/final-plan.json
 ```
 
-Review `/tmp/final-plan.json`, replace `plan/plan.json` with it, then both parties
-independently sign that exact bundle. Evaluation data and results must accompany
-review: a signed hash alone is not evidence of accuracy. The demo's three samples
-are a smoke test. If local networking cannot reach the inference enclave, deploy
-an explicitly signed evaluation candidate, run the synthetic acceptance driver on
-that actual service, then use its `evaluation` artifact to prepare/re-sign/redeploy
-the final bundle. A candidate with zero evaluation commitments is not a final
-agreement with measured FP/FN. `commit-evaluation` rejects mock evaluation records.
+Review the evaluation, then both parties independently sign that exact bundle. Evaluation
+data and results must accompany review: a signed hash alone is not evidence of accuracy.
+The mock model is a development stand-in; `--mock` runs are never evidence.
 
 ```sh
 uv run python -m auditor.baked --folder ../plan digest

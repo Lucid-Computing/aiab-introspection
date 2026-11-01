@@ -1,4 +1,13 @@
-"""Parent-owned inference broker and independent validation of worker messages."""
+"""Parent-owned inference broker and independent validation of worker messages.
+
+The worker runs the plan; this process owns the model. For each model node the worker
+sends one batch of texts. The broker checks that the node is a model node of the signed
+plan and has not been served before, that the texts and the total number of calls stay
+within the plan's limits, builds the prompts itself (prompts.py), preflights every text
+against the model's context before the first inference of that batch, validates every
+answer against the schema it dictated, and only then hands the answers back. Worker stdout
+is bounded protocol input; worker stderr is discarded.
+"""
 
 from __future__ import annotations
 
@@ -7,19 +16,21 @@ import os
 import sys
 from pathlib import Path
 
-from aiab.audit.protocol import AuditError, canonical, decode
+from aiab.audit.protocol import AuditError, canonical, decode, validate
+from aiab.baked import prompts
 from aiab.baked.output import check_result
+from aiab.baked.worker import STAGES
 
-
-def query_text(query):
-    return canonical(query["records"]).decode()
+MODEL_NODES = ("classifier", "run_llm")
 
 
 async def execute(bundle, records, model):
     cfg = bundle.config
+    limits = cfg["limits"]
+    nodes = {n["id"]: n for n in bundle.plan["nodes"]}
     worker = None
     try:
-        async with asyncio.timeout(cfg["limits"]["max_runtime_seconds_per_run"]):
+        async with asyncio.timeout(limits["max_runtime_seconds_per_run"]):
             worker = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-B",
@@ -52,83 +63,69 @@ async def execute(bundle, records, model):
                     code = value.get("error")
                     if set(value) == {"kind", "error"} and code in {
                         "plan_start_failed",
-                        "plan_query_failed",
-                        "plan_classify_failed",
-                        "plan_metric_failed",
-                        "plan_report_failed",
+                        *STAGES.values(),
                     }:
                         raise AuditError(code)
                     raise AuditError("execution_failed")
                 return value
 
             await send(
-                {"config": cfg, "records": records, "source": bundle.files["plan.py"].decode()}
+                {
+                    "plan": bundle.plan,
+                    "order": list(bundle.order),
+                    "records": records,
+                    "limits": limits,
+                }
             )
-            message = await receive()
-            if set(message) != {"kind", "queries"} or message["kind"] != "queries":
-                raise AuditError("execution_failed")
-            queries = message["queries"]
-            if (
-                not isinstance(queries, list)
-                or len(queries) > cfg["limits"]["max_model_calls_per_run"]
-            ):
-                raise AuditError("execution_failed")
-            allowed = {canonical(record) for record in records}
-            encoded_queries = []
-            for query in queries:
-                if not isinstance(query, dict) or set(query) != {
-                    "records",
-                    "agent_id",
-                    "session_id",
-                }:
-                    raise AuditError("execution_failed")
-                items = query["records"]
-                if (
-                    not isinstance(items, list)
-                    or not 1 <= len(items) <= cfg["limits"]["max_logs_per_query"]
-                ):
-                    raise AuditError("input_too_large")
-                if any(canonical(r) not in allowed for r in items):
-                    raise AuditError("execution_failed")
-                if query["agent_id"] is not None and any(
-                    r["agent_id"] != query["agent_id"] for r in items
-                ):
-                    raise AuditError("execution_failed")
-                if query["session_id"] is not None and any(
-                    r["session_id"] != query["session_id"] for r in items
-                ):
-                    raise AuditError("execution_failed")
-                # Check every complete query before any inference, never truncate.
-                await model.check_context(query_text(query), bundle.policy)
-                encoded_queries.append(canonical(query))
-            await send({"ready": True})
-            count = 0
+            served = set()
+            calls = 0
             while True:
                 message = await receive()
+                if not isinstance(message, dict):
+                    raise AuditError("execution_failed")
                 if message.get("kind") == "result":
-                    if set(message) != {"kind", "result"} or count != len(queries):
+                    if set(message) != {"kind", "result"}:
                         raise AuditError("execution_failed")
                     check_result(message["result"], cfg)
                     worker.stdin.close()
                     if await worker.wait() != 0:
                         raise AuditError("execution_failed")
                     return message["result"]
+                if set(message) != {"kind", "node", "texts"} or message["kind"] != "llm":
+                    raise AuditError("execution_failed")
+                node = nodes.get(message["node"])
+                texts = message["texts"]
                 if (
-                    set(message) != {"kind", "prompt_id", "query"}
-                    or message["kind"] != "classify"
-                    or count >= len(queries)
+                    node is None
+                    or node["type"] not in MODEL_NODES
+                    or node["id"] in served
+                    or not isinstance(texts, list)
+                    or any(not isinstance(t, str) for t in texts)
                 ):
                     raise AuditError("execution_failed")
                 if (
-                    message["prompt_id"] != cfg["classification"]["prompt_id"]
-                    or canonical(message["query"]) != encoded_queries[count]
+                    node["type"] == "run_llm"
+                    and node["config"]["output"]["type"] == "Value"
+                    and len(texts) != 1
                 ):
                     raise AuditError("execution_failed")
-                count += 1
-                score = await model.classify(
-                    query_text(message["query"]), bundle.policy, model.model
-                )
-                await send({"score": score, "label": ""})
+                served.add(node["id"])
+                calls += len(texts)
+                if calls > limits["max_model_calls_per_run"]:
+                    raise AuditError("input_too_large", 413)
+                if any(len(t.encode("utf-8")) > limits["max_input_utf8_bytes"] for t in texts):
+                    raise AuditError("input_too_large", 413)
+                budget = node["config"]["model"]["max_output_tokens"]
+                requests = [prompts.request(node, text) for text in texts]
+                # Check every complete prompt of this node before any inference, never truncate.
+                for content, _ in requests:
+                    await model.check_messages(content, budget)
+                answers = []
+                for content, schema in requests:
+                    answer = await model.complete(content, schema, budget)
+                    validate(answer, schema, "model_output_invalid")
+                    answers.append(prompts.normalize_answer(node, answer))
+                await send({"answers": answers})
     except TimeoutError:
         raise AuditError("execution_timeout") from None
     except AuditError:

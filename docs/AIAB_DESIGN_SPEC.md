@@ -269,6 +269,15 @@ Codes "in report" are returned in a signed `FAILED` envelope. They are also the 
 
 ## 3. Dynamic part: the plan (owner: Teddy)
 
+> **Implemented form (v0.6).** The plan is now the graph of 3.3, not the fixed functions of
+> 3.1 and 3.4: one `plan/plan.json` (format `aiab-plan-ir/v0`) of five block types (Input
+> Logs, Classifier, Run Python, Run LLM, Final Report), checked by `static/aiab/baked/plan_ir.py`,
+> run by `graph.py` in the sandboxed worker, with every model call built and made by the box
+> (S-8 holds: the box's framing comes first, the plan's instructions after it). The report's
+> fields are the output schema; only Classifications aggregates and declared Value fields can
+> be released. The plan is written in the agreement UI's builder, which applies the same checks.
+> The text below is the earlier design and remains the rationale.
+
 ### 3.1 How the static and dynamic parts connect
 
 It is not frontend and backend. The static part is the program that runs; the plan is a plugin it loads. The static part decides which functions a plan must provide and in what order they are called; the plan only fills in what those functions do. The plan calls back into the static part for one thing only: model inference.

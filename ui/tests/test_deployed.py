@@ -40,7 +40,7 @@ def test_run_uses_signed_production_not_unsigned_draft(tmp_path, monkeypatch):
     # The frozen demo plan stands in for a released production plan: the repository's own
     # plan/ and release pins change with every deploy and are not test data.
     root = Path(__file__).resolve().parents[2]
-    fixture = root / "static/tests/fixtures/demo-plan"
+    fixture = root / "static/tests/fixtures/graph-plan"
     pins = json.loads((root / "static/deploy/tinfoil/audit/release.json").read_text())
     from aiab.baked.bundle import bundle_files, file_digest
 

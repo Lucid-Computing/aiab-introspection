@@ -101,9 +101,9 @@ def main():
     print(
         json.dumps(
             {
-                "task": cfg["classification"]["problem"],
-                "decision_threshold": cfg["classification"]["threshold"],
-                "output_schema": cfg["output_schema"],
+                "plan_id": cfg["plan_id"],
+                "task": cfg.get("description", cfg.get("title", "")),
+                "steps": [f"{n['id']} ({n['type']})" for n in cfg["nodes"]],
                 **verified,
             },
             indent=2,
