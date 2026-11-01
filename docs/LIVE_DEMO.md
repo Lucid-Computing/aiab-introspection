@@ -29,8 +29,8 @@ A negative benign case and positive bio case must match their expected results f
 the script to declare success. A mismatch is reported, not hidden. These two cases
 are a demonstration, not evidence of broad classifier accuracy.
 
-The current plan is baked into the image: this script **does not submit or deploy
-a new plan**. It executes the existing jointly signed plan against new submissions.
+No plan is baked into the image: this script sends the repository's jointly signed
+`plan/` folder with each submission and the box verifies it for that run.
 Historical fixture timestamps deliberately match its signed time window.
 
 Requirements: `uv`, repository dependencies (installed automatically from the

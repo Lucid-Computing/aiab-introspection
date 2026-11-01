@@ -8,26 +8,25 @@ How a change travels from the agreement UI to the running box, and which branch 
 | --- | --- | --- |
 | `master` | development of the box (`static/`), the UI (`ui/`), docs | ordinary commits and pull requests |
 | `ui-design` | UI work until it is merged into `master` | the UI developer |
-| `production` | what the image is built from: `static/`, `trust.json`, `plan/`, plus the agreement drafts in `agreements/` | three ways, below |
+| `production` | what the image is built from: `static/` and `trust.json`, plus the agreement drafts in `agreements/` | three ways, below |
 
 Nothing is deployed from `master`. `production` only moves in three ways:
 
-1. **Agreement drafts** (`agreements/<name>/`): they live on the UI server's disk only and are git-ignored; nothing reaches GitHub until a plan is deployed. Several people edit them in the same UI, and a save made from an older version is refused rather than overwriting a newer one. (Decided 24 Oct 2026; `AIAB_PUSH_DRAFTS=1` still pushes drafts to the checkout's branch for anyone who wants that backup.)
-2. **The deployed plan** (`plan/`): Deploy in the UI pushes `plan/<name>-<digest8>` and opens a pull request against `production` (`AIAB_DEPLOY_BASE=production`). CI (`approve-plan.yml`, which only watches pull requests into `production`) checks that only `plan/` changed and that both signatures verify against `production`'s `static/aiab/baked/trust.json`, then merges it. No person clicks.
-3. **A party's public key** (`static/aiab/baked/trust.json`): when a party submits a public key on the Sign screen, the UI opens a pull request `keys/<party>-…` against `production` that changes only that file. `approve-keys.yml` checks it is well-formed and that nothing else changed, then merges it. The key reaches the box with the next plan deploy: the box verifies the baked plan's signatures against its trust entry at start-up, so a key and a plan signed with it must arrive together, and `release.yml` refuses to run when `plan/` on production is not signed by the keys in `trust.json`. Decided 24 Oct 2026 by Teddy: no human merge for now; when a real auditor is on board, require the other party's review of that file. The keys cannot ride along in a plan pull request: the plan check refuses anything outside `plan/`, and the keys cannot live inside the plan, since the plan is the thing they validate.
-4. **Box code** (`static/`): merged from `master` when a change is confirmed, like cutting a release.
+1. **Agreement drafts** (`agreements/<name>/`): they live on the UI server's disk only and are git-ignored; nothing reaches GitHub. Several people edit them in the same UI, and a save made from an older version is refused rather than overwriting a newer one. (Decided 24 Oct 2026; `AIAB_PUSH_DRAFTS=1` still pushes drafts to the checkout's branch for anyone who wants that backup.) A signed agreement is run from the Runs screen: the run sends the folder, signatures included, to the box with the records. No plan is ever baked or merged (decided 1 Nov 2026).
+2. **A party's public key** (`static/aiab/baked/trust.json`): when a party submits a public key on the Sign screen, the UI opens a pull request `keys/<party>-…` against `production` that changes only that file. `approve-keys.yml` checks it is well-formed and that nothing else changed, merges it and starts `release.yml`: the key reaches the box only inside a new measured image, because the box verifies every run's plan against the keys built into it. Decided 24 Oct 2026 by Teddy: no human merge for now; when a real auditor is on board, require the other party's review of that file.
+3. **Box code** (`static/`): merged from `master` when a change is confirmed, like cutting a release.
 
 ## From a merge on `production` to the live box
 
 ```
-UI Deploy --PR--> production --merge--> release.yml, started by the merge itself
+static/ or trust.json change --> production --push or approve-keys dispatch--> release.yml
                                    |  runs static/deploy/tinfoil/audit/release.py --execute:
                                    |    build-image.yml on production (image to ghcr.io, reproduced twice), config repo tagged and measured,
                                    |    Tinfoil told to run the new tag, the live box asked for its identity and health
                                    +--> commits the new release pins and the matching config/trust/manifest back to production [skip ci]
 ```
 
-The box never fetches anything at run time. The plan, the trust keys and the model binding are inside the image, so the hardware attestation covers them. Clients (the UI's Runs page, `scripts/demo-live`) read the release pins from the repository and refuse a box that does not match.
+The box never fetches anything at run time. The trust keys and the model binding are inside the image, so the hardware attestation covers them; the plan arrives signed with each run and is verified against those keys. Clients (the UI's Runs page, `scripts/demo-live`) read the release pins from the repository and refuse a box that does not match.
 
 ## What the release job needs, once
 
@@ -46,7 +45,7 @@ Tags are `vMAJOR.MINOR.PATCH`; unless one is given, the job takes the patch afte
 
 ## What the release checks, and what it no longer checks
 
-Before the deploy, the job checks one thing: `plan/` on production is signed by the keys in `static/aiab/baked/trust.json`, because the box verifies exactly that at start-up and would otherwise not come up. The build must come from the production commit being released, and the built plan must match the signed one.
+Before the deploy, the job checks that the build comes from the production commit being released. Nothing about plans: the image holds none.
 
 After Tinfoil reports the new tag running, the job asks the box for its attestation and health through the same client the UI uses. That is the proof that the live box is the image just measured. The pins (`release.json` and the config, trust, manifest and policy-digest files) are then committed back, also when that last check failed, so the repository always says what the box runs.
 

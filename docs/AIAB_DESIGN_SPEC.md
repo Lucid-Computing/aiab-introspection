@@ -5,6 +5,11 @@
 > required afterward. See [BAKED_PLAN_OPERATIONS.md](BAKED_PLAN_OPERATIONS.md) for
 > implemented contracts, commands, evidence and remaining dependencies.
 >
+> 1 Nov 2026: plans are no longer baked into the image. Each run submission carries the
+> jointly signed plan folder; the box verifies it against the keys in its measured image,
+> runs it once and stores nothing. Steps 3 to 6 of 3.2 and every "baked plan" below are
+> history; [BAKED_PLAN_OPERATIONS.md](BAKED_PLAN_OPERATIONS.md) has the current contract.
+>
 > Implementation clarifications: folder bundles use `aiab-baked-plan/v1`, and
 > expanded reports use `aiab-report/v3`, to avoid reusing deployed incompatible
 > schemas. CPU hardware is the existing AMD SEV-SNP Tinfoil CVM. Signed exact-byte
@@ -127,7 +132,7 @@ flowchart LR
 
 Admission, in order, before any inference:
 
-1. `plan_digest` matches the signed plan sent with the submission (verified first), or the baked plan when none is sent, else `invalid_plan`.
+1. `plan_digest` matches the signed plan sent with the submission (verified first), else `invalid_plan`.
 2. `logger_evidence` verifies: logger signature, chain continuity, checkpoint, else `invalid_logger_evidence`. (JN)
 3. Every record is covered by the evidence and none is outside it; the commitment is over the exact bytes the plan consumes.
 4. `input_scope` lies inside the plan's `input_scope` (window, agents, logger key), else `scope_mismatch`. This is the F-4 / S-5 scope check.
@@ -149,7 +154,7 @@ JN TO DEFINE: ingress protocol
 
 ### 2.4 Scope (F-4, S-5)
 
-There is no ad-hoc query endpoint. The only queries are jointly signed plans, sent with the run or baked into the image, verified against the same baked keys, so an out-of-scope query cannot run; the per-run scope check is step 4 above. No appeal endpoint in the demo: a corrected input is a new run, a different prompt is a new plan.
+There is no ad-hoc query endpoint. The only queries are jointly signed plans, sent with the run and verified against the keys in the image, so an out-of-scope query cannot run; the per-run scope check is step 4 above. No appeal endpoint in the demo: a corrected input is a new run, a different prompt is a new plan.
 
 ### 2.5 Egress (F-7, S-2, S-4, C-6)
 
@@ -252,7 +257,7 @@ TODO(JN): real values. `artifact_digest` is a blocker: the current Tinfoil class
 
 | Code | HTTP | Where | Meaning |
 | --- | --- | --- | --- |
-| `invalid_plan` | 400 | admission | `plan_digest` does not match the submitted (or baked) plan |
+| `invalid_plan` | 400 | admission | `plan_digest` does not match the submitted plan |
 | `unauthorized` | 401 | admission, retrieval | Not authenticated or not an agreed party |
 | `invalid_logger_evidence` | 400 | admission | Signature, chain, checkpoint or record binding failed |
 | `scope_mismatch` | 400 | admission | Outside the plan's `input_scope` |
@@ -341,13 +346,10 @@ How a plan becomes the running plan:
 
 1. **Digest.** `plan_digest` = sha256 over the sorted paths and contents of `plan/`, excluding `static/tests/` and `signatures/`.
 2. **Sign.** Each party runs `aiab plan sign` on its own machine with its own private key and gets `signatures/<party>.sig`. Private keys never touch the repo, CI or the box.
-3. **PR.** The UI or CLI opens the pull request carrying `plan/` and both signature files. GitHub approvals are not the trust mechanism; the PR is transport and history.
-4. **CI.** Recomputes the digest, verifies both signatures against the public keys pinned in the static part, checks `plan.json` against the restrictions (2.7), merges automatically.
-5. **Bake.** The build copies `plan/` into the image. The release publishes the image digest and the plan digest.
-6. **Boot.** The box re-verifies both signatures and refuses to start otherwise (2.8).
-7. **Verify.** Anyone clones the released commit, recomputes the digest, checks the signatures, rebuilds the image and compares it with the attestation. Every report carries the plan digest.
+3. **Run.** The run submission carries the folder's files and both signature files. The box recomputes the digest, verifies both signatures against the public keys in its measured image, checks `plan.json` against the restrictions (2.7), runs the plan once and stores nothing of it.
+4. **Verify.** Anyone rebuilds the image from the released commit and compares it with the attestation; every signed report carries the plan digest, which the verifier checks against the plan they signed.
 
-A new agreement repeats 1 to 6. A plan is never edited in place. The plan never names the image digest, so there is no circularity: the image digest covers the plan.
+(Until 1 Nov 2026 steps 3 to 6 were: PR carrying `plan/`, CI check and merge, bake into the image, re-verify at boot.) A new agreement repeats 1 to 3. A plan is never edited in place. The plan never names the image digest, so there is no circularity.
 
 ### 3.3 The plan as a graph
 

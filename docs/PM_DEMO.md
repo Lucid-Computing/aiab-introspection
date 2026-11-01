@@ -61,8 +61,9 @@ You should see:
 - `LIVE DEMO PASSED` and the directory containing your saved artifacts.
 
 Only the logger is stubbed. The service, inference and reports are live. This is a
-**run submission** demo using the already-deployed signed plan folder, not a new
-plan deployment. New baked plans still require rebuilding/redeploying the image.
+**run submission** demo: the signed `plan/` folder travels with each submission and
+the box verifies it against the keys in its image. No plan is baked; a new plan needs
+new signatures, not a new image.
 
 ## If something fails
 
