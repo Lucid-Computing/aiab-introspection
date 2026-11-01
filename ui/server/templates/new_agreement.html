@@ -13,7 +13,6 @@
     </div>
     <div class="field"><label>Start from</label>
       <label class="choice"><input type="radio" name="source" value="template" checked> a minimal plan: the logs, one classifier asking your question, a report releasing whether any session was flagged</label>
-      {% if view and not view.issue %}<label class="choice"><input type="radio" name="source" value="copy"> a copy of {{ view.plan_id }}, the deployed plan</label>{% endif %}
     </div>
     <div class="field"><label for="problem">The question this audit answers</label><textarea id="problem" name="problem" class="question" required>{{ form.problem or '' }}</textarea></div>
     {# "Create with AI" (chat=1) is hidden for now, with the chat card on the plan page. #}

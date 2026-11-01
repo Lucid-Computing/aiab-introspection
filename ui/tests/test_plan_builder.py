@@ -130,9 +130,6 @@ def test_builder_endpoints_follow_login_lease_frozen_and_version(draft, monkeypa
     assert response.status_code == 409 and "is editing" in response.json()["error"]
     editing.clear("builder-test")
 
-    # The deploy slot is read only.
-    assert client.put("/a/plan/plan.json", json={"plan": plan}).status_code == 403
-
 
 def test_plan_page_embeds_the_builder_and_lists_the_steps(draft, monkeypatch):
     web, client = client_for(monkeypatch, draft)
@@ -195,33 +192,16 @@ def test_archiving_twice_under_one_name_keeps_both(settings):
     assert names[0] == "dup" and names[1].startswith("dup-") and len(names) == 2
 
 
-def test_copying_an_old_format_deploy_slot_is_refused(settings, tmp_path):
-    slot = tmp_path / "old-plan"
-    slot.mkdir()
-    (slot / "plan.py").write_text("def build_query(logs, *, window):\n    return []\n")
-    (slot / "plan.json").write_text(json.dumps({"schema": "aiab-baked-plan/v1", "plan_id": "old"}))
-    old_slot = replace(settings, plan_dir=slot)
-    errors, created = pv.new_agreement(
-        old_slot, {"plan_id": "from-old", "problem": "q", "source": "copy"}, ACTOR
-    )
-    assert created is None and any("previous format" in e for e in errors)
-    assert not (settings.agreements_dir / "from-old").exists()
-    errors, created = pv.new_agreement(
-        old_slot, {"plan_id": "from-template", "problem": "q", "source": "template"}, ACTOR
-    )
-    assert not errors and pv.load_plan_view(pv.for_agreement(old_slot, created)).issue is None
-
-
 def test_new_agreement_form_checks_the_name_live(draft, settings, monkeypatch):
     """The form carries the names already taken and the hint the script fills in, so a bad
     name is explained as it is typed rather than after the submit."""
     (settings.agreements_dir / "_archive").mkdir(exist_ok=True)
-    assert pv.taken_names(settings) == ["_archive", "builder-test", "plan"]
+    assert pv.taken_names(settings) == ["_archive", "builder-test"]
     _web, client = client_for(monkeypatch, settings)
     page = client.get("/agreements/new").text
     assert 'id="plan_id-hint"' in page
     assert 'pattern="[A-Za-z0-9][A-Za-z0-9_\\-]{0,127}"' in page
-    assert 'var taken = ["_archive", "builder-test", "plan"]' in page
+    assert 'var taken = ["_archive", "builder-test"]' in page
     refused = client.post("/agreements/new", data={"plan_id": "_x", "problem": "q"})
     assert "starting with a letter or digit" in refused.text
     assert 'value="_x"' in refused.text  # the typed name stays, and the script explains it

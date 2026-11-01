@@ -391,75 +391,15 @@ ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"  # no leading _ or .: those fo
 
 
 def for_agreement(settings: Settings, agreement_id: str) -> Settings | None:
-    """Settings pointing at one agreement folder; "plan" is the deploy slot plan/."""
+    """Settings pointing at one agreement folder under agreements/."""
     from dataclasses import replace
 
-    if agreement_id == "plan":
-        return settings
     if not re.fullmatch(ID_PATTERN, agreement_id):
         return None
     folder = settings.agreements_dir / agreement_id
     if not folder.is_dir():
         return None
     return replace(settings, plan_dir=folder)
-
-
-def deployed_plan(settings: Settings) -> dict[str, Any]:
-    """The deploy slot, plan/: what was deployed, read only. Changes reach it only through a
-    merged plan pull request and a pull of the checkout, never through this UI."""
-    try:
-        view = load_plan_view(settings)
-    except Exception as exc:  # noqa: BLE001 - a broken deploy slot is shown, not raised
-        return {
-            "plan_id": "plan",
-            "digest": None,
-            "state": None,
-            "error": str(exc),
-            "trusted": False,
-        }
-    # Signed by the keys production trusts now? After a key change this turns false, and the
-    # box's plan counts as invalid until a plan signed with the new keys is deployed.
-    try:
-        load_bundle(settings.plan_dir, load_trust(settings), signed=True)
-        trusted = True
-    except (OSError, ValueError, AuditError):
-        trusted = False
-    return {
-        "plan_id": view.plan_id,
-        "digest": view.digest,
-        "state": view.state,
-        "error": None,
-        "trusted": trusted,
-    }
-
-
-FILE_CUT = 64 * 1024
-
-
-def plan_files(settings: Settings) -> list[dict[str, Any]]:
-    """Every file under the deploy slot, plan/, in path order, read only: what the box image
-    was built from. Caches and hidden files are left out; a long file is cut so the page
-    stays readable, and plan.json is shown indented."""
-    root = settings.plan_dir
-    files = []
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
-        rel = path.relative_to(root)
-        if any(part.startswith(".") or part == "__pycache__" for part in rel.parts):
-            continue
-        raw = path.read_bytes()
-        try:
-            text = pretty(raw) if rel.name == PLAN_FILE else raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = None
-        files.append(
-            {
-                "path": str(rel),
-                "size": len(raw),
-                "text": text[:FILE_CUT] if text is not None else None,
-                "cut": text is not None and len(text) > FILE_CUT,
-            }
-        )
-    return files
 
 
 def is_current_format(folder: Path) -> bool:
@@ -476,7 +416,7 @@ def is_current_format(folder: Path) -> bool:
 def archive_old_agreements(settings: Settings) -> list[str]:
     """Move agreements written for the previous plan format (plan.py and a plan.json of
     schema aiab-baked-plan/v1) into agreements/_archive/. The box no longer runs that
-    format, so they cannot be edited, signed or deployed; they stay on disk, read only,
+    format, so they cannot be edited, signed or run; they stay on disk, read only,
     until someone deletes them. Returns the names moved."""
     root = settings.agreements_dir
     if not root.is_dir():
@@ -539,14 +479,10 @@ def delete_archived(settings: Settings, name: str) -> str | None:
 
 
 def list_agreements(settings: Settings) -> list[dict[str, Any]]:
-    """Every folder under agreements/, the editable ones. The deploy slot is not an
-    agreement; see deployed_plan(). Folders in the previous format are archived first."""
+    """Every folder under agreements/: what people edit, sign and run. Folders in the
+    previous format are archived first."""
     archive_old_agreements(settings)
     rows = []
-    try:
-        selected = file_digest(bundle_files(settings.plan_dir))
-    except AuditError:
-        selected = None
     candidates = []
     if settings.agreements_dir.is_dir():
         candidates += [
@@ -565,7 +501,6 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "digest": view.digest,
                     "state": view.state,
                     "signed": view.signed_by_both,
-                    "selected": view.digest == selected,  # same files as the deploy slot
                     "error": None,
                     "issue": view.issue,
                 }
@@ -579,7 +514,6 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "digest": None,
                     "state": f"does not load: {type(exc).__name__}",
                     "signed": False,
-                    "selected": False,
                     "error": str(exc),
                     "issue": None,
                 }
@@ -595,8 +529,8 @@ def _copy_folder(source: Path, target: Path) -> None:
 
 def taken_names(settings: Settings) -> list[str]:
     """Names a new agreement cannot take: existing folders under agreements/ (archived or
-    not) and the deploy slot's. The form checks these as the user types."""
-    names = {"plan"}
+    not). The form checks these as the user types."""
+    names = set()
     if settings.agreements_dir.is_dir():
         names |= {f.name for f in settings.agreements_dir.iterdir()}
     return sorted(names)
@@ -605,10 +539,10 @@ def taken_names(settings: Settings) -> list[str]:
 def new_agreement(
     settings: Settings, form: dict[str, str], actor: dict[str, str]
 ) -> tuple[list[str], str | None]:
-    """Create agreements/<name>/ from the minimal template or as a copy of the deploy slot.
+    """Create agreements/<name>/ from the minimal template.
 
-    Signatures are never copied. The question becomes the plan's description and, for the
-    template, the classifier's instructions. Returns (errors, agreement id).
+    The question becomes the plan's description and the classifier's instructions.
+    Returns (errors, agreement id).
     """
     errors: list[str] = []
     plan_id = form.get("plan_id", "").strip()
@@ -617,57 +551,45 @@ def new_agreement(
             "name: letters, digits, _ and - only, up to 128 characters,"
             " starting with a letter or digit"
         )
-    elif plan_id == "plan" or (settings.agreements_dir / plan_id).exists():
+    elif (settings.agreements_dir / plan_id).exists():
         errors.append(f"name: an agreement called {plan_id} already exists")
     problem = form.get("problem", "").strip().replace("\r\n", "\n")
     if not 1 <= len(problem) <= 16384:
         errors.append("question: required, up to 16384 characters")
-    if form.get("source") == "copy" and not is_current_format(settings.plan_dir):
-        errors.append(
-            "start from: the deployed plan is in the previous format and cannot be copied;"
-            " start from the minimal plan instead"
-        )
     if errors:
         return errors, None
 
     target = settings.agreements_dir / plan_id
-    if form.get("source") == "copy":
-        _copy_folder(settings.plan_dir, target)
-    else:
-        _copy_folder(Path(__file__).with_name("template"), target)
+    _copy_folder(Path(__file__).with_name("template"), target)
     shutil.rmtree(target / "signatures", ignore_errors=True)
     path = target / PLAN_FILE
     plan = decode(path.read_bytes())
     plan["plan_id"] = plan_id
     plan["description"] = problem
-    if form.get("source") != "copy":
-        plan["title"] = problem.splitlines()[0][:120]
-        for node in plan["nodes"]:
-            if node["type"] == "classifier":
-                node["config"]["instructions"] = problem + "\n"
+    plan["title"] = problem.splitlines()[0][:120]
+    for node in plan["nodes"]:
+        if node["type"] == "classifier":
+            node["config"]["instructions"] = problem + "\n"
     path.write_bytes(canonical(plan) + b"\n")
     history = target / HISTORY_FILE
     if history.is_file():
         history.unlink()  # a new agreement starts its own trail
-    source = "a copy of the deployed plan" if form.get("source") == "copy" else "the template"
     record_change(
         for_agreement(settings, plan_id) or settings,
         actor,
         "created",
         "agreement",
-        f"created from {source}",
+        "created from the template",
     )
     return [], plan_id
 
 
 def delete_agreement(settings: Settings, agreement_id: str) -> str | None:
-    """Remove an agreement folder; never the deploy slot or the agreement it was made from."""
-    if agreement_id == "plan":
-        return "the deploy slot cannot be deleted"
+    """Remove an agreement folder. Runs keep their own frozen copy of what they sent."""
     target = for_agreement(settings, agreement_id)
     if target is None:
         return "unknown agreement"
-    shutil.rmtree(target.plan_dir)  # the deployed copy, if any, stays in plan/ and in git
+    shutil.rmtree(target.plan_dir)
     return None
 
 

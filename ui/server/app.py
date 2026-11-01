@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import subprocess
-import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -20,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from server import deployed, deploystatus, editing, plan_chat, proxylogs, publish, runs
+from server import deploystatus, editing, plan_chat, proxylogs, publish, runs
 from server import plan_view as pv
 from server.auth import SessionSigner, authenticate
 from server.box import box_status
@@ -43,7 +41,7 @@ async def lifespan(_: FastAPI):
     asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
     refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
     if settings.auto_pull:
-        publish.start_auto_pull(settings.git_dir)  # the deployed plan shown is the merged one
+        publish.start_auto_pull(settings.git_dir)  # the release pins follow the branch
     yield
     refresher.cancel()
 
@@ -159,7 +157,7 @@ templates.env.tests["long"] = is_long
 CHANGE_KINDS = {  # filter name -> history "kind" values it covers
     "plan": ("plan", "settings", "code", "prompt"),
     "signing": ("signature", "key"),
-    "deploy": ("deploy", "created"),
+    "runs": ("run", "created"),
 }
 FROZEN = "A valid signature exists for this version. Use Edit on the Agreements screen first."
 EDIT_WARNING = (
@@ -173,7 +171,7 @@ STAGES: list[tuple[str, str, list[str]]] = [
         "Build the plan as a graph. Every save changes the plan digest.",
         [
             "Create an agreement with a name and the question the audit answers, from a "
-            "minimal plan or as a copy of the deployed one.",
+            "minimal plan.",
             "Open it: the builder shows the plan as a graph of steps the box runs in order. "
             "Five kinds of step: the logs of a run, a Python step, a model step, a classifier "
             "and the final report. Each step shows what it reads and what it produces, so "
@@ -197,36 +195,35 @@ STAGES: list[tuple[str, str, list[str]]] = [
         ],
     ),
     (
-        "Build and deploy",
-        "Deploy selects the agreement; the build and the operator do the rest.",
+        "Run",
+        "Pick the signed agreement and the records; the box verifies both before it runs.",
         [
-            "Deploy copies the agreement into plan/, the folder the image is built from.",
-            "Commit and push; CI re-checks the digest, both signatures and the restrictions, "
-            "then merges and tags.",
-            "The image is built twice from clean inputs, both digests are published, and the "
-            "operator deploys the release to the confidential VM.",
+            "The Runs screen attests the box against the release pins, then sends the "
+            "chosen records and the signed agreement in one request.",
+            "The box recomputes the plan digest, verifies both signatures against the keys "
+            "built into its image, applies its restrictions, and only then runs the plan.",
+            "The box keeps nothing of the plan after the run: every run brings its own.",
         ],
     ),
     (
-        "Verify and run",
-        "Check the box runs this plan, then submit runs and read signed reports.",
+        "Verify",
+        "The signed report names the plan it ran; check it against the one you signed.",
         [
-            "The box reports the image digest and plan digest it runs; the Agreements screen "
-            "compares the plan digest with the deployed agreement.",
-            "Attestation is the hardware's signed statement of the same thing, for an "
+            "Every report carries the plan digest, the image digest and the input "
+            "commitment, signed with the box's per-boot key.",
+            "The Runs screen verifies the report online and once more offline, against the "
+            "frozen copy of the agreement the run sent.",
+            "Attestation is the hardware's signed statement of which image runs, for an "
             "independent check with the auditor's own tools.",
-            "Submitting runs and reading reports comes after, in a later version of this UI.",
         ],
     ),
 ]
 AFTER_SIGNING: list[str] = [
-    "CI re-checks the plan: digest, both signatures, the box's restrictions.",
-    "The pull request merges and the commit is tagged.",
-    "The image is built twice from clean inputs; the two digests must match.",
-    "The release publishes the image digest and the plan digest.",
-    "The operator deploys the tagged release to the confidential VM.",
-    "The box verifies the signatures again at start-up and reports both digests.",
-    "The attestation check confirms the running image is the published one.",
+    "The agreement can be run from the Runs screen by either party.",
+    "Each run copies the signed folder, attests the box, and sends the records and the plan.",
+    "The box verifies both signatures against the keys in its measured image before running.",
+    "The signed report names the plan digest; the UI verifies it online and offline.",
+    "A new image is built only when the box code or a party's key changes, never for a plan.",
 ]
 
 
@@ -306,21 +303,12 @@ def load_view(target: Settings) -> tuple[pv.PlanView | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
-READ_ONLY = (
-    "The deployed plan is read only: it is what the box runs. Edit, sign and deploy the"
-    " agreement it was made from, under agreements/."
-)
-
-
 def agreement(
     request: Request, aid: str, write: bool = False
 ) -> tuple[Settings | None, Response | None]:
-    """Resolve an agreement id, or the redirect to send instead. With ``write``, the deploy
-    slot (id "plan") is refused: every change happens in an agreement folder."""
+    """Resolve an agreement id, or the redirect to send instead."""
     if user_of(request) is None:
         return None, to_login(request)
-    if write and aid == "plan":
-        return None, back("/agreements", err=READ_ONLY)
     target = pv.for_agreement(settings, aid)
     if target is None:
         return None, back("/agreements", err=f"No agreement called {aid}")
@@ -502,54 +490,24 @@ async def agreements(request: Request) -> Response:
 
 
 async def _agreements_page(request: Request, **extra) -> Response:
-    """Agreements (editable, under agreements/), the deployed plan (read only, plan/), the
-    box, and the deployment in flight if there is one."""
-    deployed = pv.deployed_plan(settings)
-    box = await box_status(settings.box_url, deployed.get("digest") or "")
+    """Agreements (editable, under agreements/), the box and the parties' keys."""
+    box = await box_status(settings.box_url)
     rows = pv.list_agreements(settings)
-    box_digest = (box.get("manifest") or {}).get("plan_digest")
-    current, keys, copy = await asyncio.gather(
-        _current_deployment(box),
-        _keys(box),
-        asyncio.to_thread(publish.copy_status, settings.git_dir),
+    keys, copy = await asyncio.gather(
+        _keys(box), asyncio.to_thread(publish.copy_status, settings.git_dir)
     )
     for r in rows:
         r["editor"] = editing.holder(r["id"])
-        r["running"] = bool(r["digest"]) and r["digest"] == box_digest
-        r["deploying"] = bool(current) and current["digest"] == r["digest"] and current["state"]
     return render(
         request,
         "agreements.html",
         rows=rows,
         archived=pv.list_archived(settings),
-        deployed=deployed,
         box=box,
         keys=keys,
         copy=copy,
-        current=current,
-        busy=bool(current and current["state"] and current["state"]["busy"]),
         **extra,
     )
-
-
-@app.get("/deployed")
-async def deployed_files(request: Request) -> Response:
-    """The deploy slot as it is: every file under plan/, read only (the Read button)."""
-    if user_of(request) is None:
-        return to_login(request)
-    deployed = pv.deployed_plan(settings)
-    box = await box_status(settings.box_url, deployed.get("digest") or "")
-    return render(
-        request, "deployed.html", deployed=deployed, box=box, files=pv.plan_files(settings)
-    )
-
-
-async def _in_flight(aid: str) -> str | None:
-    """Why this agreement may not be touched right now: it is being deployed."""
-    current = await _current_deployment(await box_status(settings.box_url, ""))
-    if current and current["id"] == aid and current["state"] and current["state"]["busy"]:
-        return f"{current['name']} is being deployed ({current['state']['label']}); wait for it."
-    return None
 
 
 KEY_WAIT_MAX = 5 * 60  # a key submission older than this is no longer waited for
@@ -596,83 +554,6 @@ def _forget_key() -> None:
         _key_marker().unlink()
     except OSError:
         pass
-
-
-def _deploy_marker() -> Path:
-    return settings.agreements_dir / ".deploying.json"
-
-
-def _remember_deploy(aid: str, plan_id: str, digest: str, phase: str = "pushed", **more) -> None:
-    """The deployment in flight, so every visitor's page can follow it. ``phase`` is
-    pushing (the branch is on its way), pushed (GitHub takes over) or failed."""
-    try:
-        settings.agreements_dir.mkdir(parents=True, exist_ok=True)
-        _deploy_marker().write_text(
-            json.dumps(
-                {
-                    "id": aid,
-                    "name": plan_id,
-                    "digest": digest,
-                    "phase": phase,
-                    "at": time.time(),
-                    **more,
-                }
-            ),
-            encoding="utf-8",
-        )
-    except OSError:
-        pass
-
-
-async def _current_deployment(box: dict) -> dict | None:
-    """The last deployment started from this UI, with its live state from GitHub.
-    None when there was none, or when its pull request was closed without merging."""
-    try:
-        marker = json.loads(_deploy_marker().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    box_digest = (box.get("manifest") or {}).get("plan_digest")
-    phase = marker.get("phase", "pushed")
-    if phase == "pushing":
-        state = {"pr": None, "label": "deploying · pushing the branch", "tone": "now", "busy": True}
-        return {**marker, "state": state}
-    if phase == "failed":
-        state = {
-            "pr": None,
-            "label": "deploy failed · " + (marker.get("error") or "the push failed")[:160],
-            "tone": "bad",
-            "busy": False,
-        }
-        return {**marker, "state": state}
-    running = marker["digest"] == box_digest
-    state = await deploystatus.status(settings, marker["digest"], running)
-    if state is None and running:
-        # GitHub did not answer (or has no pull request for it), but the box already runs
-        # this version: the deployment is over, whatever GitHub says later.
-        state = {
-            "pr": None,
-            "label": "deployed · running in the box",
-            "tone": "ok",
-            "busy": False,
-            "box_matches": True,
-        }
-    elif state is None:
-        # Unknown. Hold other deployments only while this one can still be in flight; a
-        # release takes minutes, so after half an hour GitHub's silence must not keep
-        # every Deploy button grey.
-        young = time.time() - float(marker.get("at") or 0) < 30 * 60
-        state = {
-            "pr": None,
-            "label": "deploying · waiting for GitHub to show the pull request"
-            if young
-            else "deploy state unknown · GitHub did not answer",
-            "tone": "now" if young else "bad",
-            "busy": young,
-            "box_matches": False,
-        }
-    elif state["pr"]["state"] == "closed":
-        return None
-    return {**marker, "state": state}
 
 
 def _ui_keys() -> dict[str, str | None]:
@@ -762,15 +643,7 @@ async def copy_pull(request: Request) -> Response:
 async def new_agreement_form(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    view, error = load_view(settings)
-    return render(
-        request,
-        "new_agreement.html",
-        view=view,
-        error=error,
-        form={},
-        taken=pv.taken_names(settings),
-    )
+    return render(request, "new_agreement.html", form={}, taken=pv.taken_names(settings))
 
 
 @app.post("/agreements/new")
@@ -779,24 +652,18 @@ async def new_agreement(request: Request) -> Response:
         return to_login(request)
     form = {k: str(v) for k, v in (await request.form()).items()}
     if form.get("chat") == "1" and not settings.anthropic_api_key:
-        view, error = load_view(settings)
         return render(
             request,
             "new_agreement.html",
-            view=view,
-            error=error,
             form=form,
             taken=pv.taken_names(settings),
             err="AI creation is unavailable on this server. Create a draft manually instead.",
         )
     errors, created = pv.new_agreement(settings, form, user_of(request) or {})
     if errors or created is None:
-        view, error = load_view(settings)
         return render(
             request,
             "new_agreement.html",
-            view=view,
-            error=error,
             form=form,
             taken=pv.taken_names(settings),
             err="; ".join(errors),
@@ -811,41 +678,45 @@ def _pins_differ(pre: dict, box: dict) -> bool:
     return bool(pins and live and pins != live)
 
 
-async def _run_preflight(run_settings: Settings) -> dict:
+async def _run_preflight(folder: Path | None) -> dict:
     """The run's preconditions, plus one the files alone cannot tell: the release pins
     must be the release the box runs, or the attestation step fails with the SDK's
-    catch-all "model_unavailable". ``run_settings`` is the fresh production snapshot
-    when the server uses one (deployed.refresh); otherwise the checkout, which is pulled
-    once here when the pins and the box disagree."""
-    pre = runs.preflight(run_settings)
-    box = await box_status(run_settings.box_url, pre.get("plan_digest") or "")
-    if _pins_differ(pre, box) and run_settings is settings:
+    catch-all "model_unavailable". The checkout is pulled once here when the pins and the
+    box disagree."""
+    pre = runs.preflight(settings, folder)
+    box = await box_status(settings.box_url)
+    if _pins_differ(pre, box):
         if await asyncio.to_thread(publish.pull_now, settings.git_dir):
-            pre = runs.preflight(settings)
+            pre = runs.preflight(settings, folder)
     if _pins_differ(pre, box):
         tag = (pre.get("release") or {}).get("tag", "?")
         pre["missing"].append(
             f"the release pins here ({tag}) are not the release the box runs. A release may"
-            " still be finishing, or this server has not caught up with production yet;"
+            " still be finishing, or this server has not caught up with it yet;"
             " try again in a minute. Until they agree the box cannot be attested."
         )
         pre["ok"] = False
     return pre
 
 
+def _runnable(rows: list[dict]) -> list[dict]:
+    """The agreements a run can be started on: loaded, no issue, signed by both."""
+    return [r for r in rows if r["digest"] and not r["error"] and not r["issue"] and r["signed"]]
+
+
 @app.get("/runs")
 async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    try:
-        run_settings = await asyncio.to_thread(deployed.refresh, settings)
-    except (OSError, subprocess.SubprocessError):
-        return back(
-            "/agreements",
-            err="Could not fetch the deployed release. Check GitHub access and retry.",
-        )
-    pre = await _run_preflight(run_settings)
     qp = request.query_params
+    choices = _runnable(pv.list_agreements(settings))
+    chosen = qp.get("agreement") or (choices[0]["id"] if choices else "")
+    target = pv.for_agreement(settings, chosen) if chosen else None
+    folder = target.plan_dir if target else None
+    pre = await _run_preflight(folder)
+    if folder is None and chosen:
+        pre["missing"].insert(0, f"no agreement called {chosen}")
+        pre["ok"] = False
     win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
     lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
     all_sessions = proxylogs.sessions(proxylogs.load_index(settings))
@@ -863,7 +734,7 @@ async def runs_index(request: Request) -> Response:
         sessions.append(
             {
                 "session": s,
-                "notes": runs.scope_notes(run_settings, s.who, min(times), max(times)),
+                "notes": runs.scope_notes(folder, s.who, min(times), max(times)) if folder else [],
                 "records": len(recs),
                 "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
             }
@@ -877,6 +748,8 @@ async def runs_index(request: Request) -> Response:
         request,
         "runs.html",
         pre=pre,
+        choices=choices,
+        chosen=chosen,
         sessions=sessions,
         all_count=len(all_sessions),
         whos=whos,
@@ -884,10 +757,9 @@ async def runs_index(request: Request) -> Response:
         totals=totals,
         source=qp.get("source", ""),
         picked=set(qp.getlist("session")),
-        scope=runs.plan_scope(run_settings),
+        scope=runs.plan_scope(folder) if folder else None,
         runs=runs.list_runs(settings),
         plan_digest=pre["plan_digest"],
-        plan_error=next((m for m in pre["missing"] if "deployed plan" in m), None),
     )
 
 
@@ -904,32 +776,30 @@ async def runs_start(request: Request) -> Response:
     user = user_of(request)
     if user is None:
         return to_login(request)
-    try:
-        run_settings = await asyncio.to_thread(deployed.refresh, settings)
-    except (OSError, subprocess.SubprocessError):
-        return back(
-            "/agreements",
-            err="Could not fetch the deployed release. Check GitHub access and retry.",
-        )
-    pre = await _run_preflight(run_settings)
-    if not pre["ok"]:
-        return back("/runs", err="Cannot start: " + "; ".join(pre["missing"]))
     form = await request.form()
+    chosen = str(form.get("agreement") or "")
+    target = pv.for_agreement(settings, chosen) if chosen else None
+    if target is None:
+        return back("/runs", err="Pick an agreement signed by both parties.")
+    here = f"/runs?agreement={quote(chosen)}"
+    pre = await _run_preflight(target.plan_dir)
+    if not pre["ok"]:
+        return back(here, err="Cannot start: " + "; ".join(pre["missing"]))
     try:
-        if True:  # the input is always recorded sessions; test transcripts are gone
-            chosen = set(form.getlist("session"))
-            picked = [
-                s for s in proxylogs.sessions(proxylogs.load_index(settings)) if s.id in chosen
-            ]
-            if not picked:
-                return back("/runs", err="Pick at least one recorded session.")
-            records = proxylogs.to_box_records([r for s in picked for r in s.requests])
-            if not records:
-                return back("/runs", err="The chosen sessions hold no text to audit.")
-            label = f"{len(picked)} recorded session(s), {len(records)} records"
-            run_id = runs.start_run(run_settings, user, records=records, label=label)
+        chosen_sessions = set(form.getlist("session"))
+        picked = [
+            s for s in proxylogs.sessions(proxylogs.load_index(settings)) if s.id in chosen_sessions
+        ]
+        if not picked:
+            return back(here, err="Pick at least one recorded session.")
+        records = proxylogs.to_box_records([r for s in picked for r in s.requests])
+        if not records:
+            return back(here, err="The chosen sessions hold no text to audit.")
+        label = f"{chosen} · {len(picked)} recorded session(s), {len(records)} records"
+        run_id = runs.start_run(settings, user, chosen, target.plan_dir, records, label=label)
     except (ValueError, OSError) as exc:
-        return back("/runs", err=str(exc))
+        return back(here, err=str(exc))
+    pv.record_change(target, user, "run", "run", f"run {run_id} started ({len(records)} records)")
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
 
@@ -951,7 +821,7 @@ async def attest(request: Request) -> Response:
 
 @app.get("/plan")
 async def legacy_plan() -> Response:
-    return RedirectResponse("/a/plan/plan", status_code=303)
+    return RedirectResponse("/agreements", status_code=303)
 
 
 # --------------------------------------------------------------------------- one agreement
@@ -1034,8 +904,6 @@ async def plan_save(request: Request, aid: str) -> Response:
     actor = user_of(request)
     if actor is None:
         return JSONResponse({"error": "Please log in again."}, status_code=401)
-    if aid == "plan":
-        return JSONResponse({"error": READ_ONLY}, status_code=403)
     target = pv.for_agreement(settings, aid)
     if target is None:
         return JSONResponse({"error": "No such agreement."}, status_code=404)
@@ -1055,8 +923,6 @@ async def plan_save(request: Request, aid: str) -> Response:
         return JSONResponse({"error": "Could not read the request."}, status_code=422)
     if not isinstance(payload, dict) or "plan" not in payload:
         return JSONResponse({"error": "Expected {plan, expect}."}, status_code=422)
-    if busy := await _in_flight(aid):
-        return JSONResponse({"error": busy}, status_code=409)
     async with _lock(aid):
         view, error = load_view(target)
         if view is None:
@@ -1117,8 +983,6 @@ async def plan_chat_action(request: Request, aid: str) -> Response:
         if not isinstance(payload, dict):
             raise plan_chat.ChatError("Expected a JSON object.")
         if request.url.path.endswith("/apply"):
-            if aid == "plan":
-                raise plan_chat.ChatError(READ_ONLY, 403)
             if other := editing.blocked_by(aid, actor):
                 raise plan_chat.ChatError(editing.describe(other) + ".", 409)
             async with _lock(aid):
@@ -1156,8 +1020,6 @@ async def start_editing(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
-    if busy := await _in_flight(aid):
-        return back(f"/a/{aid}/plan", err=busy)
     other = editing.acquire(aid, user_of(request) or {})
     if other:
         return back(f"/a/{aid}/plan", err=editing.describe(other) + ". Try again later.")
@@ -1181,94 +1043,11 @@ async def finish_editing(request: Request, aid: str) -> Response:
     return back(f"/a/{aid}/plan", msg="Finished editing.")
 
 
-@app.post("/a/{aid}/deploy")
-async def deploy(request: Request, aid: str) -> Response:
-    """Select for deployment: copy into plan/, push a plan-only branch, open the pull request."""
-    target, redirect = agreement(request, aid, write=True)
-    if redirect:
-        return redirect
-    actor = user_of(request) or {}
-    view, error = load_view(target)
-    if view is None:
-        return back("/agreements", err=f"{aid} does not load: {error}. Fix it first.")
-    if view.issue:
-        return back(
-            "/agreements",
-            err=f"The box would reject {aid}: {view.issue} ({view.issue_where}). Fix it first.",
-        )
-    if not view.signed_by_both:
-        return back(
-            "/agreements",
-            err=f"{aid} is not signed by both parties, so the signature check on the pull"
-            " request would reject it. Sign it first, then deploy.",
-        )
-    box = await box_status(settings.box_url, "")
-    keys = await _keys(box)
-    if not keys["ready"]:
-        why = "; ".join(f"{p}: {i['label']}" for p, i in keys["parties"].items())
-        return back(
-            "/agreements",
-            err="The signatures would not verify on production, because the keys are not"
-            f" trusted there yet ({why}). Submit the keys on the Sign screen and wait.",
-        )
-    current = await _current_deployment(box)
-    if (
-        current
-        and current["state"]
-        and current["state"]["busy"]
-        and current["digest"] != view.digest
-    ):
-        return back(
-            "/agreements",
-            err=f"{current['name']} is being deployed right now ({current['state']['label']})."
-            " Wait for it to finish before deploying another plan.",
-        )
-    editing.release(aid, actor)  # deploying is leaving edit mode; someone else's still blocks
-    if editing.holder(aid):
-        return back("/agreements", err=editing.describe(editing.holder(aid)) + ". Deploy later.")
-    pv.record_change(target, actor, "deploy", "deployment", "pushed for deployment")
-    digest = view.digest
-    # The push takes seconds to a minute (fetch, branch, push, pull request). It runs behind
-    # the page: the page answers at once and its deployment strip follows the marker file.
-    _remember_deploy(aid, view.plan_id, digest, phase="pushing")
-    agreement_dir, plan_id = target.plan_dir, view.plan_id
-
-    def push() -> None:
-        pushed = publish.push_deploy(
-            settings.git_dir, agreement_dir, aid, digest, actor, base=settings.deploy_base
-        )
-        if pushed.error:
-            _remember_deploy(aid, plan_id, digest, phase="failed", error=pushed.error)
-        elif pushed.unchanged:
-            _remember_deploy(
-                aid,
-                plan_id,
-                digest,
-                phase="failed",
-                error=f"{settings.deploy_base} already holds exactly this plan; nothing to deploy",
-            )
-        else:
-            _remember_deploy(
-                aid, plan_id, digest, phase="pushed", pr_url=pushed.pr_url, branch=pushed.branch
-            )
-
-    threading.Thread(target=push, name=f"deploy-{aid}", daemon=True).start()
-    saved(actor)  # the deploy is recorded in the agreement's change log
-    # Redirect, so that a refresh re-reads the page instead of re-sending the form.
-    return back(
-        "/agreements",
-        msg=f"{plan_id} is being deployed: the branch is pushed and the pull request opened,"
-        " then the check merges it and the release follows. The deployment line follows it.",
-    )
-
-
 @app.post("/a/{aid}/delete")
 async def delete_agreement(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
-    if busy := await _in_flight(aid):
-        return back("/agreements", err=busy)
     problem = pv.delete_agreement(settings, aid)
     if problem:
         return back("/agreements", err=problem)
@@ -1278,12 +1057,10 @@ async def delete_agreement(request: Request, aid: str) -> Response:
 
 def _edit_mode(request: Request, aid: str, wanted: bool) -> tuple[bool, dict | None]:
     """Edit mode belongs to the lease holder. Returns (edit, the other holder or None)."""
-    if aid == "plan":
-        return False, None
     actor = user_of(request) or {}
     if not wanted:
         # Opening the agreement outside edit mode is leaving it: every save is already on
-        # disk, so nothing is lost and nobody is kept waiting (and Deploy is not blocked).
+        # disk, so nothing is lost and nobody is kept waiting (and Run is not blocked).
         editing.release(aid, actor)
         return False, editing.holder(aid)
     other = editing.blocked_by(aid, actor)
@@ -1324,7 +1101,7 @@ async def sign(request: Request, aid: str) -> Response:
     editing.release(aid, user_of(request) or {})  # going to sign is leaving edit mode
     view, error = load_view(target)
     keys, copy = await asyncio.gather(
-        _keys(await box_status(settings.box_url, "")),
+        _keys(await box_status(settings.box_url)),
         asyncio.to_thread(publish.copy_status, settings.git_dir),
     )
     return render(
@@ -1352,8 +1129,6 @@ async def sign_upload(
         return redirect
     user = user_of(request)
     here = f"/a/{aid}/sign"
-    if busy := await _in_flight(aid):
-        return back(here, err=busy)
     if user is None or party != user["party"]:
         return back(here, err="Paste only your own party's signature.")
     if not signature.strip():
@@ -1374,8 +1149,6 @@ async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()])
         return redirect
     user = user_of(request)
     here = f"/a/{aid}/sign"
-    if busy := await _in_flight(aid):
-        return back(here, err=busy)
     if user is None or party != user["party"]:
         return back(here, err="You can only remove your own signature.")
     if not pv.remove_signature(target, party, user):
