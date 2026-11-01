@@ -1,6 +1,8 @@
-# The baked audit agreement
+# The example audit agreement
 
-This folder is the dynamic part of [v0.5](../docs/AIAB_DESIGN_SPEC.md). The runtime
+This folder is an agreement in the layout of [v0.5](../docs/AIAB_DESIGN_SPEC.md), used by
+the CLI commands in the docs and by the acceptance script. It is not baked into any image:
+a run sends it, signatures included, to the box, which verifies it for that run. The runtime
 imports the signed `plan.py` in an isolated worker and calls `filter_logs`,
 `build_query`, `classify`, `metric` and `emit_report`; `appeal` is not called in the
 demo. The runtime, not the plan, owns inference credentials, query limits, output
