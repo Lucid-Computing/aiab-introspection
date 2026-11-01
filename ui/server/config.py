@@ -38,25 +38,12 @@ class Settings:
     proxy_url: str  # the logging proxy's address (its /_logs download API)
     proxy_key: str | None  # the key for that API; None means the Logs page is read-only
 
-    run_plan_dir: Path | None = None
     anthropic_api_key: str | None = field(default=None, repr=False)
     # Signatures are checked against production's trust file as GitHub serves it, the same
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
     trust_follows_production: bool = False
     proxy_header: str = "x-proxy-key"  # production takes its reader key as x-log-key instead
-
-    @property
-    def deployed_plan_dir(self) -> Path:
-        return self.run_plan_dir or self.plan_dir
-
-    @property
-    def run_trust_file(self) -> Path:
-        if self.run_plan_dir:
-            candidate = self.run_plan_dir.parent / "static/aiab/baked/trust.json"
-            if candidate.is_file():
-                return candidate
-        return self.trust_file
 
     @property
     def repo_url(self) -> str | None:
@@ -118,15 +105,13 @@ def load_settings() -> Settings:
         proxy_key = _proxy_key(env.get("AIAB_PROXY_KEY", ""))
         proxy_header, default_url = "x-proxy-key", TEST_PROXY_URL
     return Settings(
-        run_plan_dir=Path(env["AIAB_RUN_PLAN_DIR"]).resolve()
-        if env.get("AIAB_RUN_PLAN_DIR")
-        else None,
+        # The folder a PlanView reads; for_agreement() points it at one agreement.
         plan_dir=Path(env.get("AIAB_PLAN_DIR", REPO_ROOT / "plan")).resolve(),
         agreements_dir=Path(env.get("AIAB_AGREEMENTS_DIR", REPO_ROOT / "agreements")).resolve(),
         git_dir=Path(env.get("AIAB_GIT_DIR", REPO_ROOT)).resolve(),
         deploy_base=env.get("AIAB_DEPLOY_BASE") or "production",  # the branch the box is built from
         # The keys signatures are checked against: the checkout's trust.json, i.e. the one on
-        # the deploy branch, the same file the plan check and the release use. Never edited
+        # the deploy branch, the same file the release bakes into the box. Never edited
         # here; a key changes through a pull request. AIAB_TRUST_FILE overrides for dev keys.
         trust_file=Path(
             env.get("AIAB_TRUST_FILE")
