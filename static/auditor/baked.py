@@ -1,4 +1,4 @@
-"""Sign/verify baked plan folders and submit/fetch independently verified runs."""
+"""Sign/verify plan folders and submit/fetch independently verified runs."""
 
 import argparse
 import asyncio
@@ -35,10 +35,7 @@ async def remote(args, bundle):
     )
     try:
         await client.start()
-        if (
-            client.manifest["plan_digest"] != bundle.digest
-            or client.manifest["image_digest"] != release["image_digest"]
-        ):
+        if client.manifest["image_digest"] != release["image_digest"]:
             raise AuditError("release_mismatch")
         if args.command == "pin-identity":
             value = {
@@ -52,6 +49,16 @@ async def remote(args, bundle):
             commitment = verify_input(
                 submission, bundle.config, decode(args.trust.read_bytes())["logger_key"]
             )
+            if submission["plan_digest"] != bundle.digest:
+                raise AuditError("invalid_plan")
+            # The signed folder travels with the records: the box verifies it for this run.
+            submission["plan"] = {
+                "files": {name: raw.decode() for name, raw in bundle.files.items()},
+                "signatures": {
+                    role: (args.folder / "signatures" / f"{role}.sig").read_text().strip()
+                    for role in ("lab", "auditor")
+                },
+            }
             status, value = await client.request("POST", "/aiab/runs", submission)
             if status != 202:
                 raise AuditError(value.get("error", "submission_failed"))

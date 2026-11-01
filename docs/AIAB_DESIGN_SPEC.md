@@ -127,7 +127,7 @@ flowchart LR
 
 Admission, in order, before any inference:
 
-1. `plan_digest` matches the baked plan, else `invalid_plan`.
+1. `plan_digest` matches the signed plan sent with the submission (verified first), or the baked plan when none is sent, else `invalid_plan`.
 2. `logger_evidence` verifies: logger signature, chain continuity, checkpoint, else `invalid_logger_evidence`. (JN)
 3. Every record is covered by the evidence and none is outside it; the commitment is over the exact bytes the plan consumes.
 4. `input_scope` lies inside the plan's `input_scope` (window, agents, logger key), else `scope_mismatch`. This is the F-4 / S-5 scope check.
@@ -149,7 +149,7 @@ JN TO DEFINE: ingress protocol
 
 ### 2.4 Scope (F-4, S-5)
 
-There is no ad-hoc query endpoint. The only query is the plan baked into the image, so an out-of-scope query cannot run; the per-run scope check is step 4 above. No appeal endpoint in the demo: a corrected input is a new run, a different prompt is a new plan.
+There is no ad-hoc query endpoint. The only queries are jointly signed plans, sent with the run or baked into the image, verified against the same baked keys, so an out-of-scope query cannot run; the per-run scope check is step 4 above. No appeal endpoint in the demo: a corrected input is a new run, a different prompt is a new plan.
 
 ### 2.5 Egress (F-7, S-2, S-4, C-6)
 
@@ -252,7 +252,7 @@ TODO(JN): real values. `artifact_digest` is a blocker: the current Tinfoil class
 
 | Code | HTTP | Where | Meaning |
 | --- | --- | --- | --- |
-| `invalid_plan` | 400 | admission | `plan_digest` does not match the baked plan |
+| `invalid_plan` | 400 | admission | `plan_digest` does not match the submitted (or baked) plan |
 | `unauthorized` | 401 | admission, retrieval | Not authenticated or not an agreed party |
 | `invalid_logger_evidence` | 400 | admission | Signature, chain, checkpoint or record binding failed |
 | `scope_mismatch` | 400 | admission | Outside the plan's `input_scope` |

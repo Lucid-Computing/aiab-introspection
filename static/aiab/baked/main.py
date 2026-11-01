@@ -1,4 +1,9 @@
-"""Production baked-plan service: verify bundle before starting inference or HTTP."""
+"""Production audit service: verify the baked bundle, if any, before inference or HTTP.
+
+A plan folder at ``/app/plan`` (``AIAB_PLAN_DIR``) is the plan baked into the image; it
+must verify or the box does not start. Without one the box runs only plans sent with
+their submissions, each verified for that run against the same trust roots.
+"""
 
 import os
 from contextlib import asynccontextmanager
@@ -29,7 +34,8 @@ def application():
     fixed = decode(Path(__file__).with_name("trust.json").read_bytes())
     if {k: settings[k] for k in fixed} != fixed:
         raise AuditError("static_trust_mismatch")
-    bundle = load_bundle(Path("/app/plan"), settings)
+    folder = Path(os.environ.get("AIAB_PLAN_DIR", "/app/plan"))
+    bundle = load_bundle(folder, settings) if folder.exists() else None
     model = PinnedModel(settings["model"], secret("TINFOIL_API_KEY"))
     runtime = Runtime(bundle, settings, model)
     runtime.healthy = False
