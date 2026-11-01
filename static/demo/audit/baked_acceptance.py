@@ -1,4 +1,5 @@
-"""Real deployed folder-plan acceptance; only committed synthetic record exports."""
+"""Real live-box acceptance of the repository's plan folder, sent with each run; only
+committed synthetic record exports."""
 
 import asyncio
 import base64
@@ -39,12 +40,19 @@ async def run(args):
         artifact.update(
             identity=client.identity, manifest=client.manifest, release_digest=args.release_digest
         )
-        assert client.manifest["plan_digest"] == bundle.digest
         assert client.manifest["image_digest"] == trust["runtime_digest"]
-        artifact["checks"]["baked_plan_and_image"] = True
+        assert "plan_digest" not in client.manifest
+        artifact["checks"]["image_without_plan"] = True
         status, _ = await client.request("POST", "/aiab/plans", {})
         assert status in (404, 405)
-        artifact["checks"]["runtime_registration_disabled"] = True
+        artifact["checks"]["plan_registration_disabled"] = True
+        plan = {
+            "files": {name: raw.decode() for name, raw in bundle.files.items()},
+            "signatures": {
+                role: (folder / "signatures" / f"{role}.sig").read_text().strip()
+                for role in ("lab", "auditor")
+            },
+        }
         files, labels = dataset(folder)
         cases = []
         for index, (name, raw) in enumerate(sorted(files.items())):
@@ -64,6 +72,7 @@ async def run(args):
                         logger.sign(sign_bytes("record-export", statement))
                     ).decode(),
                 },
+                "plan": plan,
             }
             commitment = verify(submission, bundle.config, trust["logger_key"])
             if not cases:

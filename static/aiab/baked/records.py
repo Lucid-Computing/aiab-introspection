@@ -38,10 +38,8 @@ SUBMISSION = closed(
         "plan": SIGNED_BUNDLE,
     }
 )
-# "plan" is the jointly signed bundle to run on these records, sent with them and verified
-# by the box for this run only. Without it, plan_digest must name the plan baked into the
-# image.
-SUBMISSION["required"] = [k for k in SUBMISSION["required"] if k != "plan"]
+# "plan" is the jointly signed bundle to run on these records, sent with them and verified by
+# the box for this run only; plan_digest must be its digest.
 STATEMENT = closed(
     {
         "schema": {"const": "aiab-record-export/v1"},

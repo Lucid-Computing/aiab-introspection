@@ -1,8 +1,8 @@
 """One signed plan per run, bounded run state, independent report signing.
 
-A submission carries the jointly signed plan to run on its records (bundle.submitted_bundle),
-or names the plan baked into the image. The box verifies the plan for that run, runs exactly
-it, puts its digest in the signed report and keeps nothing of it afterwards.
+A submission carries the jointly signed plan to run on its records (bundle.submitted_bundle).
+The box verifies the plan for that run, runs exactly it, puts its digest in the signed report
+and keeps nothing of it afterwards. The image holds no plan.
 """
 
 import asyncio
@@ -56,26 +56,14 @@ class Run:
 
 
 class Runtime:
-    def __init__(self, bundle, trust, model, aiab_id="aiab-baked-audit"):
-        """``bundle`` is the plan baked into the image, or None for a box that only runs
-        plans sent with their submissions."""
-        self.bundle, self.trust, self.model, self.aiab_id = bundle, trust, model, aiab_id
+    def __init__(self, trust, model, aiab_id="aiab-baked-audit"):
+        self.trust, self.model, self.aiab_id = trust, model, aiab_id
         self.signer = ReportSigner()
         self.boot_id = uuid.uuid4().hex
         self.manifest = {
             "schema": "aiab-baked-manifest/v1",
             "aiab_id": aiab_id,
             "image_digest": trust["runtime_digest"],
-            # The baked plan, when there is one; a submitted plan is named by its report.
-            **(
-                {
-                    "plan_digest": bundle.digest,
-                    "plan_id": bundle.config["plan_id"],
-                    "egress_max_bits": capacity(bundle.config),
-                }
-                if bundle is not None
-                else {}
-            ),
             "restrictions": restrictions(trust),
             "model_binding": trust["model"],
             "parties": {k: trust[k] for k in ("lab_key", "auditor_key", "logger_key")},
@@ -92,13 +80,8 @@ class Runtime:
         self.healthy = True
 
     def plan(self, submission):
-        """The plan this submission runs: the one it carries, verified now, else the baked one."""
-        if "plan" in submission:
-            bundle = submitted_bundle(submission["plan"], self.trust)
-        elif self.bundle is not None:
-            bundle = self.bundle
-        else:
-            raise AuditError("invalid_plan")
+        """The plan this submission runs: the one it carries, verified now."""
+        bundle = submitted_bundle(submission["plan"], self.trust)
         if submission["plan_digest"] != bundle.digest:
             raise AuditError("invalid_plan")
         return bundle
@@ -192,8 +175,7 @@ def verify_report(envelope, identity, bundle, manifest, *, run_id, input_commitm
         "input_commitment": input_commitment,
         "egress_max_bits": capacity(bundle.config),
     }
-    # The signed report names the plan; the manifest names only the plan baked into the
-    # image, if any, so a report of a submitted plan legitimately differs from it.
+    # The signed report names the plan it ran; the manifest names no plan.
     if any(report[k] != v for k, v in expected.items()) or identity["policy_digest"] != digest(
         manifest
     ):
