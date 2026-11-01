@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { flowToPlan, planToFlow } from "./graph";
 import { completeLayout } from "./layout";
 import { lintPlan, pythonIssues } from "./lint";
 import { addNode, connect, deleteNodes, renameInput, renameNode, renameOutput } from "./ops";
-import { SAMPLE_SOURCES, samplePlan } from "./samples";
+import { SAMPLE_SOURCES, deployedSample, samplePlan } from "./samples";
 import { classificationShape, describeNode, describeOutput, reportShape } from "./shape";
 import { simulate } from "./simulate";
 import type { Plan } from "./types";
@@ -45,6 +45,14 @@ describe("samples", () => {
     expect(lintPlan(deployed).filter((i) => i.severity === "warning").map((i) => i.message)).toEqual([
       expect.stringContaining("proxy/coding-agents"),
     ]);
+  });
+
+  it("falls back to the simple sample when the baked deployed plan is not a plan", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const legacy = { plan_id: "legacy", classification: { problem: "?" }, schema: "aiab-plan/v1" };
+    expect(deployedSample(legacy).plan_id).toBe(samplePlan("simple").plan_id);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it("cover the three requested shapes", () => {

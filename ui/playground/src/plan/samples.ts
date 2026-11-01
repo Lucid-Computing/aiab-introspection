@@ -4,7 +4,7 @@
  * written in the same YAML a user edits in the code view.
  */
 import deployedPlan from "../../../../plan/plan.json";
-import { type Plan, PlanSchema } from "./types";
+import type { Plan } from "./types";
 import { validatePlan } from "./validate";
 import { yamlToPlan } from "./yaml";
 
@@ -263,9 +263,29 @@ export const SAMPLE_SOURCES = [
   { key: "multi-step", label: "4 · Multi-step audit", yaml: MULTI_STEP },
 ] as const;
 
-export function samplePlan(key: string): Plan {
-  const s = SAMPLE_SOURCES.find((x) => x.key === key) ?? SAMPLE_SOURCES[0];
-  const r = s.key === "deployed" ? validatePlan(PlanSchema.parse(deployedPlan)) : yamlToPlan(s.yaml);
+/**
+ * The deployed plan as a sample, or the simple sample when the baked plan/plan.json is not a
+ * plan the builder understands (an image built from a branch whose deployed plan is in an
+ * older format). The builder must still open: in agreement mode the server's plan replaces
+ * this sample as soon as it loads, and a thrown error here would blank the whole page.
+ */
+export function deployedSample(raw: unknown = deployedPlan): Plan {
+  const r = validatePlan(raw);
+  if (r.ok) return r.plan;
+  console.warn(
+    `The deployed plan baked into this build is not a valid plan; showing the simple sample instead: ${r.issues.map((i) => i.message).join("; ")}`,
+  );
+  return fromYaml("simple");
+}
+
+function fromYaml(key: string): Plan {
+  const s = SAMPLE_SOURCES.find((x) => x.key === key) ?? SAMPLE_SOURCES[1];
+  const r = yamlToPlan(s.yaml);
   if (!r.ok) throw new Error(`sample ${s.key} is invalid: ${r.issues.map((i) => i.message).join("; ")}`);
   return r.plan;
+}
+
+export function samplePlan(key: string): Plan {
+  const s = SAMPLE_SOURCES.find((x) => x.key === key) ?? SAMPLE_SOURCES[0];
+  return s.key === "deployed" ? deployedSample() : fromYaml(s.key);
 }

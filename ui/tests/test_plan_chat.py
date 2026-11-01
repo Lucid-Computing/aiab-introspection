@@ -235,7 +235,8 @@ def test_routes_require_login_origin_json_and_explicit_apply(draft, monkeypatch)
         == 413
     )
     page = client.get("/a/chat-test/plan?edit=1")
-    assert page.status_code == 200 and "Apply to draft" in page.text
+    # The chat card is hidden from the plan page for now; the routes stay, and the key never leaks.
+    assert page.status_code == 200 and "Apply to draft" not in page.text
     assert "test-only-key" not in page.text
     candidate = chat.proposal(draft, changed(draft), digest(draft))
     assert client.post(url + "/apply", json=candidate).status_code == 200
@@ -256,7 +257,9 @@ def test_new_agreement_chat_entry(draft, monkeypatch):
     assert response.status_code == 303
     assert "chat=1" in response.headers["location"]
     page = client.get(response.headers["location"])
-    assert "Create a plan for this question: Detect exfiltration" in page.text
+    # The chat card is hidden from the plan page for now, so the opening message is not rendered.
+    assert page.status_code == 200
+    assert "Create a plan for this question: Detect exfiltration" not in page.text
 
 
 def tool_response(files, summary="Updated proposal"):
@@ -428,8 +431,8 @@ def test_create_with_ai_is_unavailable_without_key(draft, monkeypatch):
     client = TestClient(web.app)
     client.cookies.set(web.COOKIE, web.signer.issue(Account("author", "lab", "Author", "unused")))
     page = client.get("/agreements/new")
-    assert 'name="chat" value="1" disabled' in page.text
-    assert "AI creation is unavailable" in page.text
+    # The Create with AI button is hidden for now; the server still refuses chat=1 without a key.
+    assert 'name="chat"' not in page.text
     response = client.post(
         "/agreements/new",
         data={
