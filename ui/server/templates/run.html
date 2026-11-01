@@ -18,10 +18,10 @@
 <div class="map-wrap">
 <svg class="map {% for s in run.steps %}s-{{ s.key }}-{{ s.status }} {% endfor %}" viewBox="0 0 1000 372" role="img" aria-label="Where the run is right now">
   <defs>
-    <marker id="m-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#E3D9C2"/></marker>
-    <marker id="m-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#1A1A1A"/></marker>
-    <marker id="m-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#8A6E12"/></marker>
-    <marker id="m-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#B3261E"/></marker>
+    <marker id="m-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" style="fill: var(--paper-3)"/></marker>
+    <marker id="m-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" style="fill: var(--ink-1)"/></marker>
+    <marker id="m-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" style="fill: var(--accent-ink)"/></marker>
+    <marker id="m-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" style="fill: var(--destructive)"/></marker>
   </defs>
 
   <!-- the box: two enclaves on Tinfoil -->

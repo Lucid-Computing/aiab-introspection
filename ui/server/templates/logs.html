@@ -7,7 +7,6 @@
 {% set filters = "&who=" ~ who ~ "&q=" ~ q %}
 {% set keep = filters ~ "&page=" ~ page %}
 <h1>Logs</h1>
-<p class="lead">What the logging proxy recorded, grouped into sessions. A run can take any of these as its input.</p>
 <div class="logs-tools">
   <form method="get" action="/logs" class="logs-filters">
     <select name="who" onchange="this.form.submit()"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>

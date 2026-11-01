@@ -165,67 +165,6 @@ EDIT_WARNING = (
     "and any existing signature is removed now. Continue?"
 )
 
-STAGES: list[tuple[str, str, list[str]]] = [
-    (
-        "Draft",
-        "Build the plan as a graph. Every save changes the plan digest.",
-        [
-            "Create an agreement with a name and the question the audit answers, from a "
-            "minimal plan.",
-            "Open it: the builder shows the plan as a graph of steps the box runs in order. "
-            "Five kinds of step: the logs of a run, a Python step, a model step, a classifier "
-            "and the final report. Each step shows what it reads and what it produces, so "
-            "the types can be checked across every connection.",
-            "Edit the graph or its YAML, then Save. The save goes through the box's own "
-            "loader: a plan the box would refuse is not saved, and the reasons are shown.",
-            "Every save is a new version with a new digest. The Changes list on the plan "
-            "shows who changed what, lab or auditor.",
-        ],
-    ),
-    (
-        "Freeze and sign",
-        "Each party signs the digest on its own machine and pastes the signature.",
-        [
-            "The Sign screen shows the version's digest and the one-line signing command.",
-            "One openssl command signs that digest with your private key and prints one "
-            "line; paste it and the UI verifies it against the public key on file for your "
-            "party, which you submit on the same screen.",
-            "The first valid signature locks editing. To change anything after that, remove "
-            "the signatures and both parties sign the new version.",
-        ],
-    ),
-    (
-        "Run",
-        "Pick the signed agreement and the records; the box verifies both before it runs.",
-        [
-            "The Runs screen attests the box against the release pins, then sends the "
-            "chosen records and the signed agreement in one request.",
-            "The box recomputes the plan digest, verifies both signatures against the keys "
-            "built into its image, applies its restrictions, and only then runs the plan.",
-            "The box keeps nothing of the plan after the run: every run brings its own.",
-        ],
-    ),
-    (
-        "Verify",
-        "The signed report names the plan it ran; check it against the one you signed.",
-        [
-            "Every report carries the plan digest, the image digest and the input "
-            "commitment, signed with the box's per-boot key.",
-            "The Runs screen verifies the report online and once more offline, against the "
-            "frozen copy of the agreement the run sent.",
-            "Attestation is the hardware's signed statement of which image runs, for an "
-            "independent check with the auditor's own tools.",
-        ],
-    ),
-]
-AFTER_SIGNING: list[str] = [
-    "The agreement can be run from the Runs screen by either party.",
-    "Each run copies the signed folder, attests the box, and sends the records and the plan.",
-    "The box verifies both signatures against the keys in its measured image before running.",
-    "The signed report names the plan digest; the UI verifies it online and offline.",
-    "A new image is built only when the box code or a party's key changes, never for a plan.",
-]
-
 
 # --------------------------------------------------------------------------- helpers
 
@@ -360,7 +299,7 @@ async def index(request: Request) -> Response:
 async def how(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    return render(request, "how.html", stages=STAGES, after=AFTER_SIGNING)
+    return render(request, "how.html")
 
 
 # The audit plan playground (ui/playground): a standalone prototype, served from its build
