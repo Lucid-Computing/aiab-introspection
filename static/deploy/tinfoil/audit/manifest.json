@@ -1,9 +1,7 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:5e948cce3b21437e33ac0b378b03511060deb0861686cad665e65e480129eac5",
-  "plan_digest": "sha256:8ad81f8141ca6c34de452cc07bb7b594b44b881a8e65f60e4f7ea7e1d7ec20c2",
-  "plan_id": "destructive_commands",
+  "image_digest": "sha256:688d0efe76113f58745021da19b2a0b907d493526180d9dd55c27faedade27ad",
   "restrictions": {
     "version": "0.2.0",
     "plan_format": "aiab-plan-ir/v0",
@@ -58,10 +56,10 @@
     "logger_key": "HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg="
   },
   "report_schema": "aiab-report/v3",
+  "plan_submission": "signed-bundle-per-run/v1",
   "max_active_runs": 4,
   "max_retained_runs": 128,
   "retention": "in-memory-per-boot",
   "logger_evidence": "aiab-record-export/v1",
-  "logger_integration": "synthetic-export-contract-not-native-WORM",
-  "egress_max_bits": 34
+  "logger_integration": "synthetic-export-contract-not-native-WORM"
 }

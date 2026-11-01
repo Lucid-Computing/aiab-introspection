@@ -10,7 +10,7 @@
   "containers": [
     {
       "name": "aiab",
-      "image": "ghcr.io/lucid-computing/aiab-introspection-enclave-staging@sha256:5e948cce3b21437e33ac0b378b03511060deb0861686cad665e65e480129eac5",
+      "image": "ghcr.io/lucid-computing/aiab-introspection-enclave-staging@sha256:688d0efe76113f58745021da19b2a0b907d493526180d9dd55c27faedade27ad",
       "command": [
         "python",
         "-m",
@@ -32,7 +32,7 @@
           "LISTEN_PORT": "8080"
         },
         {
-          "AIAB_AUDIT_TRUST_JSON": "{\"auditor_key\":\"/4cbSjriehHse70vMaOGa+GA8VbUggn6WeTn6C/0Edg=\",\"lab_key\":\"9RWibUJxhAsEssU1LFdcOPrBr+Op46uAZX8m/E2EwEQ=\",\"logger_key\":\"HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg=\",\"model\":{\"artifact_digest\":\"sha256:7a279c6d7739f7ded0cf859f1bf83893543a94a455e9b27e5cbcb1abe5d893a6\",\"context_tokens\":131072,\"host\":\"gpt-oss-safeguard-120b-inf12.tinfoil.containers.tinfoil.dev\",\"id\":\"gpt-oss-safeguard-120b\",\"max_output_tokens\":512,\"release_digest\":\"sha256:a7a8ffa64fed85d1a8800f3de01b37f1429abb650962dc41773f365d98369c34\",\"repo\":\"tinfoilsh/confidential-gpt-oss-safeguard-120b\",\"temperature\":0},\"runtime_digest\":\"sha256:5e948cce3b21437e33ac0b378b03511060deb0861686cad665e65e480129eac5\"}"
+          "AIAB_AUDIT_TRUST_JSON": "{\"auditor_key\":\"/4cbSjriehHse70vMaOGa+GA8VbUggn6WeTn6C/0Edg=\",\"lab_key\":\"9RWibUJxhAsEssU1LFdcOPrBr+Op46uAZX8m/E2EwEQ=\",\"logger_key\":\"HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg=\",\"model\":{\"artifact_digest\":\"sha256:7a279c6d7739f7ded0cf859f1bf83893543a94a455e9b27e5cbcb1abe5d893a6\",\"context_tokens\":131072,\"host\":\"gpt-oss-safeguard-120b-inf12.tinfoil.containers.tinfoil.dev\",\"id\":\"gpt-oss-safeguard-120b\",\"max_output_tokens\":512,\"release_digest\":\"sha256:a7a8ffa64fed85d1a8800f3de01b37f1429abb650962dc41773f365d98369c34\",\"repo\":\"tinfoilsh/confidential-gpt-oss-safeguard-120b\",\"temperature\":0},\"runtime_digest\":\"sha256:688d0efe76113f58745021da19b2a0b907d493526180d9dd55c27faedade27ad\"}"
         },
         {
           "XDG_CACHE_HOME": "/tmp/aiab-cache"
@@ -41,7 +41,7 @@
           "XDG_DATA_HOME": "/tmp/aiab-data"
         },
         {
-          "AIAB_RELEASE_TAG": "v0.0.5"
+          "AIAB_RELEASE_TAG": "v0.0.6"
         }
       ],
       "secrets": [
