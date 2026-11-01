@@ -14,7 +14,7 @@ from aiab.audit.protocol import (
     validate,
     verify_signature,
 )
-from aiab.baked.bundle import KINDS, SCOPE
+from aiab.baked.bundle import KINDS, SCOPE, SIGNED_BUNDLE
 
 RECORD = closed(
     {
@@ -35,8 +35,13 @@ SUBMISSION = closed(
         "input_scope": SCOPE,
         "records": {"type": "array", "items": RECORD, "minItems": 1, "maxItems": 2000},
         "logger_evidence": {"type": "object"},
+        "plan": SIGNED_BUNDLE,
     }
 )
+# "plan" is the jointly signed bundle to run on these records, sent with them and verified
+# by the box for this run only. Without it, plan_digest must name the plan baked into the
+# image.
+SUBMISSION["required"] = [k for k in SUBMISSION["required"] if k != "plan"]
 STATEMENT = closed(
     {
         "schema": {"const": "aiab-record-export/v1"},

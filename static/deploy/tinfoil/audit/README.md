@@ -31,6 +31,7 @@ not supported by the existing provider route. Tags are immutable and each measur
 config includes its release tag to prevent cross-tag provenance ambiguity.
 
 Restart changes the boot/report key and loses in-memory runs/reports. Archive
-reports and a trusted identity anchor first. A different plan requires rebuilding
-and redeploying; runtime plan registration is disabled. Native logger completeness,
+reports and a trusted identity anchor first. A different plan is sent, with both
+signatures, inside each run submission, or baked into a new image; the box stores no
+submitted plan. Native logger completeness,
 verified memory wipe, UI, agents and appeals are not claimed by this deployment.
