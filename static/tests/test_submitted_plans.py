@@ -1,4 +1,4 @@
-"""The signed plan travels with the submission: verified for that run, never stored."""
+"""The signed plan travels with every submission: verified for that run, never stored."""
 
 import base64
 import json
@@ -8,14 +8,14 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.api import create_app
-from aiab.audit.protocol import AuditError, clone, decode, sign_bytes
-from aiab.baked.bundle import check_bundle, file_digest, submitted_bundle
-from aiab.baked.records import export_statement, verify
+from aiab.audit.protocol import AuditError, sign_bytes
+from aiab.baked.bundle import PLAN_FILE, check_bundle, file_digest, submitted_bundle
+from aiab.baked.records import export_statement, scope_of, verify
 from aiab.baked.runtime import Runtime, verify_report
 from aiab.dryrun import MockModel
 from tests import test_baked_plan
 
-demo_plan = test_baked_plan.setup  # the frozen demo plan fixture
+demo_plan = test_baked_plan.setup  # the frozen graph-plan fixture
 
 
 @pytest.fixture
@@ -26,29 +26,29 @@ def plan(demo_plan):
 TOKENS = {role: role + "-" + "x" * 40 for role in ("lab", "auditor", "logger")}
 
 
-def signed_document(plan, keys=None, plan_id=None, **edits):
-    """The fixture bundle as it is sent with a run, re-signed by the given keys."""
+def signed_document(plan, keys=None, plan_id=None, text=None):
+    """The fixture plan as it is sent with a run, re-signed by the given keys."""
     _, trust, fixture_keys, bundle, _ = plan
     keys = keys or fixture_keys
-    files = {name: raw.decode() for name, raw in bundle.files.items()}
-    if plan_id:
-        cfg = json.loads(files["plan.json"])
-        cfg["plan_id"] = plan_id
-        files["plan.json"] = json.dumps(cfg, sort_keys=True, separators=(",", ":"))
-    files.update(edits)
-    digest = file_digest({k: v.encode() for k, v in files.items()})
+    if text is None:
+        text = bundle.files[PLAN_FILE].decode()
+        if plan_id:
+            document = json.loads(text)
+            document["plan_id"] = plan_id
+            text = json.dumps(document, sort_keys=True, separators=(",", ":"))
+    digest = file_digest({PLAN_FILE: text.encode()})
     signatures = {
         role: base64.b64encode(
             keys[role].sign(sign_bytes("plan-bundle", {"plan_digest": digest}))
         ).decode()
         for role in ("lab", "auditor")
     }
-    return {"files": files, "signatures": signatures}, digest
+    return {"files": {PLAN_FILE: text}, "signatures": signatures}, digest
 
 
 def submission_for(plan, plan_digest, document=None, submission_id="one-shot-1"):
     _, _, keys, bundle, records = plan
-    scope = bundle.config["input_scope"]
+    scope = bundle.config.get("input_scope") or scope_of(records)
     statement = export_statement(records, scope)
     return {
         "submission_id": submission_id,
@@ -66,9 +66,9 @@ def submission_for(plan, plan_digest, document=None, submission_id="one-shot-1")
 
 
 def test_submitted_bundle_has_the_folder_digest(plan):
-    _, trust, _, baked, _ = plan
+    _, trust, _, folder_bundle, _ = plan
     document, digest = signed_document(plan)
-    assert submitted_bundle(document, trust).digest == digest == baked.digest
+    assert submitted_bundle(document, trust).digest == digest == folder_bundle.digest
 
 
 @pytest.mark.parametrize(
@@ -77,66 +77,63 @@ def test_submitted_bundle_has_the_folder_digest(plan):
         "wrong_lab_key",
         "auditor_missing",
         "stale_after_edit",
-        "bad_path",
+        "extra_file",
         "extra_field",
-        "missing_fixed_file",
+        "no_plan_file",
+        "not_a_plan",
     ],
 )
 def test_submitted_bundle_refused(plan, case):
     _, trust, keys, _, _ = plan
+    document, _ = signed_document(plan)
+    code = "invalid_bundle"
     if case == "wrong_lab_key":
         stranger = {**keys, "lab": Ed25519PrivateKey.generate()}
         document, _ = signed_document(plan, keys=stranger)
         code = "invalid_signature"
     elif case == "auditor_missing":
-        document, _ = signed_document(plan)
         del document["signatures"]["auditor"]
-        code = "invalid_bundle"
     elif case == "stale_after_edit":
-        document, _ = signed_document(plan)
-        document["files"]["plan.py"] += "\n"
+        document["files"][PLAN_FILE] += "\n"
         code = "invalid_signature"
-    elif case == "bad_path":
-        document, _ = signed_document(plan)
-        document["files"]["prompts/../plan.txt"] = "x"
-        code = "invalid_bundle"
+    elif case == "extra_file":
+        document["files"]["prompts/../x.txt"] = "x"
     elif case == "extra_field":
-        document, _ = signed_document(plan)
         document["note"] = "ignored?"
-        code = "invalid_bundle"
+    elif case == "no_plan_file":
+        document["files"] = {}
     else:
-        document, _ = signed_document(plan)
-        del document["files"]["plan.py"]
-        code = "invalid_bundle"
+        document, _ = signed_document(plan, text='{"not": "a plan"}')
+        code = "invalid_plan"
     with pytest.raises(AuditError, match=code):
         submitted_bundle(document, trust)
 
 
 def test_submission_names_the_plan_it_carries(plan):
-    _, trust, _, baked, _ = plan
-    runtime = Runtime(None, trust, MockModel())
+    _, trust, _, folder_bundle, _ = plan
+    runtime = Runtime(trust, MockModel())
     assert "plan_digest" not in runtime.manifest
-    # No plan with the records and none baked: nothing to run.
-    with pytest.raises(AuditError, match="invalid_plan"):
-        runtime.submit(submission_for(plan, baked.digest), "lab")
+    # No plan with the records: not a submission.
+    with pytest.raises(AuditError, match="invalid_submission"):
+        runtime.submit(submission_for(plan, folder_bundle.digest), "lab")
     # A carried plan whose digest differs from the one the submission names.
     other, _ = signed_document(plan, plan_id="other")
     with pytest.raises(AuditError, match="invalid_plan"):
-        runtime.submit(submission_for(plan, baked.digest, other), "lab")
+        runtime.submit(submission_for(plan, folder_bundle.digest, other), "lab")
     # A tampered plan never reaches the worker; it fails in admission, unsigned.
     document, digest = signed_document(plan)
-    document["files"]["plan.py"] += "\n"
+    document["files"][PLAN_FILE] += "\n"
     with pytest.raises(AuditError, match="invalid_signature"):
         runtime.submit(submission_for(plan, digest, document), "lab")
     assert runtime.runs == {}
 
 
 async def test_empty_box_runs_the_submitted_plan_and_binds_the_report(plan):
-    _, trust, _, baked, _ = plan
-    runtime = Runtime(None, trust, MockModel())
+    _, trust, _, folder_bundle, _ = plan
+    runtime = Runtime(trust, MockModel())
     app = create_app(runtime, TOKENS)
     document, digest = signed_document(plan, plan_id="sent-with-the-run")
-    bundle = check_bundle({k: v.encode() for k, v in document["files"].items()}, trust)
+    bundle = check_bundle({PLAN_FILE: document["files"][PLAN_FILE].encode()}, trust)
     data = submission_for(plan, digest, document)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -165,33 +162,18 @@ async def test_empty_box_runs_the_submitted_plan_and_binds_the_report(plan):
             run_id=run_id,
             input_commitment=commitment,
         )
-        assert report["result"] == {"flagged": False}
+        assert report["result"] == {"flagged": False, "destructive_sessions": 0, "sessions": 1}
         # A verifier holding a different signed plan does not accept this report.
         with pytest.raises(AuditError, match="report_binding_mismatch"):
             verify_report(
                 envelope,
                 runtime.identity,
-                baked,
+                folder_bundle,
                 runtime.manifest,
                 run_id=run_id,
                 input_commitment=commitment,
             )
-        # Nothing of the plan remains: the same digest without the plan has nothing to run.
+        # Nothing of the plan remains: a run must bring the plan again.
         again = submission_for(plan, digest, submission_id="one-shot-2")
-        assert (await lab.post("/aiab/runs", json=again)).json() == {"error": "invalid_plan"}
-    await runtime.close()
-
-
-async def test_baked_plan_still_runs_without_a_carried_plan(plan):
-    _, trust, _, baked, _ = plan
-    runtime = Runtime(baked, trust, MockModel())
-    assert runtime.manifest["plan_digest"] == baked.digest
-    document, digest = signed_document(plan, plan_id="another-agreement")
-    for data in (
-        submission_for(plan, baked.digest, submission_id="baked"),
-        submission_for(plan, digest, document, submission_id="carried"),
-    ):
-        run = runtime.submit(clone(data), "lab")
-        await run.task
-        assert decode(run.envelope)["report"]["plan_digest"] == data["plan_digest"]
+        assert (await lab.post("/aiab/runs", json=again)).json() == {"error": "invalid_submission"}
     await runtime.close()

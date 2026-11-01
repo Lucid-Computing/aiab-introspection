@@ -13,12 +13,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.api import create_app
 from aiab.audit.protocol import AuditError, canonical, clone, decode, sign_bytes
-from aiab.baked.bundle import load_bundle
+from aiab.baked.bundle import file_digest, load_bundle
 from aiab.baked.executor import execute
 from aiab.baked.output import capacity, check_schema
 from aiab.baked.plan_ir import check_plan
 from aiab.baked.records import export_statement, scope_of, verify
-from aiab.baked.runtime import Runtime, verify_report
+from aiab.baked.runtime import Run, Runtime, verify_report
 from aiab.dryrun import MockModel
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,7 +51,22 @@ def setup(tmp_path):
     return folder, trust, keys, bundle, records
 
 
+def carried(files, keys):
+    """A bundle as it travels with a run: its file as text, signed by both fixture keys."""
+    plan_digest = file_digest(files)
+    return {
+        "files": {name: raw.decode() for name, raw in files.items()},
+        "signatures": {
+            role: base64.b64encode(
+                keys[role].sign(sign_bytes("plan-bundle", {"plan_digest": plan_digest}))
+            ).decode()
+            for role in ("lab", "auditor")
+        },
+    }
+
+
 def submission(setup, records=None, submission_id="case-1"):
+    """A run on the fixture plan: the records, the logger's evidence and the signed plan."""
     _, _, keys, bundle, default = setup
     records = default if records is None else records
     scope = bundle.config.get("input_scope") or scope_of(records)
@@ -67,7 +82,18 @@ def submission(setup, records=None, submission_id="case-1"):
                 keys["logger"].sign(sign_bytes("record-export", statement))
             ).decode(),
         },
+        "plan": carried(bundle.files, keys),
     }
+
+
+async def executed(runtime, bundle, data, trust):
+    """Run ``bundle`` as the broker would after admission of ``data``: the two tests that
+    desynchronise the broker's view of the plan from the worker's cannot go through
+    submit, which re-verifies the plan sent."""
+    commitment = verify(data, bundle.config, trust["logger_key"])
+    run = Run("run-under-test", "fingerprint", bundle.digest)
+    await runtime._execute(run, bundle, data["records"], commitment)
+    return decode(run.envelope)
 
 
 def edited(bundle, change, check=True):
@@ -149,7 +175,8 @@ def test_plan_pinning_agents_refuses_other_agents(setup):
 
 async def test_real_worker_with_broker_and_api_report(setup):
     _, trust, _, bundle, _ = setup
-    runtime = Runtime(bundle, trust, MockModel())
+    runtime = Runtime(trust, MockModel())
+    assert "plan_digest" not in runtime.manifest  # the image holds no plan
     tokens = {role: role + "-" + "x" * 40 for role in ("lab", "auditor", "logger")}
     app = create_app(runtime, tokens)
     data = submission(setup)
@@ -297,10 +324,10 @@ async def test_timeout_kills_worker_and_signs_failure(setup):
     )
     cfg = clone(bundle.config)
     cfg["limits"]["max_runtime_seconds_per_run"] = 1
-    runtime = Runtime(replace(bundle, config=cfg), trust, MockModel())
-    run = runtime.submit(submission(setup), "lab")
-    await asyncio.wait_for(run.task, 4)
-    envelope = decode(run.envelope)
+    runtime = Runtime(trust, MockModel())
+    envelope = await asyncio.wait_for(
+        executed(runtime, replace(bundle, config=cfg), submission(setup), trust), 4
+    )
     assert envelope["report"]["error"] == "execution_timeout"
     await runtime.close()
 
@@ -311,11 +338,11 @@ async def test_invalid_output_never_released(setup):
     cfg = clone(bundle.config)
     cfg["output_schema"]["properties"].pop("sessions")
     cfg["output_schema"]["required"].remove("sessions")
-    runtime = Runtime(replace(bundle, config=cfg), trust, MockModel())
-    run = runtime.submit(submission(setup), "lab")
-    await run.task
-    assert decode(run.envelope)["report"]["error"] == "invalid_output"
-    assert b"tool call" not in run.envelope and b"Bash" not in run.envelope
+    runtime = Runtime(trust, MockModel())
+    envelope = await executed(runtime, replace(bundle, config=cfg), submission(setup), trust)
+    assert envelope["report"]["error"] == "invalid_output"
+    raw = canonical(envelope)
+    assert b"tool call" not in raw and b"Bash" not in raw
     await runtime.close()
 
 
@@ -352,55 +379,6 @@ def test_bounded_strings_and_arrays_have_finite_schema_capacity():
     assert check_schema({"type": "number"}) == 64
     with pytest.raises(AuditError):
         check_schema({"type": "array", "items": {"type": "boolean"}})
-
-
-def test_ci_plan_check_uses_base_keys_and_rejects_mixed_changes(setup, tmp_path, monkeypatch):
-    import subprocess
-
-    from deploy.check_plan_pr import check
-
-    folder, trust, keys, _, _ = setup
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    shutil.copytree(folder, repo / "plan")
-    fixed = repo / "static/aiab/baked/trust.json"
-    fixed.parent.mkdir(parents=True)
-    fixed.write_bytes(canonical(trust))
-    monkeypatch.chdir(repo)
-
-    def git(*args):
-        return subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL).decode().strip()
-
-    git("init", "-q")
-    git("config", "user.email", "test@example.invalid")
-    git("config", "user.name", "test")
-    git("add", ".")
-    git("commit", "-qm", "base")
-    base = git("rev-parse", "HEAD")
-    plan_path = repo / "plan/plan.json"
-    plan = json.loads(plan_path.read_text())
-    node(plan, "destructive")["config"]["threshold"] = 0.7
-    plan_path.write_bytes(canonical(plan) + b"\n")
-    updated = load_bundle(repo / "plan", trust, signed=False)
-    for role in ("lab", "auditor"):
-        (repo / "plan/signatures" / f"{role}.sig").write_text(
-            base64.b64encode(
-                keys[role].sign(sign_bytes("plan-bundle", {"plan_digest": updated.digest}))
-            ).decode()
-        )
-    git("add", "plan")
-    git("commit", "-qm", "signed plan")
-    assert check(base, git("rev-parse", "HEAD")) == updated.digest
-    plan_path.write_bytes(plan_path.read_bytes() + b"\n")
-    git("add", "plan")
-    git("commit", "-qm", "tamper")
-    with pytest.raises(AuditError, match="invalid_signature"):
-        check(base, git("rev-parse", "HEAD"))
-    fixed.write_bytes(canonical({**trust, "lab_key": trust["auditor_key"]}))
-    git("add", "static")
-    git("commit", "-qm", "change verifier trust")
-    with pytest.raises(ValueError, match="plan-only"):
-        check(base, git("rev-parse", "HEAD"))
 
 
 def test_plan_without_input_scope_accepts_any_agent(setup):

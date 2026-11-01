@@ -67,8 +67,7 @@ def test_create_does_not_start_an_instance_twice(status):
             return {"id": instance, "status": status, "domain": "dev.example.com"}
 
     assert release.create_instance(ControlPlane(), "dev", "owner/repo", "v0.0.1", []) == (
-        instance, "dev.example.com"
+        instance,
+        "dev.example.com",
     )
-    assert (("POST", "/api/containers/" + instance + "/deploy") in calls) == (
-        status == "ready"
-    )
+    assert (("POST", "/api/containers/" + instance + "/deploy") in calls) == (status == "ready")
