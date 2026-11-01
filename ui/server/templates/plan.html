@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Plan · AIAB agreement{% endblock %}
 {% block head %}<style>
-.builder { display: block; width: 100%; height: calc(100vh - 150px); min-height: 640px; border: 1px solid var(--line, #d9d9d9); background: #fff; }
+/* The builder spans the whole viewport width, breaking out of the page container. 100vw
+   includes the vertical scrollbar, so the page clips the few pixels of horizontal overflow. */
+html { overflow-x: clip; }
+.builder { display: block; width: 100vw; max-width: 100vw; margin-left: calc(50% - 50vw); height: calc(100vh - 150px); min-height: 640px; border: 1px solid var(--line, #d9d9d9); border-left: 0; border-right: 0; background: #fff; }
 .nodes-table td, .nodes-table th { vertical-align: top; }
 </style>{% endblock %}
 {% block content %}
@@ -33,7 +36,7 @@
 </div>
 {% endif %}
 
-{% if aid != "plan" %}{% include "plan_chat.html" %}{% endif %}
+{# The "Build your plan with AI" chat (plan_chat.html) is hidden for now; the builder is the editor. #}
 
 <iframe class="builder" id="builder" title="Plan builder" src="/audit-plan-playground/?agreement={{ aid }}{% if not edit %}&amp;readonly=1{% endif %}"></iframe>
 

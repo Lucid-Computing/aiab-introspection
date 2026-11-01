@@ -16,12 +16,10 @@
       {% if view and not view.issue %}<label class="choice"><input type="radio" name="source" value="copy"> a copy of {{ view.plan_id }}, the deployed plan</label>{% endif %}
     </div>
     <div class="field"><label for="problem">The question this audit answers</label><textarea id="problem" name="problem" class="question" required>{{ form.problem or '' }}</textarea></div>
+    {# "Create with AI" (chat=1) is hidden for now, with the chat card on the plan page. #}
     <div class="row">
-      <button class="btn btn--primary" name="chat" value="1" {% if not chat_enabled %}disabled{% endif %}>Create with AI</button>
-      <button class="btn btn--ghost">Create draft</button>
+      <button class="btn btn--primary">Create draft</button>
     </div>
-    {% if chat_enabled %}<p class="text-muted">Create with AI opens a chat to turn your question into a proposed plan. Review the changes before applying.</p>
-    {% else %}<p class="text-muted">AI creation is unavailable: this server has no Anthropic key configured. You can still create a draft manually.</p>{% endif %}
   </div>
 </form>
 <script>
