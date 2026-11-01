@@ -251,6 +251,8 @@
     "plan_id",
     "restrictions_version",
     "parties",
+    "input_scope",
+    "filter",
     "window",
     "model",
     "classification",
