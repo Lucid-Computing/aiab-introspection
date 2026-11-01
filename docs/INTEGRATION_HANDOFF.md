@@ -1,5 +1,10 @@
 # Agreement UI and the box: where we are and what is next (20 Oct 2026)
 
+> Superseded on 1 Nov 2026: plans are no longer deployed. A signed agreement is run from
+> the UI, which sends the folder and both signatures with the records; the box verifies
+> them against the keys in its image. Steps 3 to 6 below and the `plan/` branches are
+> history; see [BRANCHES_AND_RELEASE.md](BRANCHES_AND_RELEASE.md).
+
 ## What I did today
 
 I worked out how the agreement UI and the box connect. Two questions: how does a new plan get from the UI to GitHub, and how does the box start using a signed plan. I also ran your demo and my Runs page against the live box with the shared credentials. Both passed.
