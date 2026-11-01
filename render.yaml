@@ -21,13 +21,11 @@ services:
       - key: AIAB_REPO
         value: Lucid-Computing/aiab-introspection
       - key: AIAB_CHECKOUT_BRANCH
-        value: dev       # the branch the image is built from; the UI works on its agreements/ and plan/
-      - key: AIAB_RELEASE_BRANCH
-        value: dev
+        value: dev       # the branch the box is built from; the UI reads its release pins and trust file
       - key: AIAB_AUTO_PULL
         value: "1"              # the checkout follows production every minute when clean
       - key: AIAB_DEPLOY_BASE
-        value: dev       # Deploy opens its plan pull request against this branch
+        value: dev       # a key submission opens its pull request against this branch
       - key: UI_SESSION_SECRET
         generateValue: true
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
