@@ -1,4 +1,8 @@
-"""Production baked-plan service: verify bundle before starting inference or HTTP."""
+"""Production audit service: static trust and the model are verified before HTTP.
+
+The image holds no plan. Every run submission carries its jointly signed plan, verified
+for that run against the baked trust roots (aiab.baked.runtime).
+"""
 
 import os
 from contextlib import asynccontextmanager
@@ -10,7 +14,6 @@ from aiab.audit.api import create_app
 from aiab.audit.main import TRUST_SCHEMA, secret
 from aiab.audit.model import PinnedModel
 from aiab.audit.protocol import AuditError, decode, validate
-from aiab.baked.bundle import load_bundle
 from aiab.baked.runtime import Runtime
 from aiab.logging_guard import configure_logging
 
@@ -29,9 +32,8 @@ def application():
     fixed = decode(Path(__file__).with_name("trust.json").read_bytes())
     if {k: settings[k] for k in fixed} != fixed:
         raise AuditError("static_trust_mismatch")
-    bundle = load_bundle(Path("/app/plan"), settings)
     model = PinnedModel(settings["model"], secret("TINFOIL_API_KEY"))
-    runtime = Runtime(bundle, settings, model)
+    runtime = Runtime(settings, model)
     runtime.healthy = False
     app = create_app(
         runtime,
@@ -65,9 +67,7 @@ def main():
             proxy_headers=False,
         )
     except Exception:
-        raise SystemExit(
-            "Baked audit startup failed; check signed bundle, static trust and credentials"
-        ) from None
+        raise SystemExit("Audit startup failed; check static trust and credentials") from None
 
 
 if __name__ == "__main__":

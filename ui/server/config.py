@@ -15,6 +15,7 @@ STATIC_DIR = REPO_ROOT / "static"
 TEST_PROXY_URL = (
     "https://47b9b017832cbbf8ca2572b480584460df142e04-8080.dstack-pha-prod9.phala.network"
 )
+PROD_PROXY_URL = "https://llm-proxy.lucidcompute.com"
 
 
 @dataclass(frozen=True)
@@ -35,14 +36,14 @@ class Settings:
     auto_pull: bool  # fast-forward the checkout to its remote branch every minute when clean
     logs_dir: Path  # downloaded proxy log segments, one folder
     proxy_url: str  # the logging proxy's address (its /_logs download API)
-    proxy_key: str | None  # the "tester" key for that API; None means the Logs page is read-only
+    proxy_key: str | None  # the key for that API; None means the Logs page is read-only
 
-    run_plan_dir: Path | None = None
     anthropic_api_key: str | None = field(default=None, repr=False)
-
-    @property
-    def deployed_plan_dir(self) -> Path:
-        return self.run_plan_dir or self.plan_dir
+    # Signatures are checked against production's trust file as GitHub serves it, the same
+    # file the plan check and the next release use; the copy on disk stands in only when
+    # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
+    trust_follows_production: bool = False
+    proxy_header: str = "x-proxy-key"  # production takes its reader key as x-log-key instead
 
     @property
     def repo_url(self) -> str | None:
@@ -92,16 +93,25 @@ def load_settings() -> Settings:
     box_url = env.get("AIAB_BOX_URL", "").rstrip("/")
     if not box_url and release_file.is_file():
         box_url = "https://" + json.loads(release_file.read_text())["host"]
+    repo = env.get("AIAB_REPO") or _repo_from_git()
+    # Production's reader key (AIAB_LOG_KEY) wins over the test proxy's shared key. Its
+    # segments go in a subfolder so they never mix with test segments already on disk.
+    logs_dir = Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve()
+    log_key = env.get("AIAB_LOG_KEY", "").strip()
+    if log_key:
+        proxy_key, proxy_header, default_url = log_key, "x-log-key", PROD_PROXY_URL
+        logs_dir = logs_dir / "prod"
+    else:
+        proxy_key = _proxy_key(env.get("AIAB_PROXY_KEY", ""))
+        proxy_header, default_url = "x-proxy-key", TEST_PROXY_URL
     return Settings(
-        run_plan_dir=Path(env["AIAB_RUN_PLAN_DIR"]).resolve()
-        if env.get("AIAB_RUN_PLAN_DIR")
-        else None,
+        # The folder a PlanView reads; for_agreement() points it at one agreement.
         plan_dir=Path(env.get("AIAB_PLAN_DIR", REPO_ROOT / "plan")).resolve(),
         agreements_dir=Path(env.get("AIAB_AGREEMENTS_DIR", REPO_ROOT / "agreements")).resolve(),
         git_dir=Path(env.get("AIAB_GIT_DIR", REPO_ROOT)).resolve(),
         deploy_base=env.get("AIAB_DEPLOY_BASE") or "production",  # the branch the box is built from
         # The keys signatures are checked against: the checkout's trust.json, i.e. the one on
-        # the deploy branch, the same file the plan check and the release use. Never edited
+        # the deploy branch, the same file the release bakes into the box. Never edited
         # here; a key changes through a pull request. AIAB_TRUST_FILE overrides for dev keys.
         trust_file=Path(
             env.get("AIAB_TRUST_FILE")
@@ -110,7 +120,8 @@ def load_settings() -> Settings:
         box_url=box_url or None,
         accounts_file=Path(env.get("UI_ACCOUNTS_FILE", UI_ROOT / "accounts.json")).resolve(),
         session_secret=secret.encode("utf-8") if secret else secrets.token_bytes(32),
-        repo=env.get("AIAB_REPO") or _repo_from_git(),
+        repo=repo,
+        trust_follows_production=bool(repo) and not env.get("AIAB_TRUST_FILE"),
         runs_dir=Path(env.get("AIAB_RUNS_DIR", UI_ROOT / "runs")).resolve(),
         demo_keys_dir=Path(
             env.get("AIAB_DEMO_KEYS", Path.home() / ".local/share/aiab-audit-demo")
@@ -118,9 +129,10 @@ def load_settings() -> Settings:
         release_file=release_file,
         push_drafts=env.get("AIAB_PUSH_DRAFTS", "").lower() in {"1", "true", "yes"},
         auto_pull=env.get("AIAB_AUTO_PULL", "").lower() in {"1", "true", "yes"},
-        logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
-        proxy_url=env.get("AIAB_PROXY_URL", TEST_PROXY_URL).rstrip("/"),
-        proxy_key=_proxy_key(env.get("AIAB_PROXY_KEY", "")),
+        logs_dir=logs_dir,
+        proxy_url=env.get("AIAB_PROXY_URL", default_url).rstrip("/"),
+        proxy_key=proxy_key,
+        proxy_header=proxy_header,
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
     )
 

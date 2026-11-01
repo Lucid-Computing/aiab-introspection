@@ -108,6 +108,47 @@
     },
     "logger_evidence": {
       "type": "object"
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "object",
+          "properties": {
+            "plan.json": {
+              "type": "string",
+              "maxLength": 262144
+            }
+          },
+          "required": [
+            "plan.json"
+          ],
+          "additionalProperties": false
+        },
+        "signatures": {
+          "type": "object",
+          "properties": {
+            "lab": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "auditor": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "lab",
+            "auditor"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "files",
+        "signatures"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -115,7 +156,8 @@
     "plan_digest",
     "input_scope",
     "records",
-    "logger_evidence"
+    "logger_evidence",
+    "plan"
   ],
   "additionalProperties": false
 }

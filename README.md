@@ -17,8 +17,8 @@ The repository is split into three parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AI
 | Folder | Part | Owner | Changes |
 | --- | --- | --- | --- |
 | [`static/`](static/) | The box: runtime, auditor tooling, deployment, tests, and its own chat-demo front end (`static/webchat/`). Python project root. | Jonathan | With development |
-| [`plan/`](plan/) | The audit plan: code, prompts, settings, both parties' signatures. Jointly signed folder, baked into a reproducible executor image. | Teddy | With every agreement |
-| [`ui/`](ui/) | The agreement UI: edit, review, sign and track the plan; show attestation and runs. Never part of the image. | Teddy | Independently |
+| [`plan/`](plan/) | An example audit plan: code, prompts, settings, both parties' signatures. The CLI commands in the docs use it. Agreements the UI edits live under `agreements/` (git-ignored) and travel to the box signed, with each run; nothing is baked into the image. | Jonathan | With every agreement |
+| [`ui/`](ui/) | The agreement UI: edit, review, sign and run agreements; show attestation and runs. Never part of the image. | Jonathan | Independently |
 
 Shared material lives at the root: `docs/` (specs), `.github/` (workflows), `.dockerignore` (the image build allowlist; the build context is this directory).
 

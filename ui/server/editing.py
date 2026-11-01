@@ -1,7 +1,9 @@
 """Who is editing which agreement right now.
 
 Several people share one UI. Editing is first come, first served: the person who presses
-Edit holds the agreement until they press Finish editing or stay idle for a while; others
+Edit holds the agreement while they stay on its editing pages; opening the agreement
+without edit mode, the Sign screen or the Agreements list gives it back, as does Finish
+editing, idling for a while, a stored signature (which locks the plan) or Deploy. Others
 see the plan read-only with a note saying who has it. Leases live in memory, which is
 right for one server; a restart simply frees everything."""
 
@@ -56,6 +58,17 @@ def blocked_by(aid: str, actor: dict) -> dict | None:
 def release(aid: str, actor: dict) -> None:
     if _same(holder(aid), actor):
         del _leases[aid]
+
+
+def release_all(actor: dict) -> None:
+    """Every lease this actor holds: they left the editing pages."""
+    for aid in [a for a, lease in _leases.items() if _same(lease, actor)]:
+        del _leases[aid]
+
+
+def clear(aid: str) -> None:
+    """Drop the lease whoever holds it: a signature locked the plan, so nobody is editing."""
+    _leases.pop(aid, None)
 
 
 def describe(lease: dict) -> str:

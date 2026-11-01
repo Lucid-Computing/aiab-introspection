@@ -1,4 +1,4 @@
-# Live baked-plan audit service
+# Live audit service
 
 Current release: **v0.2.2**. The exact image, plan, release and policy digests are
 in [release.json](release.json). The measured config, trust and manifest alongside
@@ -31,6 +31,6 @@ not supported by the existing provider route. Tags are immutable and each measur
 config includes its release tag to prevent cross-tag provenance ambiguity.
 
 Restart changes the boot/report key and loses in-memory runs/reports. Archive
-reports and a trusted identity anchor first. A different plan requires rebuilding
-and redeploying; runtime plan registration is disabled. Native logger completeness,
+reports and a trusted identity anchor first. Every run sends its plan, with both
+signatures, inside the submission; the image holds no plan and the box stores none. Native logger completeness,
 verified memory wipe, UI, agents and appeals are not claimed by this deployment.

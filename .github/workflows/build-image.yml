@@ -1,9 +1,8 @@
 # Manual publication only; keep this workflow in the PRIVATE source repository.
 name: Build reviewed enclave image
+# Started only by release.py (release.yml) on an environment branch, production or dev,
+# with the environment's image name. No push trigger: a push to master builds nothing.
 on:
-  push:
-    branches: [master]   # production is built by release.yml through release.py
-    paths: ['plan/**', 'static/**', '.dockerignore', '.github/workflows/build-image.yml']
   workflow_dispatch:
     inputs:
       image:
@@ -23,16 +22,6 @@ jobs:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
-        with:
-          version: "0.11.6"
-      - name: Check the plan and its signatures
-        working-directory: static
-        run: |
-          # The only gate before an image is built: the plan in plan/ loads under the box's
-          # own rules and both signatures verify against the trusted keys. No test suites.
-          uv sync --locked
-          uv run --locked python -m aiab.baked.check ../plan > ../plan-build.json
       - name: Validate publication destination
         env:
           IMAGE: ${{ inputs.image || 'ghcr.io/lucid-computing/aiab-introspection-enclave' }}
@@ -89,8 +78,7 @@ jobs:
               json.dump({'schema':'aiab-build/v1', 'source_commit':os.environ['GITHUB_SHA'],
                          'image':os.environ['IMAGE'], 'digest':os.environ['SECOND'],
                          'reproduced_digest':os.environ['FIRST'],
-                         'workflow_run_id':os.environ['GITHUB_RUN_ID'],
-                         'plan_digest':json.load(open('plan-build.json'))['plan_digest']}, f)
+                         'workflow_run_id':os.environ['GITHUB_RUN_ID']}, f)
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

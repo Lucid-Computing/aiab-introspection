@@ -1,8 +1,9 @@
-"""Deploy = copy the agreement into plan/, then push that one change as a branch and open a PR.
+"""The UI's git side: a party's key change as a pull request, draft backups, the checkout
+following its branch.
 
 Everything here is plain git and the GitHub CLI, run with the credentials of whoever runs
-the UI. The branch is made from the remote's default branch in a temporary worktree, so the
-checkout you are working in is never switched. Merging is left to people and to CI.
+the UI. A branch is made from the base branch in a temporary worktree, so the checkout you
+are working in is never switched. Merging is left to CI.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -63,25 +65,6 @@ def github_slug(repo: Path) -> str | None:
     return None
 
 
-def copy_into_plan(source: Path, target: Path) -> None:
-    """Make plan/ exactly the agreement folder: stale files go, README.md stays, and the
-    change log (history.jsonl) stays with the agreement, it is not part of the baked plan."""
-    if target.exists():
-        for child in target.iterdir():
-            if child.name == "README.md":
-                continue
-            if child.is_dir():
-                shutil.rmtree(child)
-            else:
-                child.unlink()
-    shutil.copytree(
-        source,
-        target,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "history.jsonl"),
-        dirs_exist_ok=True,
-    )
-
-
 def _open_pr(slug: str, base: str, branch: str, title: str, body: str, cwd: Path) -> str | None:
     """Open a pull request with the GitHub CLI when it is installed and logged in."""
     if not shutil.which("gh"):
@@ -113,72 +96,8 @@ def _open_pr(slug: str, base: str, branch: str, title: str, body: str, cwd: Path
     return None
 
 
-def push_deploy(
-    repo: Path,
-    agreement: Path,
-    name: str,
-    digest: str,
-    actor: dict[str, str],
-    base: str | None = None,
-) -> PushResult:
-    """Replace plan/ on the branch for this version, commit, push.
-
-    One branch per version: plan/<name>-<digest8>. The first Deploy starts it from the
-    base (origin's default branch); a later Deploy of the same version, for example after
-    the second party signed, adds a commit to that same branch so the open pull request
-    simply updates. If the branch already has these exact files, nothing is pushed.
-    """
-    result = PushResult()
-    base = base or default_branch(repo)
-    branch = f"plan/{name}-{digest[7:15]}"
-    who = f"{actor.get('party', 'party')} ({actor.get('username', '?')}) via the agreement UI"
-    worktree = Path(tempfile.mkdtemp(prefix="aiab-deploy-"))
-    try:
-        _git(repo, "fetch", "origin", base)
-        on_remote = bool(_git(repo, "ls-remote", "--heads", "origin", branch))
-        if on_remote:
-            _git(repo, "fetch", "origin", branch)
-        start = f"origin/{branch}" if on_remote else f"origin/{base}"
-        _git(repo, "worktree", "add", "--detach", str(worktree), start)
-        _git(worktree, "checkout", "-q", "-B", branch)
-        copy_into_plan(agreement, worktree / "plan")
-        _git(worktree, "add", "-A", "plan")
-        slug = github_slug(repo)
-        if slug:
-            result.compare_url = f"https://github.com/{slug}/compare/{base}...{branch}?expand=1"
-        if not _git(worktree, "status", "--porcelain", "--", "plan"):
-            result.unchanged = True
-            result.branch = branch
-            return result
-        message = (
-            f"Deploy agreement {name}\n\nplan_digest: {digest}\nSelected for deployment by {who}.\n"
-        )
-        _git(worktree, "commit", "-q", "-m", message)
-        result.commit = _git(worktree, "rev-parse", "--short", "HEAD")
-        _git(worktree, "push", "-u", "origin", branch, timeout=300)
-        result.branch = branch
-        if slug and not on_remote:
-            body = (
-                f"Plan digest `{digest}`.\n\nSelected for deployment by {who}. "
-                "Plan-only change; CI verifies both signatures and the restrictions."
-            )
-            result.pr_url = _open_pr(slug, base, branch, f"Deploy agreement {name}", body, worktree)
-    except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
-        result.error = str(exc)[-400:]
-    finally:
-        try:
-            _git(repo, "worktree", "remove", "--force", str(worktree))
-        except RuntimeError:
-            shutil.rmtree(worktree, ignore_errors=True)
-        try:
-            _git(repo, "branch", "-D", branch)  # the branch lives on origin; keep the checkout tidy
-        except RuntimeError:
-            pass
-    return result
-
-
 # ---- agreement drafts: pushed to the checkout's own branch, so the server disk is never the
-#      only copy. Drafts are not baked and CI does not check them, so a plain push is right.
+#      only copy. CI does not check them, so a plain push is right.
 
 _drafts_lock = threading.Lock()
 _drafts_timer: threading.Timer | None = None
@@ -242,7 +161,8 @@ def push_key_change(
 
     One branch per key: keys/<party>-<key8>, always rebuilt from the current base, so a
     branch left behind by an earlier, closed pull request is simply overwritten and a new
-    pull request opened. The check on it merges it; the release puts the key in the box."""
+    pull request opened. The check on it merges it and starts the release that puts the
+    key in the box."""
     result = PushResult()
     base = base or default_branch(repo)
     branch = f"keys/{party}-{public_key[:8].replace('+', '').replace('/', '')}"
@@ -279,8 +199,8 @@ def push_key_change(
             else:
                 body = (
                     f"Replaces the {party} public key in `static/aiab/baked/trust.json` with "
-                    f"`{public_key}`.\n\nSubmitted by {who}. approve-keys.yml checks the change "
-                    "and merges it; the release that follows puts the key into the box."
+                    f"`{public_key}`.\n\nSubmitted by {who}. approve-keys.yml checks the change, "
+                    "merges it and starts the release that puts the key in the box."
                 )
                 result.pr_url = _open_pr(
                     slug, base, branch, f"Trust the {party} public key", body, worktree
@@ -326,23 +246,77 @@ def _open_pull_request(slug: str, branch: str) -> str | None:
     return done.stdout.strip() or None if done.returncode == 0 else None
 
 
-# ---- the checkout follows its remote branch: after a plan merges and the release writes new
-#      pins, the deployed plan shown on the Agreements page is current within a minute.
+# ---- the checkout follows its remote branch: after a release writes new pins, the Runs page
+#      verifies the box against them within a minute.
+
+
+# The last catch-up attempt, so a page can say why the copy did not move instead of
+# promising that it will.
+last_pull: dict[str, Any] = {"at": None, "moved": False, "error": None}
+
+
+def pull_now(repo: Path) -> bool:
+    """Fast-forward the checkout to its remote branch once, only when nothing is modified
+    locally (agreement drafts are git-ignored, so normally nothing is). True when it moved;
+    otherwise ``last_pull["error"]`` says why."""
+    last_pull["at"] = time.time()
+    try:
+        dirty = _git(repo, "status", "--porcelain")
+        if dirty:
+            n = len(dirty.splitlines())
+            last_pull.update(moved=False, error=f"{n} local change(s) in the copy; not pulling")
+            return False
+        before = _git(repo, "rev-parse", "HEAD")
+        branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+        _git(repo, "fetch", "--quiet", "origin", branch)
+        _git(repo, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
+        moved = _git(repo, "rev-parse", "HEAD") != before
+        last_pull.update(moved=moved, error=None)
+        return moved
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
+        last_pull.update(moved=False, error=str(exc)[-200:])
+        log.warning("pull: %s", str(exc)[-200:])
+        return False
+
+
+def copy_status(repo: Path) -> dict[str, Any]:
+    """Where this server's copy of the repository stands: branch, commit, local changes,
+    commits behind and ahead of the remote branch as last fetched, and the last catch-up."""
+    out: dict[str, Any] = {
+        "branch": None,
+        "head": None,
+        "dirty": 0,
+        "behind": 0,
+        "ahead": 0,
+        "changes": [],  # the first few local changes, as git status prints them
+        "last_pull": dict(last_pull),
+        "error": None,
+    }
+    try:
+        out["branch"] = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+        out["head"] = _git(repo, "rev-parse", "--short", "HEAD")
+        changes = [line.strip() for line in _git(repo, "status", "--porcelain").splitlines()]
+        out["dirty"], out["changes"] = len(changes), changes[:8]
+        counts = _git(repo, "rev-list", "--left-right", "--count", f"HEAD...origin/{out['branch']}")
+        out["ahead"], out["behind"] = (int(x) for x in counts.split())
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
+        out["error"] = str(exc)[-200:]
+    return out
+
+
+def set_aside(repo: Path) -> str:
+    """Move the copy's local changes, tracked and untracked, into a git stash so the copy is
+    clean and can catch up. Nothing is deleted: ``git stash list`` shows the entry."""
+    out = _git(repo, "stash", "push", "--include-untracked", "-m", "set aside by the agreement UI")
+    return out.splitlines()[-1] if out else "nothing to set aside"
 
 
 def start_auto_pull(repo: Path, every: int = 60) -> None:
-    """Fast-forward the checkout to its remote branch, every ``every`` seconds, only when
-    nothing is modified locally (agreement drafts are git-ignored, so normally nothing is)."""
+    """Fast-forward the checkout to its remote branch every ``every`` seconds."""
 
     def loop() -> None:
         while True:
-            try:
-                if not _git(repo, "status", "--porcelain"):
-                    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
-                    _git(repo, "fetch", "--quiet", "origin", branch)
-                    _git(repo, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
-            except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
-                log.warning("auto-pull: %s", str(exc)[-200:])
+            pull_now(repo)
             time.sleep(every)
 
     threading.Thread(target=loop, daemon=True, name="auto-pull").start()

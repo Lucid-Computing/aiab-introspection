@@ -6,13 +6,27 @@
 
 <div class="stack">
   <div class="card">
+    <div class="card-header">Agreement</div>
+    <div class="card-body">
+      {% if choices %}
+      <form method="get" action="/runs" class="row" style="gap: var(--space-3); align-items: center">
+        <label for="agreement">Signed by both parties:</label>
+        <select id="agreement" name="agreement">{% for c in choices %}<option value="{{ c.id }}" {% if c.id == chosen %}selected{% endif %}>{{ c.plan_id }} · {{ c.digest[7:19] }}…</option>{% endfor %}</select>
+        <button class="btn btn--ghost btn--sm">Choose</button>
+      </form>
+      <p class="explain">The chosen folder is copied when the run starts and sent with the records; the box verifies both signatures against the keys in its image and runs exactly that copy.</p>
+      {% else %}<p class="explain">No agreement is signed by both parties yet. Sign one under <a class="link" href="/agreements">Agreements</a>; it can be run as soon as both signatures verify.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-header">Before a run</div>
     <div class="card-body">
       {% if pre.release %}
       <table class="kv">
         <tr><th>Box</th><td class="mono">{{ pre.release.host }}</td></tr>
-        <tr><th>Release</th><td class="mono">{{ pre.release.tag }} · plan {{ pre.release.plan_digest[:19] }}…</td></tr>
-        <tr><th>Deployed plan here</th><td class="mono">{{ plan_digest or ("does not load: " ~ (plan_error or "unknown reason")) }}{% if plan_digest and pre.release.plan_digest != plan_digest %} <span class="badge badge--danger">the release pins are behind</span>{% endif %}</td></tr>
+        <tr><th>Release</th><td class="mono">{{ pre.release.tag }} · image {{ pre.release.image_digest[:19] }}…</td></tr>
+        <tr><th>Plan to send</th><td class="mono">{{ plan_digest or "none chosen" }}</td></tr>
         <tr><th>Ready</th><td>{% if pre.ok %}<span class="badge badge--ok">yes</span>{% else %}<ul class="plain">{% for m in pre.missing %}<li class="bad">{{ m }}</li>{% endfor %}</ul>{% endif %}</td></tr>
       </table>
       {% else %}<p class="form-message error">Release pins not found: {{ pre.missing | join(", ") }}</p>{% endif %}
@@ -20,7 +34,7 @@
         <summary>Check the box independently (attestation)</summary>
         <div class="info-body">
           <p class="explain">The manifest is what the box says about itself. Attestation is the hardware's signed statement of the same thing. The auditor's own check, from <span class="mono">static/</span>, with values approved independently, never copied from the box:</p>
-<pre class="cmd">uv run python -m auditor.baked --folder ../plan pin-identity --release deploy/tinfoil/audit/release.json \
+<pre class="cmd">uv run python -m auditor.baked --folder ../agreements/{{ chosen or "NAME" }} pin-identity --release deploy/tinfoil/audit/release.json \
     --token-file /absolute/path/auditor.token --output /tmp/anchor.json</pre>
         </div>
       </details>
@@ -38,7 +52,7 @@
   <div class="card">
     <div class="card-header">Input</div>
     <div class="card-body">
-      <form method="post" action="/runs/start" id="run-form"></form>
+      <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"></form>
       <p class="explain">Which recorded sessions go into this run. You choose here; the plan does not filter.{% if scope %} This plan pins an input scope (agents and a time window); the box refuses records outside it.{% endif %}</p>
       <div class="sources">
         <div class="src">
@@ -68,7 +82,7 @@
           {% else %}<p class="text-muted" style="margin-left: var(--space-6)">No session in this window.</p>
           {% endfor %}
           {% if scope and sessions and totals.refused == sessions | length %}
-          <p class="scope-note">The deployed plan allows agents <span class="mono">{{ scope.agents | join(", ") }}</span> between <span class="mono">{{ scope.window_start[:10] }}</span> and <span class="mono">{{ scope.window_end[:10] }}</span>. The recorded sessions come from <span class="mono">{{ whos | join(", ") }}</span>. To run on real logs, widen the plan's input scope (Plan → Settings), have both parties sign, and deploy.</p>
+          <p class="scope-note">This agreement allows agents <span class="mono">{{ scope.agents | join(", ") }}</span> between <span class="mono">{{ scope.window_start[:10] }}</span> and <span class="mono">{{ scope.window_end[:10] }}</span>. The recorded sessions come from <span class="mono">{{ whos | join(", ") }}</span>. To run on real logs, widen the plan's input scope (Plan → Settings) and have both parties sign again.</p>
           {% endif %}
           {% endif %}
         </div>
@@ -80,7 +94,7 @@
     <div class="card-header">Start a run</div>
     <div class="card-body">
       {% if pre.ok %}
-      <p class="explain">Six steps: verify the plan, attest the box, sign the chosen records with the stand-in logger key, send them in, wait for the signed report, verify it offline.</p>
+      <p class="explain">Six steps: verify the agreement's signatures, attest the box, sign the chosen records with the stand-in logger key, send them in with the signed plan, wait for the signed report, verify it offline.</p>
       <p><button class="btn btn--primary" form="run-form">Start the run</button></p>
       {% else %}
       <p><button class="btn btn--primary" disabled>Start the run</button> <span class="text-muted">Off until this is fixed: {{ pre.missing | join("; ") }}.</span></p>
@@ -90,14 +104,14 @@
 
   {% if runs %}
   <table class="table">
-    <thead><tr><th>Started</th><th>Transcript</th><th>By</th><th>State</th><th></th></tr></thead>
+    <thead><tr><th>Started</th><th>Agreement and input</th><th>By</th><th>State</th><th></th></tr></thead>
     <tbody>
     {% for r in runs %}
     <tr>
       <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
       <td class="mono">{{ r.transcript }}</td>
       <td>{{ r.by.user }} <span class="badge {% if r.by.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ r.by.party }}</span></td>
-      <td>{% if r.status == "done" %}{% if r.result and r.result.flagged %}flagged{% elif r.result %}not flagged{% else %}done{% endif %}, verified{% elif r.status == "failed" %}stopped at step {{ (r.steps | selectattr("status", "equalto", "failed") | list | first).title | lower }}{% elif r.status == "interrupted" %}interrupted{% else %}running…{% endif %}</td>
+      <td>{{ r.outcome.title }}{% if r.outcome.verified %}<br><span class="text-muted">Report verified</span>{% endif %}</td>
       <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>
     </tr>
     {% endfor %}

@@ -1,4 +1,9 @@
-"""One baked agreement per boot, bounded run state, independent report signing."""
+"""One signed plan per run, bounded run state, independent report signing.
+
+A submission carries the jointly signed plan to run on its records (bundle.submitted_bundle).
+The box verifies the plan for that run, runs exactly it, puts its digest in the signed report
+and keeps nothing of it afterwards. The image holds no plan.
+"""
 
 import asyncio
 import base64
@@ -18,7 +23,7 @@ from aiab.audit.protocol import (
 )
 from aiab.audit.report import ERRORS, ReportSigner
 from aiab.baked import records
-from aiab.baked.bundle import restrictions
+from aiab.baked.bundle import restrictions, submitted_bundle
 from aiab.baked.executor import execute
 from aiab.baked.output import capacity, check_result
 
@@ -45,35 +50,41 @@ REPORT = {
 class Run:
     run_id: str
     fingerprint: str
+    plan_digest: str
     envelope: bytes | None = None
     task: asyncio.Task | None = None
 
 
 class Runtime:
-    def __init__(self, bundle, trust, model, aiab_id="aiab-baked-audit"):
-        self.bundle, self.trust, self.model, self.aiab_id = bundle, trust, model, aiab_id
+    def __init__(self, trust, model, aiab_id="aiab-baked-audit"):
+        self.trust, self.model, self.aiab_id = trust, model, aiab_id
         self.signer = ReportSigner()
         self.boot_id = uuid.uuid4().hex
         self.manifest = {
             "schema": "aiab-baked-manifest/v1",
             "aiab_id": aiab_id,
             "image_digest": trust["runtime_digest"],
-            "plan_digest": bundle.digest,
-            "plan_id": bundle.config["plan_id"],
             "restrictions": restrictions(trust),
             "model_binding": trust["model"],
             "parties": {k: trust[k] for k in ("lab_key", "auditor_key", "logger_key")},
             "report_schema": "aiab-report/v3",
+            "plan_submission": "signed-bundle-per-run/v1",
             "max_active_runs": 4,
             "max_retained_runs": 128,
             "retention": "in-memory-per-boot",
             "logger_evidence": "aiab-record-export/v1",
             "logger_integration": "synthetic-export-contract-not-native-WORM",
-            "egress_max_bits": capacity(bundle.config),
         }
         self.policy_digest = digest(self.manifest)
         self.runs, self.submissions = {}, {}
         self.healthy = True
+
+    def plan(self, submission):
+        """The plan this submission runs: the one it carries, verified now."""
+        bundle = submitted_bundle(submission["plan"], self.trust)
+        if submission["plan_digest"] != bundle.digest:
+            raise AuditError("invalid_plan")
+        return bundle
 
     @property
     def identity(self):
@@ -85,10 +96,9 @@ class Runtime:
 
     def submit(self, submission, principal):
         validate(submission, records.SUBMISSION, "invalid_submission")
-        if submission["plan_digest"] != self.bundle.digest:
-            raise AuditError("invalid_plan")
-        commitment = records.verify(submission, self.bundle.config, self.trust["logger_key"])
-        fingerprint = digest({"plan_digest": self.bundle.digest, "input_commitment": commitment})
+        bundle = self.plan(submission)
+        commitment = records.verify(submission, bundle.config, self.trust["logger_key"])
+        fingerprint = digest({"plan_digest": bundle.digest, "input_commitment": commitment})
         key = (principal, submission["submission_id"])
         if key in self.submissions:
             run = self.submissions[key]
@@ -99,26 +109,28 @@ class Runtime:
             raise AuditError("model_unavailable", 503)
         if len(self.runs) >= 128 or sum(r.envelope is None for r in self.runs.values()) >= 4:
             raise AuditError("capacity_exceeded", 429)
-        run = Run(uuid.uuid4().hex, fingerprint)
+        run = Run(uuid.uuid4().hex, fingerprint, bundle.digest)
         self.runs[run.run_id] = self.submissions[key] = run
-        run.task = asyncio.create_task(self._execute(run, submission["records"], commitment))
+        run.task = asyncio.create_task(
+            self._execute(run, bundle, submission["records"], commitment)
+        )
         run.task.add_done_callback(lambda _: setattr(run, "task", None))
         return run
 
-    async def _execute(self, run, input_records, commitment):
+    async def _execute(self, run, bundle, input_records, commitment):
         report = {
             "schema": "aiab-report/v3",
             "aiab_id": self.aiab_id,
             "boot_id": self.boot_id,
             "run_id": run.run_id,
             "image_digest": self.trust["runtime_digest"],
-            "plan_digest": self.bundle.digest,
+            "plan_digest": bundle.digest,
             "policy_digest": self.policy_digest,
             "input_commitment": commitment,
-            "egress_max_bits": capacity(self.bundle.config),
+            "egress_max_bits": capacity(bundle.config),
         }
         try:
-            result = await execute(self.bundle, input_records, self.model)
+            result = await execute(bundle, input_records, self.model)
             report.update(status="completed", result=result)
         except (Exception, asyncio.CancelledError) as exc:
             error = (
@@ -163,10 +175,9 @@ def verify_report(envelope, identity, bundle, manifest, *, run_id, input_commitm
         "input_commitment": input_commitment,
         "egress_max_bits": capacity(bundle.config),
     }
-    if (
-        any(report[k] != v for k, v in expected.items())
-        or identity["policy_digest"] != digest(manifest)
-        or manifest["plan_digest"] != bundle.digest
+    # The signed report names the plan it ran; the manifest names no plan.
+    if any(report[k] != v for k, v in expected.items()) or identity["policy_digest"] != digest(
+        manifest
     ):
         raise AuditError("report_binding_mismatch")
     if report["status"] == "completed":
