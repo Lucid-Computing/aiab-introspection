@@ -13,6 +13,7 @@ on:
     branches: [production, staging, dev]
     paths:
       - 'ui/**'
+      - 'plan/plan.json'   # the builder bakes the deployed plan in as its first sample
       - 'static/pyproject.toml'
       - 'static/uv.lock'
       - 'static/README.md'
