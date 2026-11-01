@@ -114,12 +114,16 @@
       "properties": {
         "files": {
           "type": "object",
-          "minProperties": 4,
-          "maxProperties": 35,
-          "additionalProperties": {
-            "type": "string",
-            "maxLength": 65536
-          }
+          "properties": {
+            "plan.json": {
+              "type": "string",
+              "maxLength": 262144
+            }
+          },
+          "required": [
+            "plan.json"
+          ],
+          "additionalProperties": false
         },
         "signatures": {
           "type": "object",
