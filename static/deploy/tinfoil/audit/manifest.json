@@ -1,40 +1,20 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:7c2aab0f23f03b3e518a41621de7442cd0640c6c645b3f515d3e8a9b6070b137",
-  "plan_digest": "sha256:c378728766152252edbe589968e16f5b885f78387e264a663748cf0063409485",
-  "plan_id": "1028-capybaratesting",
+  "image_digest": "sha256:5e948cce3b21437e33ac0b378b03511060deb0861686cad665e65e480129eac5",
+  "plan_digest": "sha256:8ad81f8141ca6c34de452cc07bb7b594b44b881a8e65f60e4f7ea7e1d7ec20c2",
+  "plan_id": "destructive_commands",
   "restrictions": {
-    "version": "0.1.0",
-    "plan_imports": {
-      "__future__": [
-        "annotations"
-      ],
-      "typing": [
-        "Any",
-        "Literal",
-        "Mapping",
-        "Sequence",
-        "Iterable",
-        "Optional",
-        "Union"
-      ],
-      "dataclasses": [
-        "asdict",
-        "astuple",
-        "dataclass",
-        "field",
-        "replace"
-      ],
-      "aiab.plan_api": [
-        "LogRecord",
-        "QueryInput",
-        "ClassifierResult",
-        "Verdict",
-        "FilterRules",
-        "run_llm"
-      ]
-    },
+    "version": "0.2.0",
+    "plan_format": "aiab-plan-ir/v0",
+    "python_imports": [
+      "re",
+      "math",
+      "collections",
+      "itertools",
+      "statistics",
+      "json"
+    ],
     "hardware": {
       "tee": "Tinfoil confidential VM",
       "gpu": "separately attested inference"
@@ -54,8 +34,7 @@
     "limits": {
       "max_input_utf8_bytes": 1000000,
       "max_records_per_run": 2000,
-      "max_logs_per_query": 32,
-      "max_model_calls_per_run": 64,
+      "max_model_calls_per_run": 256,
       "max_runtime_seconds_per_run": 300,
       "max_result_bytes": 4096
     },
@@ -84,5 +63,5 @@
   "retention": "in-memory-per-boot",
   "logger_evidence": "aiab-record-export/v1",
   "logger_integration": "synthetic-export-contract-not-native-WORM",
-  "egress_max_bits": 1
+  "egress_max_bits": 34
 }
