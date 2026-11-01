@@ -152,7 +152,8 @@
     "plan_digest",
     "input_scope",
     "records",
-    "logger_evidence"
+    "logger_evidence",
+    "plan"
   ],
   "additionalProperties": false
 }
