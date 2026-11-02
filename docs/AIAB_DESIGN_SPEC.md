@@ -39,20 +39,20 @@ Merits of the split:
 - **Small diffs per agreement.** A new agreement touches only `plan/`. The static code, its tests and its threat model stay fixed and are reviewed once.
 - **One attestation.** Static part and plan are built into one image and attested together, so a change to either gives a new image digest (S-3). The split is a development method, not a security boundary.
 - **Clear ownership.** The static part fixes every contract; the plan only fills in function bodies and settings. Negotiation is about plan content, never about the box.
-- **UI is optional.** It is a front end over the repo and the box's read-only endpoints. The demo works without it. The box's own chat-demo front end, `static/webchat/`, ships with the box and is separate from it.
+- **UI is optional.** It is a front end over the repo and the box's read-only endpoints. The demo works without it.
 
 Repository layout:
 
 ```
 aiab-introspection/
-├── static/        the box: aiab/ auditor/ classifiers/ deploy/ tests/ traffic/ demo/ webchat/; Python project root (pyproject.toml, uv.lock, Makefile)
+├── static/        the box: aiab/ auditor/ deploy/ tests/ demo/; Python project root (pyproject.toml, uv.lock, Makefile)
 ├── plan/          the plan (3.2)
 ├── ui/            the agreement UI (4)
 ├── docs/          specs
 └── .dockerignore  image build allowlist; the build context is this directory so the image can copy static/ and plan/
 ```
 
-Everything under `static/` runs from `static/`: `cd static && uv sync --locked && make check`. The image is built from the repository root: `static/deploy/Dockerfile` copies `static/aiab/` and `static/classifiers/` into `/app/` and, once the first plan exists, `plan/` into `/app/plan/`. `ui/` and `static/webchat/` never enter the image.
+Everything under `static/` runs from `static/`: `cd static && uv sync --locked && make check`. The image is built from the repository root: `static/deploy/Dockerfile` copies `static/aiab/` into `/app/aiab/` and the signed `plan/` into `/app/plan/`. `ui/` never enters the image.
 
 ### 1.1 How the parts meet
 
@@ -240,7 +240,7 @@ TODO(JN): real values. `artifact_digest` is a blocker: the current Tinfoil class
 ### 2.9 Build and attestation (C-3, F-11, A-4)
 
 - `static/deploy/Dockerfile` pins base images and dependencies; `static/deploy/reproducible-build.sh` gives the same image digest from the same commit. Add `COPY plan/ /app/plan/` with the first real plan.
-- The build context is the repository root and the root `.dockerignore` is an allowlist: only `static/pyproject.toml`, `static/uv.lock`, `static/aiab/*.py`, `static/classifiers/*.md` and, once added, `plan/` enter the build. A new source folder needs new allowlist lines or it is silently left out. BuildKit records each instruction's text in the image config, so any Dockerfile edit changes the image digest even when every layer is identical.
+- The build context is the repository root and the root `.dockerignore` is an allowlist: only `static/pyproject.toml`, `static/uv.lock`, `static/aiab/` (including audit and baked modules) and signed `plan/` files enter the build. A new source folder needs new allowlist lines or it is silently left out. BuildKit records each instruction's text in the image config, so any Dockerfile edit changes the image digest even when every layer is identical.
 - CI before build: recompute `plan_digest`, verify both signatures against the pinned public keys, check `plan.json` against 2.7. The release publishes the image digest and the plan digest.
 - Digests, one meaning each: Tinfoil release/config digest (launches the image; checked by the attestation verifier), image digest (static + plan; attestation measurement vs. release), plan digest (`plan/` only; manifest, reports, the auditor's copy), policy digest (effective manifest; reports).
 - Both parties rebuild from the commit and compare against their own pin, not the box's claim (A-4).
@@ -429,7 +429,7 @@ def appeal(flag_id: str, *, kind: Literal["data_correction", "secondary_query"])
 
 ## 4. UI (owner: Teddy)
 
-Lives in `ui/`, outside the image. The box's chat-demo front end in `static/webchat/` visualizes the `/v1` proxy path and is not part of this UI.
+Lives in `ui/`, outside the image.
 
 ### 4.1 Style
 

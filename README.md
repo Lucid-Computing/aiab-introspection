@@ -16,7 +16,7 @@ The repository is split into three parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AI
 
 | Folder | Part | Owner | Changes |
 | --- | --- | --- | --- |
-| [`static/`](static/) | The box: runtime, auditor tooling, deployment, tests, and its own chat-demo front end (`static/webchat/`). Python project root. | Jonathan | With development |
+| [`static/`](static/) | The box: signed-plan runtime, auditor tooling, deployment and tests. Python project root. | Jonathan | With development |
 | [`plan/`](plan/) | The audit plan: code, prompts, settings, both parties' signatures. Jointly signed folder, baked into a reproducible executor image. | Teddy | With every agreement |
 | [`ui/`](ui/) | The agreement UI: edit, review, sign and track the plan; show attestation and runs. Never part of the image. | Teddy | Independently |
 
@@ -31,4 +31,4 @@ make check          # lint + tests
 make image          # builds the enclave image from the repository root
 ```
 
-The old chat-demo README is at [static/README.md](static/README.md).
+Runtime setup and command details are in [static/README.md](static/README.md).

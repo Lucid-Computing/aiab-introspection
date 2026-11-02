@@ -11,9 +11,6 @@ static/aiab/**
 !static/aiab/audit/
 static/aiab/audit/**
 !static/aiab/audit/*.py
-!static/classifiers/
-static/classifiers/**
-!static/classifiers/*.md
 !static/deploy/
 static/deploy/**
 !static/deploy/Dockerfile

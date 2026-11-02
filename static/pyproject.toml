@@ -1,7 +1,7 @@
 [project]
 name = "aiab-introspection"
 version = "0.1.0"
-description = "Attestable, privacy-preserving introspection of inference received by a proxy"
+description = "Attested execution of jointly signed audit plans"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -30,9 +30,9 @@ dev = [
 ]
 
 [project.scripts]
-aiab = "aiab.main:main"
-auditor = "auditor.cli:main"
-aiab-audit = "aiab.audit.main:main"
+aiab = "aiab.baked.main:main"
+auditor = "auditor.baked:main"
+aiab-audit = "aiab.baked.main:main"
 aiab-plan = "auditor.audit:main"
 
 [build-system]
