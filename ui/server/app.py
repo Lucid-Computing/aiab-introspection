@@ -20,13 +20,19 @@ from markupsafe import Markup, escape
 
 from server import deploystatus, editing, plan_chat, proxylogs, publish, runs
 from server import plan_view as pv
-from server.auth import SessionSigner, authenticate
+from server.auth import ClerkLogin, ClerkLoginError, SessionSigner, authenticate
 from server.box import box_status
 from server.config import UI_ROOT, Settings, load_settings
 from server.plan_view import PARTIES
 
 settings = load_settings()
 signer = SessionSigner(settings.session_secret)
+# Clerk when both keys are set; otherwise the local accounts file (laptops, rollback).
+clerk: ClerkLogin | None = (
+    ClerkLogin(settings.clerk_publishable_key, settings.clerk_secret_key)  # type: ignore[arg-type]
+    if settings.clerk_enabled
+    else None
+)
 
 
 @asynccontextmanager
@@ -37,6 +43,8 @@ async def lifespan(_: FastAPI):
             print(f"archived {len(moved)} agreement(s) in the previous plan format: {moved}")
     except OSError as exc:
         print(f"warning: could not archive old agreements: {exc}")
+    if clerk is None:
+        print("warning: CLERK_PUBLISHABLE_KEY/CLERK_SECRET_KEY unset; local password login")
     proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of the proxy fresh
     asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
     refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
@@ -257,22 +265,55 @@ def agreement(
 # --------------------------------------------------------------------------- auth
 
 
+def request_origins(request: Request) -> set[str]:
+    """The origins a sign-in token for this UI may name: the page's Origin header (a browser
+    sends it with every form post) and the address this request arrived at."""
+    origins = set()
+    if request.headers.get("origin"):
+        origins.add(request.headers["origin"].rstrip("/"))
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = request.headers.get("host") or request.url.netloc
+    if host:
+        origins.add(f"{scheme}://{host}")
+    return origins
+
+
 @app.get("/login")
 async def login_form(request: Request) -> Response:
-    return render(request, "login.html", next=request.query_params.get("next", "/"))
+    return render(
+        request,
+        "login.html",
+        next=request.query_params.get("next", "/"),
+        signed_out=request.query_params.get("signed_out") == "1",
+    )
 
 
 @app.post("/login")
 async def login(
     request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
+    token: str = Form(""),
+    username: str = Form(""),
+    password: str = Form(""),
     next: str = Form("/"),
 ) -> Response:
-    account = authenticate(settings.accounts_file, username.strip(), password)
-    if account is None:
-        return render(request, "login.html", next=next, err="Unknown account or wrong password.")
     target = next if next.startswith("/") and not next.startswith("//") else "/"
+    if clerk is not None:
+        # Clerk signed the user in; the page hands over the session token and this server
+        # checks it, then issues its own cookie. The password form is refused: there is no
+        # account file to check against once Clerk is on.
+        if not token:
+            return render(request, "login.html", next=target, err="Sign in with Clerk.")
+        try:
+            account = await asyncio.to_thread(clerk.login, token, request_origins(request))
+        except ClerkLoginError as exc:
+            # The page must not retry the exchange by itself: it would loop.
+            return render(request, "login.html", next=target, err=str(exc), halt=True)
+    else:
+        account = authenticate(settings.accounts_file, username.strip(), password)
+        if account is None:
+            return render(
+                request, "login.html", next=target, err="Unknown account or wrong password."
+            )
     response = RedirectResponse(target, status_code=303)
     response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
     return response
@@ -280,7 +321,9 @@ async def login(
 
 @app.post("/logout")
 async def logout() -> Response:
-    response = RedirectResponse("/login", status_code=303)
+    # The login page ends Clerk's own browser session too (signed_out=1), otherwise it
+    # would log the same user straight back in.
+    response = RedirectResponse("/login?signed_out=1", status_code=303)
     response.delete_cookie(COOKIE)
     return response
 

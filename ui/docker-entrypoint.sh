@@ -51,8 +51,15 @@ export AIAB_RUNS_DIR="$DATA/runs" AIAB_DEMO_KEYS="$DATA/demo-keys" AIAB_LOGS_DIR
 # Runs verify the box against the release pins in the checkout, which follows its branch.
 export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DATA/repo/static/deploy/tinfoil/audit/release.json}"
 
-# First boot only: accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,...".
-if [ ! -f "$DATA/accounts.json" ] && [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then
+# Login: Clerk when CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY are set (parties live in
+# Clerk, see docs/CLERK_AUTH_MIGRATION.md); otherwise the local accounts file, created on
+# first boot from UI_BOOTSTRAP_ACCOUNTS="user:party:password,...".
+if [ -n "${CLERK_SECRET_KEY:-}" ] && [ -n "${CLERK_PUBLISHABLE_KEY:-}" ]; then
+  echo "login: Clerk ($CLERK_PUBLISHABLE_KEY)"
+elif [ ! -f "$DATA/accounts.json" ] && [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then
+  echo "login: local accounts (no Clerk keys); creating them from UI_BOOTSTRAP_ACCOUNTS"
   uv run --no-sync python -m server.auth bootstrap
+else
+  echo "login: local accounts (no Clerk keys)"
 fi
 exec uv run --no-sync uvicorn server.app:app --host 0.0.0.0 --port "${PORT:-8090}"

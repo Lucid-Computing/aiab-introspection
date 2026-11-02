@@ -39,6 +39,11 @@ class Settings:
     proxy_key: str | None  # the key for that API; None means the Logs page is read-only
 
     anthropic_api_key: str | None = field(default=None, repr=False)
+    # Clerk (clerk.com) login. Both keys set: the login page is Clerk's and the server
+    # exchanges its session token for the UI's own cookie. Neither set: the local accounts
+    # in accounts_file (the previous system, kept for laptops and for rollback).
+    clerk_publishable_key: str | None = None
+    clerk_secret_key: str | None = field(default=None, repr=False)
     # Signatures are checked against production's trust file as GitHub serves it, the same
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
@@ -48,6 +53,19 @@ class Settings:
     @property
     def repo_url(self) -> str | None:
         return f"https://github.com/{self.repo}" if self.repo else None
+
+    @property
+    def clerk_enabled(self) -> bool:
+        return bool(self.clerk_publishable_key and self.clerk_secret_key)
+
+    @property
+    def clerk_frontend_api(self) -> str | None:
+        """The instance's Frontend API host, which the publishable key encodes."""
+        if not self.clerk_publishable_key:
+            return None
+        from server.auth import clerk_frontend_api  # keeps the derivation in one place
+
+        return clerk_frontend_api(self.clerk_publishable_key)
 
 
 def _repo_from_git() -> str | None:
@@ -134,6 +152,8 @@ def load_settings() -> Settings:
         proxy_key=proxy_key,
         proxy_header=proxy_header,
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
+        clerk_publishable_key=env.get("CLERK_PUBLISHABLE_KEY", "").strip() or None,
+        clerk_secret_key=env.get("CLERK_SECRET_KEY", "").strip() or None,
     )
 
 

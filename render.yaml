@@ -28,9 +28,13 @@ services:
         value: dev       # a key submission opens its pull request against this branch
       - key: UI_SESSION_SECRET
         generateValue: true
+      - key: CLERK_PUBLISHABLE_KEY  # Clerk login (clerk.com): the instance's publishable key, pk_...
+        sync: false
+      - key: CLERK_SECRET_KEY       # ... and its secret key, sk_...; both set = Clerk, neither = local accounts
+        sync: false
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
         sync: false
-      - key: UI_BOOTSTRAP_ACCOUNTS   # first boot only, e.g. "teddy:lab:<password>,caleb:auditor:<password>"
+      - key: UI_BOOTSTRAP_ACCOUNTS   # local accounts only (no Clerk keys), first boot: "teddy:lab:<password>,..."
         sync: false
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false

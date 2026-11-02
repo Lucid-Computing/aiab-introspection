@@ -1,7 +1,16 @@
-"""Local accounts (username, party, hashed password) and signed session cookies.
+"""Who is logged in, and which party they are: Clerk login, the signed session cookie, and
+the local accounts the UI used before Clerk.
 
-GitHub login replaces this once the UI writes to pull requests; the party model stays.
-``python -m server.auth add USERNAME PARTY`` creates or updates an account.
+Clerk (clerk.com) authenticates; the UI's own cookie authorises. The login page runs
+Clerk's sign-in and hands the resulting session token to ``POST /login``; ``ClerkLogin``
+checks its signature against the instance's key set, reads the user from Clerk's Backend
+API, and the app issues the same ``SessionSigner`` cookie as before, carrying the party.
+The party is the user's ``public_metadata.party`` in Clerk (``lab`` or ``auditor``); a user
+without one cannot log in. ``python -m server.auth set-party EMAIL PARTY`` sets it.
+
+Without Clerk keys the previous system stays: local accounts with hashed passwords in
+``accounts.json`` (``python -m server.auth add USERNAME PARTY``). That path is for
+laptops and for rollback; see docs/CLERK_AUTH_MIGRATION.md.
 """
 
 from __future__ import annotations
@@ -15,9 +24,14 @@ import json
 import os
 import secrets
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
+
+import httpx
+import jwt
 
 PBKDF2_ITERATIONS = 600_000
 PARTIES = ("lab", "auditor")
@@ -118,6 +132,164 @@ class SessionSigner:
         return {"username": body["u"], "party": body["p"], "display_name": body.get("n", body["u"])}
 
 
+# ------------------------------------------------------------------------------ Clerk
+
+CLERK_API = "https://api.clerk.com/v1"
+JWKS_MIN_REFETCH_SECONDS = 60  # an unknown key id refetches the key set, at most this often
+
+
+class ClerkLoginError(Exception):
+    """The token or the user behind it is not acceptable; the message is shown to the user."""
+
+
+def clerk_frontend_api(publishable_key: str) -> str:
+    """The instance's Frontend API host: the publishable key is ``pk_<env>_<base64(host$)>``."""
+    try:
+        encoded = publishable_key.split("_", 2)[2]
+        host = base64.b64decode(encoded + "=" * (-len(encoded) % 4)).decode("ascii")
+    except (IndexError, ValueError, UnicodeDecodeError) as exc:
+        raise ValueError("CLERK_PUBLISHABLE_KEY is not a Clerk publishable key") from exc
+    if not host.endswith("$"):
+        raise ValueError("CLERK_PUBLISHABLE_KEY is not a Clerk publishable key")
+    return host[:-1]
+
+
+class ClerkLogin:
+    """Turns a Clerk session token into an Account, or raises ClerkLoginError.
+
+    The key set comes from the Frontend API (public, no secret needed); the user comes from
+    the Backend API with the secret key. ``transport`` is for tests.
+    """
+
+    def __init__(
+        self,
+        publishable_key: str,
+        secret_key: str,
+        *,
+        transport: Any | None = None,
+        leeway: int = 10,
+    ) -> None:
+        self._frontend_api = clerk_frontend_api(publishable_key)
+        self._secret = secret_key
+        self._leeway = leeway
+        self._keys: dict[str, Any] = {}  # kid -> public key
+        self._fetched_at = 0.0
+        self._lock = threading.Lock()
+        self._transport = transport
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(timeout=10, transport=self._transport)
+
+    def _load_keys(self) -> None:
+        with self._client() as client:
+            response = client.get(f"https://{self._frontend_api}/.well-known/jwks.json")
+            response.raise_for_status()
+        keys = {}
+        for jwk in response.json().get("keys", []):
+            if jwk.get("kid") and jwk.get("kty") == "RSA":
+                keys[jwk["kid"]] = jwt.PyJWK(jwk).key
+        self._keys, self._fetched_at = keys, time.time()
+
+    def _key_for(self, token: str) -> Any:
+        try:
+            kid = jwt.get_unverified_header(token).get("kid")
+        except jwt.PyJWTError as exc:
+            raise ClerkLoginError("The sign-in token is not readable. Try again.") from exc
+        with self._lock:
+            if kid not in self._keys and time.time() - self._fetched_at > JWKS_MIN_REFETCH_SECONDS:
+                try:
+                    self._load_keys()
+                except (httpx.HTTPError, ValueError) as exc:
+                    raise ClerkLoginError("Clerk did not answer; try again in a moment.") from exc
+            key = self._keys.get(kid)
+        if key is None:
+            raise ClerkLoginError("The sign-in token was signed with a key this UI does not know.")
+        return key
+
+    def claims(self, token: str, origins: set[str]) -> dict[str, Any]:
+        """The verified claims. ``azp``, when present, must be one of ``origins``: the page
+        that obtained the token must be this UI, not another site the user is signed in to."""
+        key = self._key_for(token)
+        try:
+            claims = jwt.decode(
+                token,
+                key,
+                algorithms=["RS256"],
+                leeway=self._leeway,
+                options={"require": ["exp", "sub"]},
+            )
+        except jwt.ExpiredSignatureError as exc:
+            raise ClerkLoginError("The sign-in token has expired. Try again.") from exc
+        except jwt.PyJWTError as exc:
+            raise ClerkLoginError("The sign-in token did not verify.") from exc
+        azp = claims.get("azp")
+        if azp and azp not in origins:
+            raise ClerkLoginError(f"The sign-in token was issued to {azp}, not to this UI.")
+        return claims
+
+    def user(self, user_id: str) -> Account:
+        """The Clerk user as an Account: username (or primary email), party from
+        ``public_metadata.party``, display name from the profile."""
+        try:
+            with self._client() as client:
+                response = client.get(
+                    f"{CLERK_API}/users/{user_id}",
+                    headers={"Authorization": f"Bearer {self._secret}"},
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ClerkLoginError("Clerk did not answer; try again in a moment.") from exc
+        return account_from_clerk(response.json())
+
+    def login(self, token: str, origins: set[str]) -> Account:
+        return self.user(self.claims(token, origins)["sub"])
+
+
+def primary_email(user: dict[str, Any]) -> str | None:
+    wanted = user.get("primary_email_address_id")
+    for entry in user.get("email_addresses") or []:
+        if entry.get("id") == wanted:
+            return entry.get("email_address")
+    return None
+
+
+def account_from_clerk(user: dict[str, Any]) -> Account:
+    party = (user.get("public_metadata") or {}).get("party")
+    email = primary_email(user)
+    who = user.get("username") or email or user["id"]
+    if party not in PARTIES:
+        raise ClerkLoginError(
+            f"{who} is signed in but has no party yet. Ask the operator to run"
+            f" `python -m server.auth set-party {email or who} lab|auditor`."
+        )
+    name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or who
+    return Account(username=who, party=party, display_name=name, password_hash="")
+
+
+def set_party(secret_key: str, email: str, party: str, *, transport: Any | None = None) -> str:
+    """Set ``public_metadata.party`` on the Clerk user with this email; returns the user id."""
+    if party not in PARTIES:
+        raise ValueError(f"party must be one of {PARTIES}")
+    headers = {"Authorization": f"Bearer {secret_key}"}
+    with httpx.Client(timeout=10, transport=transport) as client:
+        found = client.get(f"{CLERK_API}/users", params={"email_address": email}, headers=headers)
+        found.raise_for_status()
+        users = found.json()
+        if len(users) != 1:
+            raise LookupError(f"{len(users)} Clerk users have the email {email}; expected one")
+        user_id = users[0]["id"]
+        done = client.patch(
+            f"{CLERK_API}/users/{user_id}/metadata",
+            json={"public_metadata": {"party": party}},
+            headers=headers,
+        )
+        done.raise_for_status()
+    return user_id
+
+
+# -------------------------------------------------------------------------------- CLI
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m server.auth")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -132,11 +304,28 @@ def main(argv: list[str] | None = None) -> int:
         "bootstrap", help='first-boot accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..."'
     )
     boot.add_argument("--file", type=Path, default=None)
+    who = sub.add_parser(
+        "set-party", help="Clerk: bind the user with this email to a party (needs CLERK_SECRET_KEY)"
+    )
+    who.add_argument("email")
+    who.add_argument("party", choices=PARTIES)
     args = parser.parse_args(argv)
 
     from server.config import load_settings  # local import keeps the CLI free of FastAPI
 
-    path = args.file or load_settings().accounts_file
+    settings = load_settings()
+    if args.command == "set-party":
+        if not settings.clerk_secret_key:
+            print("set CLERK_SECRET_KEY (ui/.env or the environment)", file=sys.stderr)
+            return 1
+        try:
+            user_id = set_party(settings.clerk_secret_key, args.email, args.party)
+        except (LookupError, httpx.HTTPError) as exc:
+            print(f"not set: {exc}", file=sys.stderr)
+            return 1
+        print(f"{args.email} ({user_id}) is now the {args.party}")
+        return 0
+    path = args.file or settings.accounts_file
     if args.command == "bootstrap":
         for entry in filter(None, os.environ.get("UI_BOOTSTRAP_ACCOUNTS", "").split(",")):
             username, party, password = entry.strip().split(":", 2)
