@@ -34,6 +34,8 @@ services:
         sync: false
       - key: OIDC_CLIENT_SECRET     # ... and its client secret
         sync: false
+      - key: UI_PARTIES             # optional: "teddy@lucid.example:lab,caleb@other.example:auditor"; or `python -m server.auth party` in the shell
+        sync: false
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
         sync: false
       - key: UI_BOOTSTRAP_ACCOUNTS   # local accounts only (no Okta settings), first boot: "teddy:lab:<password>,..."

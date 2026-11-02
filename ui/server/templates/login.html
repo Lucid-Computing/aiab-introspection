@@ -4,7 +4,7 @@
 <div class="panel panel--offset login">
     <h3>Log in</h3>
 {% if settings.oidc_enabled %}
-  <p class="explain">Sign in with your Okta account. Which party you are (lab or auditor) comes from your Okta group.</p>
+  <p class="explain">Sign in with your Okta account. Which party you are (lab or auditor) is set by the operator of this UI.</p>
   <a class="btn btn--primary" href="/login/start?next={{ next | urlencode }}">Sign in with Okta</a>
 {% else %}
   <p class="explain">Accounts are local to this server (one per person, each bound to a party: lab or auditor). Set OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET to sign in through Okta instead.</p>

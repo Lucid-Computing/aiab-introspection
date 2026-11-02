@@ -45,17 +45,22 @@ if [ -n "${LAB_TOKEN:-}" ]; then printf '%s\n' "$LAB_TOKEN" > "$DATA/demo-keys/l
 if [ -n "${LOGGER_KEY:-}" ]; then printf '%s\n' "$LOGGER_KEY" > "$DATA/demo-keys/logger.key"; fi
 
 export AIAB_GIT_DIR="$DATA/repo" AIAB_PLAN_DIR="$DATA/repo/plan" AIAB_AGREEMENTS_DIR="$DATA/repo/agreements"
-export UI_ACCOUNTS_FILE="$DATA/accounts.json"
+export UI_ACCOUNTS_FILE="$DATA/accounts.json" UI_PARTIES_FILE="$DATA/parties.json"
 # The trust file is the checkout's static/aiab/baked/trust.json (production's); not copied.
 export AIAB_RUNS_DIR="$DATA/runs" AIAB_DEMO_KEYS="$DATA/demo-keys" AIAB_LOGS_DIR="$DATA/logs"
 # Runs verify the box against the release pins in the checkout, which follows its branch.
 export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DATA/repo/static/deploy/tinfoil/audit/release.json}"
 
 # Login: Okta (OpenID Connect) when OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET are
-# set (parties come from Okta groups, see docs/OIDC_AUTH_MIGRATION.md); otherwise the local
+# set (one Okta group may use the UI; who is lab and who is auditor is parties.json on the
+# disk, see docs/OIDC_AUTH_MIGRATION.md; UI_PARTIES="email:party,..." writes it on every
+# start, for operators who prefer an environment variable to a shell); otherwise the local
 # accounts file, created on first boot from UI_BOOTSTRAP_ACCOUNTS="user:party:password,...".
 if [ -n "${OIDC_ISSUER:-}" ] && [ -n "${OIDC_CLIENT_ID:-}" ] && [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
   echo "login: OpenID Connect ($OIDC_ISSUER)"
+  for entry in $(printf '%s' "${UI_PARTIES:-}" | tr ',' ' '); do
+    uv run --no-sync python -m server.auth party "${entry%%:*}" "${entry#*:}" || echo "warning: bad UI_PARTIES entry: $entry"
+  done
 elif [ ! -f "$DATA/accounts.json" ] && [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then
   echo "login: local accounts (no Okta settings); creating them from UI_BOOTSTRAP_ACCOUNTS"
   uv run --no-sync python -m server.auth bootstrap

@@ -40,15 +40,16 @@ class Settings:
 
     anthropic_api_key: str | None = field(default=None, repr=False)
     # OpenID Connect login (Okta). Issuer, client id and secret set: Log in goes through the
-    # provider and the party comes from its groups claim. Unset: the local accounts in
-    # accounts_file (the previous system, kept for laptops and for rollback).
+    # provider; one provider group (oidc_group) says who may use the UI, parties_file says
+    # which party each email is. Unset: the local accounts in accounts_file (the previous
+    # system, kept for laptops and for rollback).
     oidc_issuer: str | None = None
     oidc_client_id: str | None = None
     oidc_client_secret: str | None = field(default=None, repr=False)
-    oidc_group_lab: str = "aiab-lab"
-    oidc_group_auditor: str = "aiab-auditor"
+    oidc_group: str | None = "aiab"  # empty: no group check, anyone Okta signs in
     oidc_groups_claim: str = "groups"
     oidc_scopes: str = "openid profile email groups"
+    parties_file: Path = UI_ROOT / "parties.json"  # {"lab": [emails], "auditor": [emails]}
     # Signatures are checked against production's trust file as GitHub serves it, the same
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
@@ -151,10 +152,10 @@ def load_settings() -> Settings:
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
         oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,
         oidc_client_secret=env.get("OIDC_CLIENT_SECRET", "").strip() or None,
-        oidc_group_lab=env.get("OIDC_GROUP_LAB", "aiab-lab").strip(),
-        oidc_group_auditor=env.get("OIDC_GROUP_AUDITOR", "aiab-auditor").strip(),
+        oidc_group=env.get("OIDC_GROUP", "aiab").strip() or None,
         oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email groups").strip(),
+        parties_file=Path(env.get("UI_PARTIES_FILE", UI_ROOT / "parties.json")).resolve(),
     )
 
 

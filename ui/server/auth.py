@@ -5,9 +5,11 @@ The identity provider authenticates; the UI's own cookie authorises. ``GET /logi
 sends the browser to the provider's authorization endpoint (authorization code flow with
 PKCE, state and nonce kept in a short-lived signed cookie). ``GET /login/callback``
 exchanges the code, checks the ID token against the provider's key set, and the app
-issues the same ``SessionSigner`` cookie as before, carrying the party. The party comes
-from the provider's groups claim: a member of the lab group is the lab, of the auditor
-group the auditor. In neither, or in both, cannot log in.
+issues the same ``SessionSigner`` cookie as before, carrying the party. One Okta group
+(``aiab`` by default) says who may use the UI at all; which party they are is the UI's own
+business: ``parties.json`` maps emails to ``lab`` or ``auditor``, and
+``python -m server.auth party EMAIL PARTY`` edits it. Not in the group, or not in the file,
+cannot log in.
 
 Any OpenID Connect provider works; Okta is the one this was written against. Without the
 provider settings the previous system stays: local accounts with hashed passwords in
@@ -180,9 +182,39 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+def load_parties(path: Path) -> dict[str, str]:
+    """parties.json: {"lab": [emails], "auditor": [emails]} as email -> party, lower-cased."""
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        email.strip().lower(): party
+        for party in PARTIES
+        for email in data.get(party, [])
+        if email.strip()
+    }
+
+
+def save_party(path: Path, email: str, party: str | None) -> None:
+    """Put this email in one party's list (and no other), or in none when party is None."""
+    if party is not None and party not in PARTIES:
+        raise ValueError(f"party must be one of {PARTIES}")
+    email = email.strip().lower()
+    current = load_parties(path)
+    current.pop(email, None)
+    if party:
+        current[email] = party
+    payload = {p: sorted(e for e, q in current.items() if q == p) for p in PARTIES}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
 class OidcLogin:
-    """The authorization code flow against one OpenID Connect provider, and the mapping
-    from its groups claim to a party. ``transport`` is for tests."""
+    """The authorization code flow against one OpenID Connect provider. ``group`` is the
+    provider group that may use the UI (empty: anyone the provider signs in); the party
+    comes from ``parties_file``. ``transport`` is for tests."""
 
     def __init__(
         self,
@@ -190,8 +222,8 @@ class OidcLogin:
         client_id: str,
         client_secret: str,
         *,
-        group_lab: str,
-        group_auditor: str,
+        parties_file: Path,
+        group: str | None = "aiab",
         groups_claim: str = "groups",
         scopes: str = "openid profile email groups",
         transport: Any | None = None,
@@ -200,7 +232,8 @@ class OidcLogin:
         self.issuer = issuer.rstrip("/")
         self.client_id = client_id
         self._secret = client_secret
-        self.groups = {group_lab: "lab", group_auditor: "auditor"}
+        self.parties_file = parties_file
+        self.group = group or None
         self.groups_claim = groups_claim
         self.scopes = scopes
         self._leeway = leeway
@@ -322,27 +355,31 @@ class OidcLogin:
         return claims
 
     def account(self, claims: dict[str, Any]) -> Account:
-        """The ID token's holder as an Account: the party from the groups claim, the
-        username from preferred_username (its local part) or the email, the display name."""
-        groups = claims.get(self.groups_claim) or []
-        if isinstance(groups, str):
-            groups = [groups]
-        parties = {self.groups[g] for g in groups if g in self.groups}
+        """The ID token's holder as an Account: in the group (when one is set), with a party
+        in parties.json under their email; the username is the login's local part."""
         login = claims.get("preferred_username") or claims.get("email") or claims["sub"]
-        if len(parties) != 1:
-            wanted = " or ".join(self.groups)
-            if parties:
-                raise LoginError(f"{login} is in both party groups ({wanted}); it must be in one.")
+        email = (claims.get("email") or login).strip().lower()
+        if self.group:
+            groups = claims.get(self.groups_claim) or []
+            if isinstance(groups, str):
+                groups = [groups]
+            if self.group not in groups:
+                raise LoginError(
+                    f"{login} is signed in but not in the {self.group} group. Ask the Okta"
+                    " administrator to add you."
+                )
+        party = load_parties(self.parties_file).get(email)
+        if party is None:
             raise LoginError(
-                f"{login} is signed in but is in neither party group. Ask the Okta"
-                f" administrator to add you to {wanted}."
+                f"{login} is signed in but has no party yet. Ask the operator to run"
+                f" `python -m server.auth party {email} lab|auditor`."
             )
         username = login.split("@", 1)[0] if "@" in login else login
         name = claims.get("name") or " ".join(
             filter(None, [claims.get("given_name"), claims.get("family_name")])
         )
         return Account(
-            username=username, party=parties.pop(), display_name=name or username, password_hash=""
+            username=username, party=party, display_name=name or username, password_hash=""
         )
 
     def login(self, code: str, redirect_uri: str, verifier: str, nonce: str) -> tuple[Account, str]:
@@ -385,11 +422,23 @@ def main(argv: list[str] | None = None) -> int:
         "bootstrap", help='first-boot accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..."'
     )
     boot.add_argument("--file", type=Path, default=None)
+    who = sub.add_parser(
+        "party", help="Okta login: which party this email is (writes parties.json)"
+    )
+    who.add_argument("email")
+    who.add_argument("party", choices=(*PARTIES, "none"), help="none removes the email")
+    who.add_argument("--file", type=Path, default=None, help="parties file")
     args = parser.parse_args(argv)
 
     from server.config import load_settings  # local import keeps the CLI free of FastAPI
 
-    path = args.file or load_settings().accounts_file
+    settings = load_settings()
+    if args.command == "party":
+        path = args.file or settings.parties_file
+        save_party(path, args.email, None if args.party == "none" else args.party)
+        print(f"{args.email.strip().lower()}: {args.party} ({path})")
+        return 0
+    path = args.file or settings.accounts_file
     if args.command == "bootstrap":
         for entry in filter(None, os.environ.get("UI_BOOTSTRAP_ACCOUNTS", "").split(",")):
             username, party, password = entry.strip().split(":", 2)

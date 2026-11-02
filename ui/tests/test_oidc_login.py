@@ -1,6 +1,6 @@
 """OpenID Connect login: the browser goes to the provider and comes back with a code; the
-server exchanges it, checks the ID token and issues its own cookie; the party comes from
-the groups claim."""
+server exchanges it, checks the ID token and issues its own cookie; one Okta group gates
+access and parties.json names the party."""
 
 import json
 import time
@@ -54,7 +54,7 @@ class FakeOkta:
             "preferred_username": "teddy@lucid.example",
             "email": "teddy@lucid.example",
             "name": "Teddy Lab",
-            "groups": ["Everyone", "aiab-lab"],
+            "groups": ["Everyone", "aiab"],
         }
         claims.update(self.claims)
         claims.update(override)
@@ -92,15 +92,18 @@ class FakeOkta:
 
 
 @pytest.fixture
-def okta(keypair, monkeypatch):
+def okta(keypair, monkeypatch, tmp_path):
     private, jwk = keypair
     fake = FakeOkta(private, jwk)
+    parties = tmp_path / "parties.json"
+    auth.save_party(parties, "Teddy@lucid.example", "lab")  # case does not matter
+    auth.save_party(parties, "caleb@auditor.example", "auditor")
     login = auth.OidcLogin(
         ISSUER,
         CLIENT_ID,
         CLIENT_SECRET,
-        group_lab="aiab-lab",
-        group_auditor="aiab-auditor",
+        parties_file=parties,
+        group="aiab",
         transport=httpx.MockTransport(fake),
     )
     monkeypatch.setattr(web, "oidc", login)
@@ -112,8 +115,10 @@ def okta(keypair, monkeypatch):
             oidc_issuer=ISSUER,
             oidc_client_id=CLIENT_ID,
             oidc_client_secret=CLIENT_SECRET,
+            parties_file=parties,
         ),
     )
+    fake.parties = parties
     return fake
 
 
@@ -154,24 +159,57 @@ def test_the_whole_flow_issues_the_ui_cookie_with_the_party_from_the_group(okta,
     assert asked["code_verifier"] and asked["auth"].startswith("Basic ")
 
 
-def test_auditor_group_gives_the_auditor_party(okta, client):
-    okta.claims = {"groups": ["aiab-auditor"], "preferred_username": "caleb@auditor.example"}
+def test_the_parties_file_names_the_auditor(okta, client):
+    okta.claims = {"preferred_username": "caleb@auditor.example", "email": "caleb@auditor.example"}
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
     assert web.signer.read(response.cookies[web.COOKIE])["party"] == "auditor"
     assert web.signer.read(response.cookies[web.COOKIE])["username"] == "caleb"
 
 
-@pytest.mark.parametrize(
-    "groups, reason",
-    [([], "neither party group"), (["aiab-lab", "aiab-auditor"], "both party groups")],
-)
-def test_no_group_or_both_groups_is_refused(okta, client, groups, reason):
-    okta.claims = {"groups": groups}
+def test_not_in_the_group_or_not_in_the_parties_file_is_refused(okta, client):
+    okta.claims = {"groups": ["Everyone"]}
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
     assert response.status_code == 200 and web.COOKIE not in response.cookies
-    assert reason in response.text
+    assert "not in the aiab group" in response.text
+    okta.claims = {
+        "email": "stranger@lucid.example",
+        "preferred_username": "stranger@lucid.example",
+    }
+    q = start(client, okta)
+    response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
+    assert response.status_code == 200 and web.COOKIE not in response.cookies
+    assert "party stranger@lucid.example lab|auditor" in response.text
+    # The operator adds them; the next login works without a restart.
+    auth.save_party(okta.parties, "stranger@lucid.example", "lab")
+    q = start(client, okta)
+    response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
+    assert response.status_code == 303
+
+
+def test_no_group_setting_means_anyone_okta_signs_in_with_a_party(okta, client):
+    web.oidc.group = None
+    okta.claims = {"groups": []}
+    q = start(client, okta)
+    response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
+    assert response.status_code == 303
+
+
+def test_party_file_and_cli(tmp_path, monkeypatch):
+    path = tmp_path / "parties.json"
+    auth.save_party(path, "A@x.example", "lab")
+    auth.save_party(path, "b@x.example", "lab")
+    auth.save_party(path, "b@x.example", "auditor")  # moves, never in both
+    assert auth.load_parties(path) == {"a@x.example": "lab", "b@x.example": "auditor"}
+    assert json.loads(path.read_text()) == {"lab": ["a@x.example"], "auditor": ["b@x.example"]}
+    auth.save_party(path, "a@x.example", None)
+    assert auth.load_parties(path) == {"b@x.example": "auditor"}
+    with pytest.raises(ValueError):
+        auth.save_party(path, "c@x.example", "owner")
+    assert auth.main(["party", "c@x.example", "lab", "--file", str(path)]) == 0
+    assert auth.main(["party", "b@x.example", "none", "--file", str(path)]) == 0
+    assert auth.load_parties(path) == {"c@x.example": "lab"}
 
 
 def test_wrong_state_missing_cookie_and_provider_errors_are_refused(okta, client):
@@ -231,7 +269,7 @@ def test_redirect_uri_follows_the_proxy_headers(okta, client):
     assert q["redirect_uri"] == "https://aiab-ui-dev.onrender.com/login/callback"
 
 
-def test_discovery_must_name_the_same_issuer(keypair):
+def test_discovery_must_name_the_same_issuer(keypair, tmp_path):
     private, jwk = keypair
 
     def lying(request):
@@ -241,8 +279,7 @@ def test_discovery_must_name_the_same_issuer(keypair):
         ISSUER,
         CLIENT_ID,
         CLIENT_SECRET,
-        group_lab="a",
-        group_auditor="b",
+        parties_file=tmp_path / "p.json",
         transport=httpx.MockTransport(lying),
     )
     with pytest.raises(auth.LoginError, match="calls itself"):

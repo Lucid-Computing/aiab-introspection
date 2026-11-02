@@ -1,5 +1,5 @@
 # Run every target from this directory (ui/).
-.PHONY: sync dev account dev-keys lint
+.PHONY: sync dev account party dev-keys lint
 
 KEYS ?= $(HOME)/.aiab-dev
 PORT ?= 8090
@@ -10,8 +10,13 @@ sync:
 dev:
 	uv run uvicorn server.app:app --reload --port $(PORT)
 
+# Okta login: which party an email is.   make party EMAIL=teddy@lucid.example PARTY=lab
+# (PARTY=none removes them; writes ui/parties.json, git-ignored)
+party:
+	uv run python -m server.auth party $(EMAIL) $(PARTY)
+
 # Local accounts (no Okta settings): make account NAME=teddy PARTY=lab
-# (prompts for a password; writes ui/accounts.json). With Okta, parties are Okta groups.
+# (prompts for a password; writes ui/accounts.json)
 account:
 	uv run python -m server.auth add $(NAME) $(PARTY)
 

@@ -5,45 +5,48 @@ The agreement UI (`ui/`) signed people in against a local file of hashed passwor
 signs them in through Okta with OpenID Connect when `OIDC_ISSUER`, `OIDC_CLIENT_ID` and
 `OIDC_CLIENT_SECRET` are set, and still through the local file when they are not. This is
 the plan for switching a deployment over. There are two accounts to move (the lab's and
-the auditor's). The work is one app integration and two groups in Okta, three settings on
-Render, and a deploy.
+the auditor's). The work is one app integration and one group in Okta, three settings and
+two party entries on Render, and a deploy.
 
 What stays the same: the party model (`lab` / `auditor`), the `aiab_ui` session cookie and
 every route behind it, the change-log attribution by username, the Sign and key screens.
-What changes: who checks the password (Okta), where the party is stored (an Okta group),
-and the login page. Code: `ui/server/auth.py` (`OidcLogin`, `Stamp`), `ui/server/app.py`
+What changes: who checks the password (Okta), where the party is stored (`parties.json`
+on the UI's disk instead of `accounts.json`), and the login page. Code: `ui/server/auth.py` (`OidcLogin`, `Stamp`), `ui/server/app.py`
 (`/login`, `/login/start`, `/login/callback`, `/logout`),
 `ui/server/templates/login.html`.
 
 The UI speaks plain OpenID Connect. Nothing in it is Okta-specific: any provider with a
-discovery document and a groups claim works (Auth0, Entra ID, Keycloak), and a second
-company's provider can replace or front Okta later with a settings change.
+discovery document works (Auth0, Entra ID, Keycloak), and a second company's provider can
+replace or front Okta later with a settings change. The party split is the UI's own, so it
+does not depend on how any provider models groups.
 
-## 1. In Okta: the app integration and the two groups
+## 1. In Okta: the app integration and the group
 
 An Okta administrator does this, about ten minutes.
 
-1. **Groups.** *Directory > Groups > Add group*: `aiab-lab` and `aiab-auditor`. These names
-   are the defaults the UI expects (`OIDC_GROUP_LAB`, `OIDC_GROUP_AUDITOR` change them).
-   Put each person in exactly one. A person in neither, or in both, is refused at login
-   with a message naming the groups.
+1. **Group.** *Directory > Groups > Add group*: `aiab`. This is the one group that may use
+   the UI (`OIDC_GROUP` renames it; empty turns the check off). Put every person who
+   should get in, real or demo, in it. Lab or auditor is not an Okta matter: see step 2 of
+   the next section.
 2. **App integration.** *Applications > Create App Integration*: sign-in method **OIDC -
    OpenID Connect**, application type **Web Application**. Grant type: Authorization Code
    (default). Sign-in redirect URIs: `https://aiab-ui-dev.onrender.com/login/callback`
    (add `http://127.0.0.1:8090/login/callback` for laptops). Sign-out redirect URIs:
    `https://aiab-ui-dev.onrender.com/login` (and the laptop one), so Log out can end the
-   Okta session and come back. Assignments: the two groups.
-3. **Groups claim.** The ID token must carry the groups. On the app integration's
+   Okta session and come back. Assignments: the `aiab` group.
+3. **Groups claim.** The ID token must carry the group. On the app integration's
    *Sign On* tab, *OpenID Connect ID Token > Groups claim type: Filter*, *Groups claim
-   filter*: `groups` *Starts with* `aiab-`. The UI asks for the `groups` scope, which the
-   org authorization server honours only with this filter set.
+   filter*: `groups` *Equals* `aiab`. The UI asks for the `groups` scope, which the org
+   authorization server honours only with this filter set.
 4. Copy the **Client ID** and **Client secret** from the *General* tab. The issuer is the
    Okta org URL, `https://<org>.okta.com` (no path). If the org uses a custom
-   authorization server instead, the issuer is `https://<org>.okta.com/oauth2/<id>` and
-   the groups claim is added on that server's *Claims* tab rather than on the app.
+   authorization server instead, the issuer is `https://<org>.okta.com/oauth2/<id>`, the
+   groups claim is added on that server's *Claims* tab rather than on the app, and a
+   `groups` scope must exist on its *Scopes* tab, otherwise the login fails with
+   `invalid_scope`.
 
 Demo accounts: an Okta admin can create users by hand with any email and a set password
-(*Directory > People > Add person*, *Set by admin*). Put them in a group and assign the
+(*Directory > People > Add person*, *Set by admin*). Put them in the group and assign the
 app. They are ordinary Okta users for billing.
 
 ## 2. Switch the deployment
@@ -51,14 +54,20 @@ app. They are ordinary Okta users for billing.
 1. On the Render service, add `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`.
    Remove `UI_BOOTSTRAP_ACCOUNTS` (it was first-boot only and is ignored once the three
    are set).
-2. Deploy this change (the dev service is image-backed: merge to `dev`, the UI image
+2. Say who is which party. Either `UI_PARTIES="teddy@lucid.example:lab,caleb@other.example:auditor"`
+   on the service (applied on every start), or after the deploy, in the service's shell,
+   `python -m server.auth party teddy@lucid.example lab` for each person. Both write
+   `/data/parties.json`; a change applies at the next login. The email is the one Okta
+   puts in the ID token, case does not matter. A person in the Okta group but not in the
+   file is refused with the exact command to run.
+3. Deploy this change (the dev service is image-backed: merge to `dev`, the UI image
    workflow builds and deploys it; or trigger *Build agreement UI image* by hand).
-3. Check the start log says `login: OpenID Connect (https://…okta.com)`, then open
+4. Check the start log says `login: OpenID Connect (https://…okta.com)`, then open
    `/login`: it shows a *Sign in with Okta* button, not the username/password form.
-4. Both people log in once and check: the navbar shows their name and party badge, the
+5. Both people log in once and check: the navbar shows their name and party badge, the
    Sign screen accepts only their own party's signature, and a saved edit appears in the
    change log under the expected username (the part of the Okta login before the `@`).
-5. Each person logs out once: they land on Okta's sign-out and back on the UI's login,
+6. Each person logs out once: they land on Okta's sign-out and back on the UI's login,
    and the next *Sign in with Okta* asks who they are.
 
 Rollback at any point: unset the three settings and redeploy. `accounts.json` is still on
@@ -93,9 +102,13 @@ the Clerk dashboard once this change is merged.
 
 - **Okta authenticates; the UI's cookie authorises.** The server completes one OpenID
   Connect login and then trusts its own 12-hour cookie. It does not call Okta on every
-  request. Consequence: removing a person from the group, or deactivating them in Okta,
-  locks them out when their cookie expires, within 12 hours. If that is ever too slow,
-  shorten `SESSION_TTL_SECONDS` or re-check the group on the write routes.
+  request. Consequence: removing a person from the group or from `parties.json`, or
+  deactivating them in Okta, locks them out when their cookie expires, within 12 hours. If
+  that is ever too slow, shorten `SESSION_TTL_SECONDS` or re-check on the write routes.
+- **Access and party are two separate checks.** The Okta group says who may use the UI
+  at all, and an Okta admin controls it. `parties.json` says which side each email is on,
+  and the UI's operator controls it without touching Okta. An email in the file but not
+  in the group gets nowhere; an email in the group but not in the file is told to ask.
 - **The flow.** Authorization code with PKCE. `/login/start` makes a state, a nonce and a
   PKCE verifier, seals them in a ten-minute signed cookie, and sends the browser to Okta.
   `/login/callback` requires the state to match that cookie, exchanges the code at the
