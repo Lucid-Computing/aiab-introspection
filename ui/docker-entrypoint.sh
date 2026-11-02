@@ -54,17 +54,19 @@ export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DATA/repo/static/deploy/tinfoil/
 # Login: Okta (OpenID Connect) when OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET are
 # set (one Okta group may use the UI; who is lab and who is auditor is parties.json on the
 # disk, see docs/OIDC_AUTH_MIGRATION.md; UI_PARTIES="email:party,..." writes it on every
-# start, for operators who prefer an environment variable to a shell); otherwise the local
-# accounts file, created on first boot from UI_BOOTSTRAP_ACCOUNTS="user:party:password,...".
+# start, for operators who prefer an environment variable to a shell). Local password
+# accounts work next to Okta, or alone without it; the accounts file is created on first
+# boot from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..." and edited with server.auth add.
 if [ -n "${OIDC_ISSUER:-}" ] && [ -n "${OIDC_CLIENT_ID:-}" ] && [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
-  echo "login: OpenID Connect ($OIDC_ISSUER)"
+  echo "login: OpenID Connect ($OIDC_ISSUER) and local accounts"
   for entry in $(printf '%s' "${UI_PARTIES:-}" | tr ',' ' '); do
     uv run --no-sync python -m server.auth party "${entry%%:*}" "${entry#*:}" || echo "warning: bad UI_PARTIES entry: $entry"
   done
-elif [ ! -f "$DATA/accounts.json" ] && [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then
-  echo "login: local accounts (no Okta settings); creating them from UI_BOOTSTRAP_ACCOUNTS"
-  uv run --no-sync python -m server.auth bootstrap
 else
-  echo "login: local accounts (no Okta settings)"
+  echo "login: local accounts only (no Okta settings)"
+fi
+if [ ! -f "$DATA/accounts.json" ] && [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then
+  echo "login: creating local accounts from UI_BOOTSTRAP_ACCOUNTS"
+  uv run --no-sync python -m server.auth bootstrap
 fi
 exec uv run --no-sync uvicorn server.app:app --host 0.0.0.0 --port "${PORT:-8090}"

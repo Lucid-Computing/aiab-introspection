@@ -38,7 +38,7 @@ services:
         sync: false
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
         sync: false
-      - key: UI_BOOTSTRAP_ACCOUNTS   # local accounts only (no Okta settings), first boot: "teddy:lab:<password>,..."
+      - key: UI_BOOTSTRAP_ACCOUNTS   # local password accounts, first boot only: "demo:auditor:<password>,..."; work next to Okta
         sync: false
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false

@@ -3,15 +3,16 @@
 The agreement UI (`ui/`) signed people in against a local file of hashed passwords
 (`accounts.json` on the Render disk, created once from `UI_BOOTSTRAP_ACCOUNTS`). It now
 signs them in through Okta with OpenID Connect when `OIDC_ISSUER`, `OIDC_CLIENT_ID` and
-`OIDC_CLIENT_SECRET` are set, and still through the local file when they are not. This is
-the plan for switching a deployment over. There are two accounts to move (the lab's and
-the auditor's). The work is one app integration and one group in Okta, three settings and
-two party entries on Render, and a deploy.
+`OIDC_CLIENT_SECRET` are set. The local file keeps working next to Okta, for demo users
+the operator makes on the UI side and as a way in when Okta is down. This is the plan for
+switching a deployment over. There are two accounts to move (the lab's and the
+auditor's). The work is one app integration and one group in Okta, three settings and two
+party entries on Render, and a deploy.
 
 What stays the same: the party model (`lab` / `auditor`), the `aiab_ui` session cookie and
 every route behind it, the change-log attribution by username, the Sign and key screens.
-What changes: who checks the password (Okta), where the party is stored (`parties.json`
-on the UI's disk instead of `accounts.json`), and the login page. Code: `ui/server/auth.py` (`OidcLogin`, `Stamp`), `ui/server/app.py`
+What changes: real people's passwords are checked by Okta, their party is stored in
+`parties.json` on the UI's disk, and the login page shows both ways in. Code: `ui/server/auth.py` (`OidcLogin`, `Stamp`), `ui/server/app.py`
 (`/login`, `/login/start`, `/login/callback`, `/logout`),
 `ui/server/templates/login.html`.
 
@@ -45,15 +46,17 @@ An Okta administrator does this, about ten minutes.
    `groups` scope must exist on its *Scopes* tab, otherwise the login fails with
    `invalid_scope`.
 
-Demo accounts: an Okta admin can create users by hand with any email and a set password
-(*Directory > People > Add person*, *Set by admin*). Put them in the group and assign the
-app. They are ordinary Okta users for billing.
+Demo accounts, two ways. On the UI side, without touching Okta: `make account
+NAME=demo PARTY=auditor` in the service's shell (or `UI_BOOTSTRAP_ACCOUNTS` on first boot)
+makes a local password account; it logs in through the password form under the Okta
+button. In Okta: an admin creates a user by hand with any email and a set password
+(*Directory > People > Add person*, *Set by admin*), puts them in the group, assigns the
+app, and adds the email to `parties.json`. Those are ordinary Okta users for billing.
 
 ## 2. Switch the deployment
 
 1. On the Render service, add `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`.
-   Remove `UI_BOOTSTRAP_ACCOUNTS` (it was first-boot only and is ignored once the three
-   are set).
+   `UI_BOOTSTRAP_ACCOUNTS` can go (it was first-boot only; the accounts file exists).
 2. Say who is which party. Either `UI_PARTIES="teddy@lucid.example:lab,caleb@other.example:auditor"`
    on the service (applied on every start), or after the deploy, in the service's shell,
    `python -m server.auth party teddy@lucid.example lab` for each person. Both write
@@ -62,34 +65,31 @@ app. They are ordinary Okta users for billing.
    file is refused with the exact command to run.
 3. Deploy this change (the dev service is image-backed: merge to `dev`, the UI image
    workflow builds and deploys it; or trigger *Build agreement UI image* by hand).
-4. Check the start log says `login: OpenID Connect (https://…okta.com)`, then open
-   `/login`: it shows a *Sign in with Okta* button, not the username/password form.
+4. Check the start log says `login: OpenID Connect (https://…okta.com) and local
+   accounts`, then open `/login`: it shows a *Sign in with Okta* button above the
+   username/password form.
 5. Both people log in once and check: the navbar shows their name and party badge, the
    Sign screen accepts only their own party's signature, and a saved edit appears in the
    change log under the expected username (the part of the Okta login before the `@`).
 6. Each person logs out once: they land on Okta's sign-out and back on the UI's login,
    and the next *Sign in with Okta* asks who they are.
 
-Rollback at any point: unset the three settings and redeploy. `accounts.json` is still on
-the disk and the local passwords still work.
+Rollback at any point: unset the three settings and redeploy. The local passwords never
+stopped working.
 
-## 3. Retire the local accounts
+## 3. Tidy the local accounts
 
-Once both have logged in through Okta and nothing is left to roll back to:
+The two people's old local accounts (`teddy`, `caleb`) stay valid after they move to Okta,
+and anyone holding those passwords skips Okta. Once both have logged in through Okta,
+delete the old entries from `/data/accounts.json` in the service's shell (keep the file
+for demo accounts, or delete it if there are none: `rm /data/accounts.json`). Local
+accounts are then only the demo and emergency ones the operator makes on purpose with
+`make account`; each one is a password that Okta's policies (MFA, deactivation) do not
+cover, so keep the list short and known.
 
-1. Delete `/data/accounts.json` on the service's disk (Render shell: `rm /data/accounts.json`).
-   It holds password hashes nobody needs any more.
-2. Follow-up change, separate PR: remove the password path from `ui/server/auth.py`
-   (`hash_password`, `verify_password`, `authenticate`, `load_accounts`, `save_account`, the
-   `add` and `bootstrap` subcommands), the password form from `login.html`,
-   `UI_ACCOUNTS_FILE` and `UI_BOOTSTRAP_ACCOUNTS` from `config.py`, `docker-entrypoint.sh`,
-   `render.yaml` and the README, and `make account`. The tests that issue cookies through
-   `web.signer.issue(Account(...))` do not change; `tests/browser/plan_chat_server.py`
-   creates a local account and must switch to issuing a cookie directly.
-
-Laptops keep working without Okta settings until that follow-up: `make account` and the
-password form are the local default. A developer who wants the real login locally puts the
-three settings in `ui/.env` and has the laptop redirect URI on the app integration.
+Laptops work without Okta settings: `make account` and the password form are the local
+default. A developer who wants the real login locally puts the three settings in `ui/.env`
+and has the laptop redirect URI on the app integration.
 
 ## 4. The Clerk application
 
@@ -118,9 +118,12 @@ the Clerk dashboard once this change is merged.
   the nonce. The discovery document must name the configured issuer.
 - **The redirect URI** is built from the request (`X-Forwarded-Proto` and `Host` behind
   Render's proxy), so the same image serves any hostname registered on the app integration.
-- **The password form is refused while Okta is on**, so a half-configured service cannot
-  fall back to passwords by mistake. Without the settings the start log and the login page
-  say so.
+- **Local accounts work next to Okta.** The password form stays on the login page under
+  the Okta button, checked against `accounts.json`. That is by choice: the operator can
+  make demo users on the UI side without an Okta admin, and can still get in if Okta is
+  down. The cost is that each local account is a password outside Okta's policies, so
+  section 3 keeps the list deliberate. Without the three settings the start log says
+  `local accounts only` and the login page shows the form alone.
 - **Log out** clears the UI cookie and sends the browser to Okta's end-session endpoint
   with the ID token (kept in its own HttpOnly cookie for that purpose only), then back to
   `/login`. Without that, Okta's own session would sign the same person straight back in,

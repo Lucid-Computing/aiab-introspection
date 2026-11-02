@@ -29,7 +29,8 @@ from server.plan_view import PARTIES
 settings = load_settings()
 signer = SessionSigner(settings.session_secret)
 stamp = Stamp(settings.session_secret)  # the state of a login in flight, in its own cookie
-# OpenID Connect (Okta) when configured; otherwise the local accounts file (laptops, rollback).
+# OpenID Connect (Okta) when configured. The local accounts file works alongside it: demo
+# and emergency accounts the operator makes on this side, with `make account`.
 oidc: OidcLogin | None = (
     OidcLogin(
         settings.oidc_issuer,  # type: ignore[arg-type]
@@ -54,7 +55,7 @@ async def lifespan(_: FastAPI):
     except OSError as exc:
         print(f"warning: could not archive old agreements: {exc}")
     if oidc is None:
-        print("warning: OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET unset; local password login")
+        print("warning: OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET unset; password login only")
     proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of the proxy fresh
     asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
     refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
@@ -359,11 +360,9 @@ async def login(
     password: str = Form(""),
     next: str = Form("/"),
 ) -> Response:
-    """The local accounts' password form. Refused while OpenID Connect is on: there is no
-    account file to check against, and a half-configured server must not fall back."""
+    """The local accounts' password form. Works with or without Okta: local accounts are
+    the operator's own (demo users, a way in when the provider is down)."""
     target = safe_next(next)
-    if oidc is not None:
-        return render(request, "login.html", next=target, err="Sign in through Okta.")
     account = authenticate(settings.accounts_file, username.strip(), password)
     if account is None:
         return render(request, "login.html", next=target, err="Unknown account or wrong password.")

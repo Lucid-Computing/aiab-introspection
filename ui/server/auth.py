@@ -11,10 +11,10 @@ business: ``parties.json`` maps emails to ``lab`` or ``auditor``, and
 ``python -m server.auth party EMAIL PARTY`` edits it. Not in the group, or not in the file,
 cannot log in.
 
-Any OpenID Connect provider works; Okta is the one this was written against. Without the
-provider settings the previous system stays: local accounts with hashed passwords in
-``accounts.json`` (``python -m server.auth add USERNAME PARTY``). That path is for laptops
-and for rollback; see docs/OIDC_AUTH_MIGRATION.md.
+Any OpenID Connect provider works; Okta is the one this was written against. Local accounts
+with hashed passwords in ``accounts.json`` (``python -m server.auth add USERNAME PARTY``)
+work next to it, and alone without the provider settings: demo users the operator makes on
+this side, laptops, and a way in when the provider is down. See docs/OIDC_AUTH_MIGRATION.md.
 """
 
 from __future__ import annotations

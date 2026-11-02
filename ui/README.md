@@ -33,7 +33,7 @@ The change log records the part of the Okta login before the `@`. Removing a per
 
 The Okta side is one app integration (web application, redirect URI `<ui>/login/callback`, sign-out URI `<ui>/login`, a groups claim filter for `aiab`) and the one group; the exact clicks are in [docs/OIDC_AUTH_MIGRATION.md](../docs/OIDC_AUTH_MIGRATION.md), which is also the plan for moving a deployment from local accounts.
 
-Without the three settings the UI uses local accounts in `UI_ACCOUNTS_FILE` (hashed passwords, `make account`), as it did before. That is the laptop default and the rollback path.
+Local accounts in `UI_ACCOUNTS_FILE` (hashed passwords, `make account`) work next to Okta: the login page shows the Okta button and the password form. They are for demo users the operator makes on this side, and a way in when Okta is down. Without the three settings they are the only login, which is the laptop default.
 
 ## Logs: what the logging proxy recorded
 
@@ -56,7 +56,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | `../agreements/<name>/` | An agreement: `plan.json` (the graph), tests, signatures, `history.jsonl`. Git-ignored. |
 | [`server/config.py`](server/config.py) | Environment variables → settings. |
 | [`playground/`](playground/) | The plan builder: the graph-and-YAML editor embedded in the plan page, built once into `playground/dist`. |
-| [`server/auth.py`](server/auth.py) | Login: OpenID Connect against Okta (authorization code with PKCE, ID token checked, one group gates access, `parties.json` names the party: `python -m server.auth party`) turned into the UI's signed session cookie; or local accounts with hashed passwords (`python -m server.auth add`). |
+| [`server/auth.py`](server/auth.py) | Login: OpenID Connect against Okta (authorization code with PKCE, ID token checked, one group gates access, `parties.json` names the party: `python -m server.auth party`) turned into the UI's signed session cookie; and, next to it or alone, local accounts with hashed passwords (`python -m server.auth add`). |
 | [`server/plan_view.py`](server/plan_view.py) | Turns the plan folder into what the screens show; saves the plan through the box's loader, stores signatures, archives old-format agreements. |
 | [`server/box.py`](server/box.py) | Reads the box's manifest and health. Never writes. |
 | [`server/publish.py`](server/publish.py) | The git side: a key change as a branch and pull request with `gh`, draft backups, the checkout following its branch. |
@@ -152,7 +152,7 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
 2. On render.com, sign in with GitHub, choose **New → Blueprint**, pick this repository. Render reads `render.yaml` and asks for the values marked `sync: false`:
    - `GITHUB_TOKEN`: a GitHub token that can push branches and open pull requests on this repository (fine-grained token with Contents and Pull requests read/write, or a bot account's token). Key submissions push with it.
    - `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`: the Okta org URL and the app integration's client ID and secret; see [Login](#login). People must be in the `aiab` Okta group and in `parties.json` (`UI_PARTIES` or `make party`) before they log in.
-   - `UI_BOOTSTRAP_ACCOUNTS`: only without Okta settings: the local logins to create on first boot, `teddy:lab:<password>,caleb:auditor:<password>`. Remove the variable afterwards.
+   - `UI_BOOTSTRAP_ACCOUNTS`: optional; local password accounts to create on first boot, `demo:auditor:<password>,...`. They work next to Okta. Remove the variable afterwards; `make account` in the service's shell adds more.
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
    - `AIAB_LOG_KEY`: optional, only for the Logs screen; production's log reader key from 1Password.
    - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Ignored when `AIAB_LOG_KEY` is set.
@@ -170,7 +170,7 @@ docker run --rm -p 8090:8090 -v /path/to/origin.git:/origin.git -v aiab-data:/da
   -e AIAB_CHECKOUT_BRANCH=ui-design -e UI_BOOTSTRAP_ACCOUNTS=teddy:lab:lab-pass-123 aiab-ui
 ```
 
-Environment, for any host: `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository key submissions push from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for key PRs, default `production`), `AIAB_TRUST_FILE` (default the checkout's `static/aiab/baked/trust.json`; set it to a dev trust file for local signing with dev keys), `AIAB_BOX_URL` (default the host in the release pins), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `AIAB_AUTO_PULL` (fast-forward the checkout to its remote branch every minute when clean; on by default on Render), `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` (Okta login; `OIDC_GROUP`, default `aiab`; `UI_PARTIES_FILE`, default `ui/parties.json`; without the three, `UI_ACCOUNTS_FILE`, default `ui/accounts.json`, holds local accounts), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
+Environment, for any host: `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository key submissions push from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for key PRs, default `production`), `AIAB_TRUST_FILE` (default the checkout's `static/aiab/baked/trust.json`; set it to a dev trust file for local signing with dev keys), `AIAB_BOX_URL` (default the host in the release pins), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `AIAB_AUTO_PULL` (fast-forward the checkout to its remote branch every minute when clean; on by default on Render), `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` (Okta login; `OIDC_GROUP`, default `aiab`; `UI_PARTIES_FILE`, default `ui/parties.json`; `UI_ACCOUNTS_FILE`, default `ui/accounts.json`, holds local password accounts, which work with or without Okta), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
 
 ## Integration contract with the box (from master, Jon)
 

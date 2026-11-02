@@ -116,7 +116,12 @@ def okta(keypair, monkeypatch, tmp_path):
             oidc_client_id=CLIENT_ID,
             oidc_client_secret=CLIENT_SECRET,
             parties_file=parties,
+            accounts_file=tmp_path / "accounts.json",
         ),
+    )
+    auth.save_account(  # a local account the operator made on this side, next to Okta
+        web.settings.accounts_file,
+        auth.Account("demo", "auditor", "Demo", auth.hash_password("demo-pass-1234")),
     )
     fake.parties = parties
     return fake
@@ -141,9 +146,9 @@ def start(client, okta, next_path="/a/bio/plan"):
     return q
 
 
-def test_login_page_offers_okta_and_no_password_form(okta, client):
+def test_login_page_offers_okta_and_the_password_form(okta, client):
     html = client.get("/login?next=/runs").text
-    assert 'href="/login/start?next=/runs"' in html and 'name="password"' not in html
+    assert 'href="/login/start?next=/runs"' in html and 'name="password"' in html
 
 
 def test_the_whole_flow_issues_the_ui_cookie_with_the_party_from_the_group(okta, client):
@@ -244,10 +249,13 @@ def test_id_token_for_another_client_issuer_nonce_or_expired_is_refused(okta, cl
     assert login.claims(okta.id_token(), q["nonce"])["sub"] == "00u-teddy"
 
 
-def test_password_form_is_refused_while_okta_is_on(okta, client):
-    response = client.post("/login", data={"username": "teddy", "password": "whatever-1234"})
-    assert response.status_code == 200 and web.COOKIE not in response.cookies
-    assert "Sign in through Okta" in response.text
+def test_local_accounts_work_next_to_okta(okta, client):
+    bad = client.post("/login", data={"username": "demo", "password": "whatever-1234"})
+    assert bad.status_code == 200 and web.COOKIE not in bad.cookies
+    good = client.post("/login", data={"username": "demo", "password": "demo-pass-1234"})
+    assert good.status_code == 303
+    assert web.signer.read(good.cookies[web.COOKIE])["party"] == "auditor"
+    assert client.post("/logout").headers["location"] == "/login"  # no Okta session to end
 
 
 def test_logout_ends_the_okta_session_too(okta, client):
