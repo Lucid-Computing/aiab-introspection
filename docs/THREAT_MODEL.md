@@ -68,6 +68,18 @@ Every admitted conversation reaches Tinfoil classification; only policy-allowed
 messages reach Anthropic when both hosted overlays are enabled. Classifier
 verification does not make Anthropic answer inference confidential or attested.
 
+Party signing keys for the audit plan (lab and auditor, Ed25519) live with the parties,
+not in the service. In the agreement UI each party's key is made and kept in that party's
+browser as a non-extractable WebCrypto key, with a password-encrypted backup the party
+holds, and signs the plan digest in the browser; the UI server receives public keys and
+signatures only. The UI server is therefore trusted to serve honest JavaScript and an
+honest digest, which is an active attack a party can detect by comparing the served page
+with the repository and the shown digest with the downloaded plan files, and the trust
+file change that admits a new public key is visible in GitHub history. Hosting the
+private keys on the UI server was rejected: one server compromise would then sign for
+both parties with no trace outside the server. Requiring the other party's approval of a
+key change in `approve-keys.yml` is still open.
+
 ## Data handling and observable channels
 
 Request/response text must never be written to appliance disk, logs, reports, or

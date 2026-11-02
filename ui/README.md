@@ -16,7 +16,7 @@ AIAB_TRUST_FILE=$HOME/.aiab-dev/trust.json make dev
 
 Open http://127.0.0.1:8090 and log in. The UI reads and edits agreement folders in the checkout directly. Without `AIAB_TRUST_FILE` the UI pins the keys in `static/aiab/baked/trust.json`, which is right for reading the committed plan but means you cannot sign (those private keys are not yours). Optional: `AIAB_BOX_URL=https://…` shows what the box is running (`/aiab/manifest`).
 
-To sign: the Sign screen shows one `openssl` command (OpenSSL 3; on a Mac `brew install openssl`) that signs the version digest with your private key and prints the signature; paste it and press Verify and store. Making a key pair is two more `openssl` lines, and the public key is submitted on the same screen. The UI never edits the trust file: the keys it verifies against are the checkout's `static/aiab/baked/trust.json`, the same file on the deploy branch that the release bakes into the box. Submitting a key opens a pull request (`keys/<party>-…`) that changes that file; `approve-keys.yml` checks and merges it and starts the release that puts it into the box, and the Sign screen follows the pull request, the check and the release per party. Signatures made with a key production does not trust are refused everywhere, including here.
+To sign: on the Sign screen, Make a key in this browser creates an Ed25519 key with WebCrypto (`assets/sign.js`), downloads a password-encrypted backup of it, and keeps it in the browser's IndexedDB as a non-extractable key, so the server never sees it; the same screen submits its public key, and once production trusts that key, Sign this version in this browser signs the version digest after showing it in a confirmation and stores the signature through the same upload route the manual route uses. The backup file and its password bring the key into another browser; Forget this key removes it from this one. Keys are per site, so a key made on the Render UI is not on a local one. A key kept elsewhere still works: Other ways to sign shows the `openssl` command (OpenSSL 3; on a Mac `brew install openssl`) that signs the digest and prints the signature to paste, and two more `openssl` lines make a key pair. The UI never edits the trust file: the keys it verifies against are the checkout's `static/aiab/baked/trust.json`, the same file on the deploy branch that the release bakes into the box. Submitting a key opens a pull request (`keys/<party>-…`) that changes that file; `approve-keys.yml` checks and merges it and starts the release that puts it into the box, and the Sign screen follows the pull request, the check and the release per party. Signatures made with a key production does not trust are refused everywhere, including here.
 
 Nothing is deployed for an agreement: a signed agreement is run from the Runs screen, which sends the folder to the box with the records. Agreement drafts stay on the UI server (`agreements/` is git-ignored). Key pull requests use the deploy base (`AIAB_DEPLOY_BASE`, normally `production`) and the GitHub CLI when it is logged in (`gh auth login`). Several people may edit the same agreement: a save made from a page that showed an older version is refused, so nobody overwrites a change they never saw. (`AIAB_PUSH_DRAFTS=1` still exists to push drafts to the checkout's branch, off by default.) The branch model is in [docs/BRANCHES_AND_RELEASE.md](../docs/BRANCHES_AND_RELEASE.md).
 
@@ -48,9 +48,10 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | [`server/runs.py`](server/runs.py) | The Runs screen's steps: each one a call of the static part's `auditor.baked` CLI, results on disk. |
 | [`server/proxylogs.py`](server/proxylogs.py) | The Logs screen: fetches the logging proxy's segments (every 5 minutes in the background), groups requests into sessions, converts them to box records. |
 | [`server/app.py`](server/app.py) | The routes, one per screen or form. |
-| [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm dialog and the chat panel; the builder is its own bundle in an iframe. |
+| [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm dialog, the chat panel and browser signing (`assets/sign.js`); the builder is its own bundle in an iframe. |
 | [`server/template/`](server/template/) | The minimal valid agreement that "New agreement" starts from. |
 | [`server/devkeys.py`](server/devkeys.py) | Development keys in the box's format, and a trust file pinning them. |
+| [`assets/sign.js`](assets/sign.js) | Browser signing: makes, backs up, imports and stores the party's key in the browser and signs the digest there; the signed bytes are the protocol's, checked against the Python verifier by `tests/test_browser_signing.py` under Node. |
 | [`assets/sign_digest.py`](assets/sign_digest.py) | Standalone: sign a digest with a private key, or recompute a digest from `plan.zip`. |
 | [`tools/proxy_to_records.py`](tools/proxy_to_records.py) | Convert a test-proxy log segment into box records (plan transcripts). |
 | [`assets/`](assets/) | `swiss.css` vendored from lucidcomputing.ai; `aiab.css` adds the few things this UI needs. |
@@ -123,6 +124,9 @@ Run feature checks with `PYTHONPATH=. uv run pytest -q tests` from `ui/`.
 The browser regression fixture uses temporary draft files and a mocked Anthropic
 transport; it does not call Anthropic or modify production. From the repository
 root, run `PYTHONPATH=ui uv run --project ui python ui/tests/browser/plan_chat_server.py`.
+The Sign screen has its own fixture and script: `ui/tests/browser/sign_server.py` and
+`node ui/tests/browser/sign.cjs`, which make a key in Chrome, write it into the fixture's
+trust file, sign, forget the key and restore it from the backup file.
 In another terminal, run `node ui/tests/browser/plan_chat.cjs` with Playwright on
 Node's module path (or set `PLAYWRIGHT_MODULE` to its installed module directory).
 Chrome defaults to `/usr/bin/google-chrome`; override with `CHROME_PATH`.
