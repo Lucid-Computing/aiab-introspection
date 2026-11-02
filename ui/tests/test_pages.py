@@ -72,3 +72,13 @@ def test_legacy_routes_go_to_agreements(client):
 def test_run_refuses_without_an_agreement(client):
     response = client.post("/runs/start", data={"session": "x"})
     assert response.status_code == 303 and "Pick%20an%20agreement" in response.headers["location"]
+
+
+def test_sign_page_signs_in_the_browser_and_keeps_the_manual_route(client, tmp_path):
+    (tmp_path / "agreements/bio/signatures/lab.sig").unlink()  # the fixture is already signed
+    html = client.get("/a/bio/sign").text
+    assert '<script src="/assets/sign.js" defer></script>' in html
+    assert 'class="browser-key" data-party="lab" data-digest="sha256:' in html
+    assert 'id="upload-form-lab"' in html and 'id="key-form-lab"' in html
+    assert "openssl pkeyutl -sign" in html  # a key kept outside the browser still works
+    assert 'data-party="auditor"' not in html  # only your own party's card has the key block
