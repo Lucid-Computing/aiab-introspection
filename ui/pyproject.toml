@@ -12,7 +12,7 @@ dependencies = [
     # Form posts and signature-file uploads.
     "python-multipart>=0.0.20,<1",
     "httpx>=0.28,<1",
-    # Clerk login: the session token the browser hands over is a signed JWT.
+    # OpenID Connect login: the ID token is a signed JWT.
     "pyjwt[crypto]>=2.9,<3",
     "zstandard>=0.25.0",
 ]

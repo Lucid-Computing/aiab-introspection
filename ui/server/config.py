@@ -39,11 +39,16 @@ class Settings:
     proxy_key: str | None  # the key for that API; None means the Logs page is read-only
 
     anthropic_api_key: str | None = field(default=None, repr=False)
-    # Clerk (clerk.com) login. Both keys set: the login page is Clerk's and the server
-    # exchanges its session token for the UI's own cookie. Neither set: the local accounts
-    # in accounts_file (the previous system, kept for laptops and for rollback).
-    clerk_publishable_key: str | None = None
-    clerk_secret_key: str | None = field(default=None, repr=False)
+    # OpenID Connect login (Okta). Issuer, client id and secret set: Log in goes through the
+    # provider and the party comes from its groups claim. Unset: the local accounts in
+    # accounts_file (the previous system, kept for laptops and for rollback).
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = field(default=None, repr=False)
+    oidc_group_lab: str = "aiab-lab"
+    oidc_group_auditor: str = "aiab-auditor"
+    oidc_groups_claim: str = "groups"
+    oidc_scopes: str = "openid profile email groups"
     # Signatures are checked against production's trust file as GitHub serves it, the same
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
@@ -55,17 +60,8 @@ class Settings:
         return f"https://github.com/{self.repo}" if self.repo else None
 
     @property
-    def clerk_enabled(self) -> bool:
-        return bool(self.clerk_publishable_key and self.clerk_secret_key)
-
-    @property
-    def clerk_frontend_api(self) -> str | None:
-        """The instance's Frontend API host, which the publishable key encodes."""
-        if not self.clerk_publishable_key:
-            return None
-        from server.auth import clerk_frontend_api  # keeps the derivation in one place
-
-        return clerk_frontend_api(self.clerk_publishable_key)
+    def oidc_enabled(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
 
 
 def _repo_from_git() -> str | None:
@@ -152,8 +148,13 @@ def load_settings() -> Settings:
         proxy_key=proxy_key,
         proxy_header=proxy_header,
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
-        clerk_publishable_key=env.get("CLERK_PUBLISHABLE_KEY", "").strip() or None,
-        clerk_secret_key=env.get("CLERK_SECRET_KEY", "").strip() or None,
+        oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
+        oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,
+        oidc_client_secret=env.get("OIDC_CLIENT_SECRET", "").strip() or None,
+        oidc_group_lab=env.get("OIDC_GROUP_LAB", "aiab-lab").strip(),
+        oidc_group_auditor=env.get("OIDC_GROUP_AUDITOR", "aiab-auditor").strip(),
+        oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
+        oidc_scopes=env.get("OIDC_SCOPES", "openid profile email groups").strip(),
     )
 
 

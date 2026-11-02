@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import secrets
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -20,17 +21,26 @@ from markupsafe import Markup, escape
 
 from server import deploystatus, editing, plan_chat, proxylogs, publish, runs
 from server import plan_view as pv
-from server.auth import ClerkLogin, ClerkLoginError, SessionSigner, authenticate
+from server.auth import LoginError, OidcLogin, SessionSigner, Stamp, authenticate, pkce_pair
 from server.box import box_status
 from server.config import UI_ROOT, Settings, load_settings
 from server.plan_view import PARTIES
 
 settings = load_settings()
 signer = SessionSigner(settings.session_secret)
-# Clerk when both keys are set; otherwise the local accounts file (laptops, rollback).
-clerk: ClerkLogin | None = (
-    ClerkLogin(settings.clerk_publishable_key, settings.clerk_secret_key)  # type: ignore[arg-type]
-    if settings.clerk_enabled
+stamp = Stamp(settings.session_secret)  # the state of a login in flight, in its own cookie
+# OpenID Connect (Okta) when configured; otherwise the local accounts file (laptops, rollback).
+oidc: OidcLogin | None = (
+    OidcLogin(
+        settings.oidc_issuer,  # type: ignore[arg-type]
+        settings.oidc_client_id,  # type: ignore[arg-type]
+        settings.oidc_client_secret,  # type: ignore[arg-type]
+        group_lab=settings.oidc_group_lab,
+        group_auditor=settings.oidc_group_auditor,
+        groups_claim=settings.oidc_groups_claim,
+        scopes=settings.oidc_scopes,
+    )
+    if settings.oidc_enabled
     else None
 )
 
@@ -43,8 +53,8 @@ async def lifespan(_: FastAPI):
             print(f"archived {len(moved)} agreement(s) in the previous plan format: {moved}")
     except OSError as exc:
         print(f"warning: could not archive old agreements: {exc}")
-    if clerk is None:
-        print("warning: CLERK_PUBLISHABLE_KEY/CLERK_SECRET_KEY unset; local password login")
+    if oidc is None:
+        print("warning: OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET unset; local password login")
     proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of the proxy fresh
     asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
     refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
@@ -60,6 +70,8 @@ app = FastAPI(
 app.mount("/assets", StaticFiles(directory=UI_ROOT / "assets"), name="assets")
 templates = Jinja2Templates(directory=UI_ROOT / "server" / "templates")
 COOKIE = "aiab_ui"
+LOGIN_COOKIE = "aiab_login"  # state, nonce and PKCE verifier while the provider has the browser
+ID_TOKEN_COOKIE = "aiab_idt"  # the provider's ID token, only so Log out can end its session too
 LOGS_PAGE_SIZE = 50  # sessions per page on the Logs screen
 LOGS_RECENT = 6  # messages of a call shown unfolded; earlier ones load when opened
 
@@ -265,66 +277,114 @@ def agreement(
 # --------------------------------------------------------------------------- auth
 
 
-def request_origins(request: Request) -> set[str]:
-    """The origins a sign-in token for this UI may name: the page's Origin header (a browser
-    sends it with every form post) and the address this request arrived at."""
-    origins = set()
-    if request.headers.get("origin"):
-        origins.add(request.headers["origin"].rstrip("/"))
+def public_origin(request: Request) -> str:
+    """The address this UI is reached at, as the provider must see it in redirect URIs:
+    X-Forwarded-Proto and Host behind Render's proxy, the request's own otherwise."""
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
     host = request.headers.get("host") or request.url.netloc
-    if host:
-        origins.add(f"{scheme}://{host}")
-    return origins
+    return f"{scheme}://{host}"
+
+
+def safe_next(value: str | None) -> str:
+    return value if value and value.startswith("/") and not value.startswith("//") else "/"
 
 
 @app.get("/login")
 async def login_form(request: Request) -> Response:
-    return render(
-        request,
-        "login.html",
-        next=request.query_params.get("next", "/"),
-        signed_out=request.query_params.get("signed_out") == "1",
+    return render(request, "login.html", next=safe_next(request.query_params.get("next")))
+
+
+@app.get("/login/start")
+async def login_start(request: Request) -> Response:
+    """Send the browser to the provider. What must come back unchanged (state), what the ID
+    token must carry (nonce) and the PKCE verifier travel in a short-lived signed cookie."""
+    if oidc is None:
+        return back("/login", err="OpenID Connect login is not configured on this server.")
+    state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    verifier, challenge = pkce_pair()
+    redirect_uri = public_origin(request) + "/login/callback"
+    try:
+        url = await asyncio.to_thread(oidc.authorize_url, redirect_uri, state, nonce, challenge)
+    except LoginError as exc:
+        return render(request, "login.html", next="/", err=str(exc))
+    response = RedirectResponse(url, status_code=303)
+    sealed = stamp.seal(
+        {"s": state, "n": nonce, "v": verifier, "next": safe_next(request.query_params.get("next"))}
     )
+    response.set_cookie(LOGIN_COOKIE, sealed, httponly=True, samesite="lax", max_age=600)
+    return response
+
+
+@app.get("/login/callback")
+async def login_callback(request: Request) -> Response:
+    """The provider sent the browser back with a code: exchange it, check the ID token, map
+    the groups to the party, and issue the UI's own cookie."""
+    if oidc is None:
+        return back("/login", err="OpenID Connect login is not configured on this server.")
+    pending = stamp.open(request.cookies.get(LOGIN_COOKIE))
+    qp = request.query_params
+    if pending is None or not qp.get("state") or qp.get("state") != pending.get("s"):
+        return render(
+            request,
+            "login.html",
+            next="/",
+            err="This login attempt is not the one this browser started, or it took longer"
+            " than ten minutes. Sign in again.",
+        )
+    if qp.get("error"):
+        detail = qp.get("error_description") or qp["error"]
+        return render(request, "login.html", next=pending["next"], err=f"Okta refused: {detail}")
+    if not qp.get("code"):
+        return render(request, "login.html", next=pending["next"], err="No login code came back.")
+    redirect_uri = public_origin(request) + "/login/callback"
+    try:
+        account, id_token = await asyncio.to_thread(
+            oidc.login, qp["code"], redirect_uri, pending["v"], pending["n"]
+        )
+    except LoginError as exc:
+        response = render(request, "login.html", next=pending["next"], err=str(exc))
+        response.delete_cookie(LOGIN_COOKIE)
+        return response
+    response = RedirectResponse(pending["next"], status_code=303)
+    response.delete_cookie(LOGIN_COOKIE)
+    response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
+    response.set_cookie(ID_TOKEN_COOKIE, id_token, httponly=True, samesite="lax")
+    return response
 
 
 @app.post("/login")
 async def login(
     request: Request,
-    token: str = Form(""),
     username: str = Form(""),
     password: str = Form(""),
     next: str = Form("/"),
 ) -> Response:
-    target = next if next.startswith("/") and not next.startswith("//") else "/"
-    if clerk is not None:
-        # Clerk signed the user in; the page hands over the session token and this server
-        # checks it, then issues its own cookie. The password form is refused: there is no
-        # account file to check against once Clerk is on.
-        if not token:
-            return render(request, "login.html", next=target, err="Sign in with Clerk.")
-        try:
-            account = await asyncio.to_thread(clerk.login, token, request_origins(request))
-        except ClerkLoginError as exc:
-            # The page must not retry the exchange by itself: it would loop.
-            return render(request, "login.html", next=target, err=str(exc), halt=True)
-    else:
-        account = authenticate(settings.accounts_file, username.strip(), password)
-        if account is None:
-            return render(
-                request, "login.html", next=target, err="Unknown account or wrong password."
-            )
+    """The local accounts' password form. Refused while OpenID Connect is on: there is no
+    account file to check against, and a half-configured server must not fall back."""
+    target = safe_next(next)
+    if oidc is not None:
+        return render(request, "login.html", next=target, err="Sign in through Okta.")
+    account = authenticate(settings.accounts_file, username.strip(), password)
+    if account is None:
+        return render(request, "login.html", next=target, err="Unknown account or wrong password.")
     response = RedirectResponse(target, status_code=303)
     response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
     return response
 
 
 @app.post("/logout")
-async def logout() -> Response:
-    # The login page ends Clerk's own browser session too (signed_out=1), otherwise it
-    # would log the same user straight back in.
-    response = RedirectResponse("/login?signed_out=1", status_code=303)
+async def logout(request: Request) -> Response:
+    """End the UI session, and the provider's too when it offers that, so that the next Sign
+    in asks who you are instead of silently picking the same person again."""
+    target = "/login"
+    id_token = request.cookies.get(ID_TOKEN_COOKIE)
+    if oidc is not None and id_token:
+        url = await asyncio.to_thread(oidc.logout_url, id_token, public_origin(request) + "/login")
+        if url:
+            target = url
+    response = RedirectResponse(target, status_code=303)
     response.delete_cookie(COOKIE)
+    response.delete_cookie(ID_TOKEN_COOKIE)
     return response
 
 

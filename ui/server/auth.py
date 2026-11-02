@@ -1,16 +1,18 @@
-"""Who is logged in, and which party they are: Clerk login, the signed session cookie, and
-the local accounts the UI used before Clerk.
+"""Who is logged in, and which party they are: OpenID Connect login (Okta), the signed
+session cookie, and the local accounts the UI used before.
 
-Clerk (clerk.com) authenticates; the UI's own cookie authorises. The login page runs
-Clerk's sign-in and hands the resulting session token to ``POST /login``; ``ClerkLogin``
-checks its signature against the instance's key set, reads the user from Clerk's Backend
-API, and the app issues the same ``SessionSigner`` cookie as before, carrying the party.
-The party is the user's ``public_metadata.party`` in Clerk (``lab`` or ``auditor``); a user
-without one cannot log in. ``python -m server.auth set-party EMAIL PARTY`` sets it.
+The identity provider authenticates; the UI's own cookie authorises. ``GET /login/start``
+sends the browser to the provider's authorization endpoint (authorization code flow with
+PKCE, state and nonce kept in a short-lived signed cookie). ``GET /login/callback``
+exchanges the code, checks the ID token against the provider's key set, and the app
+issues the same ``SessionSigner`` cookie as before, carrying the party. The party comes
+from the provider's groups claim: a member of the lab group is the lab, of the auditor
+group the auditor. In neither, or in both, cannot log in.
 
-Without Clerk keys the previous system stays: local accounts with hashed passwords in
-``accounts.json`` (``python -m server.auth add USERNAME PARTY``). That path is for
-laptops and for rollback; see docs/CLERK_AUTH_MIGRATION.md.
+Any OpenID Connect provider works; Okta is the one this was written against. Without the
+provider settings the previous system stays: local accounts with hashed passwords in
+``accounts.json`` (``python -m server.auth add USERNAME PARTY``). That path is for laptops
+and for rollback; see docs/OIDC_AUTH_MIGRATION.md.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 import jwt
@@ -132,57 +135,107 @@ class SessionSigner:
         return {"username": body["u"], "party": body["p"], "display_name": body.get("n", body["u"])}
 
 
-# ------------------------------------------------------------------------------ Clerk
+# ------------------------------------------------------------------------- OpenID Connect
 
-CLERK_API = "https://api.clerk.com/v1"
+LOGIN_STATE_TTL_SECONDS = 10 * 60  # the browser has this long to come back from the provider
 JWKS_MIN_REFETCH_SECONDS = 60  # an unknown key id refetches the key set, at most this often
 
 
-class ClerkLoginError(Exception):
-    """The token or the user behind it is not acceptable; the message is shown to the user."""
+class LoginError(Exception):
+    """The provider's answer is not acceptable; the message is shown to the user."""
 
 
-def clerk_frontend_api(publishable_key: str) -> str:
-    """The instance's Frontend API host: the publishable key is ``pk_<env>_<base64(host$)>``."""
-    try:
-        encoded = publishable_key.split("_", 2)[2]
-        host = base64.b64decode(encoded + "=" * (-len(encoded) % 4)).decode("ascii")
-    except (IndexError, ValueError, UnicodeDecodeError) as exc:
-        raise ValueError("CLERK_PUBLISHABLE_KEY is not a Clerk publishable key") from exc
-    if not host.endswith("$"):
-        raise ValueError("CLERK_PUBLISHABLE_KEY is not a Clerk publishable key")
-    return host[:-1]
+class Stamp:
+    """A short-lived signed dict in a cookie: the state, nonce and PKCE verifier of a login
+    in flight. Same HMAC scheme as the session cookie, separate purpose string."""
+
+    def __init__(self, secret: bytes, ttl: int = LOGIN_STATE_TTL_SECONDS) -> None:
+        self._secret, self._ttl = secret, ttl
+
+    def _mac(self, payload: str) -> str:
+        tagged = b"login:" + payload.encode("ascii")
+        return _b64(hmac.new(self._secret, tagged, hashlib.sha256).digest())
+
+    def seal(self, data: dict[str, str]) -> str:
+        body = dict(data, exp=int(time.time()) + self._ttl)
+        payload = _b64(json.dumps(body, separators=(",", ":")).encode("utf-8"))
+        return f"{payload}.{self._mac(payload)}"
+
+    def open(self, token: str | None) -> dict[str, Any] | None:
+        if not token or "." not in token:
+            return None
+        payload, mac = token.rsplit(".", 1)
+        if not hmac.compare_digest(mac, self._mac(payload)):
+            return None
+        try:
+            body = json.loads(_unb64(payload))
+        except ValueError:
+            return None
+        return body if body.get("exp", 0) >= time.time() else None
 
 
-class ClerkLogin:
-    """Turns a Clerk session token into an Account, or raises ClerkLoginError.
+def pkce_pair() -> tuple[str, str]:
+    verifier = _b64(secrets.token_bytes(48))
+    challenge = _b64(hashlib.sha256(verifier.encode("ascii")).digest())
+    return verifier, challenge
 
-    The key set comes from the Frontend API (public, no secret needed); the user comes from
-    the Backend API with the secret key. ``transport`` is for tests.
-    """
+
+class OidcLogin:
+    """The authorization code flow against one OpenID Connect provider, and the mapping
+    from its groups claim to a party. ``transport`` is for tests."""
 
     def __init__(
         self,
-        publishable_key: str,
-        secret_key: str,
+        issuer: str,
+        client_id: str,
+        client_secret: str,
         *,
+        group_lab: str,
+        group_auditor: str,
+        groups_claim: str = "groups",
+        scopes: str = "openid profile email groups",
         transport: Any | None = None,
         leeway: int = 10,
     ) -> None:
-        self._frontend_api = clerk_frontend_api(publishable_key)
-        self._secret = secret_key
+        self.issuer = issuer.rstrip("/")
+        self.client_id = client_id
+        self._secret = client_secret
+        self.groups = {group_lab: "lab", group_auditor: "auditor"}
+        self.groups_claim = groups_claim
+        self.scopes = scopes
         self._leeway = leeway
-        self._keys: dict[str, Any] = {}  # kid -> public key
-        self._fetched_at = 0.0
-        self._lock = threading.Lock()
         self._transport = transport
+        self._lock = threading.RLock()  # _key_for holds it while metadata() takes it
+        self._metadata: dict[str, Any] | None = None
+        self._keys: dict[str, Any] = {}
+        self._fetched_at = 0.0
 
     def _client(self) -> httpx.Client:
         return httpx.Client(timeout=10, transport=self._transport)
 
+    # -- the provider's metadata and keys
+
+    def metadata(self) -> dict[str, Any]:
+        """The provider's discovery document, fetched once."""
+        with self._lock:
+            if self._metadata is None:
+                try:
+                    with self._client() as client:
+                        response = client.get(f"{self.issuer}/.well-known/openid-configuration")
+                        response.raise_for_status()
+                        data = response.json()
+                except (httpx.HTTPError, ValueError) as exc:
+                    raise LoginError("The identity provider did not answer; try again.") from exc
+                if data.get("issuer") != self.issuer:
+                    raise LoginError(
+                        f"The provider at {self.issuer} calls itself {data.get('issuer')}."
+                    )
+                self._metadata = data
+            return self._metadata
+
     def _load_keys(self) -> None:
         with self._client() as client:
-            response = client.get(f"https://{self._frontend_api}/.well-known/jwks.json")
+            response = client.get(self.metadata()["jwks_uri"])
             response.raise_for_status()
         keys = {}
         for jwk in response.json().get("keys", []):
@@ -194,99 +247,125 @@ class ClerkLogin:
         try:
             kid = jwt.get_unverified_header(token).get("kid")
         except jwt.PyJWTError as exc:
-            raise ClerkLoginError("The sign-in token is not readable. Try again.") from exc
+            raise LoginError("The ID token is not readable.") from exc
         with self._lock:
             if kid not in self._keys and time.time() - self._fetched_at > JWKS_MIN_REFETCH_SECONDS:
                 try:
                     self._load_keys()
                 except (httpx.HTTPError, ValueError) as exc:
-                    raise ClerkLoginError("Clerk did not answer; try again in a moment.") from exc
+                    raise LoginError("The identity provider did not answer; try again.") from exc
             key = self._keys.get(kid)
         if key is None:
-            raise ClerkLoginError("The sign-in token was signed with a key this UI does not know.")
+            raise LoginError("The ID token was signed with a key this UI does not know.")
         return key
 
-    def claims(self, token: str, origins: set[str]) -> dict[str, Any]:
-        """The verified claims. ``azp``, when present, must be one of ``origins``: the page
-        that obtained the token must be this UI, not another site the user is signed in to."""
-        key = self._key_for(token)
-        try:
-            claims = jwt.decode(
-                token,
-                key,
-                algorithms=["RS256"],
-                leeway=self._leeway,
-                # Clerk's session token has no aud; a dashboard customisation that adds one
-                # must not turn every login into "did not verify".
-                options={"require": ["exp", "sub"], "verify_aud": False},
-            )
-        except jwt.ExpiredSignatureError as exc:
-            raise ClerkLoginError("The sign-in token has expired. Try again.") from exc
-        except jwt.PyJWTError as exc:
-            raise ClerkLoginError("The sign-in token did not verify.") from exc
-        azp = claims.get("azp")
-        if azp and azp not in origins:
-            raise ClerkLoginError(f"The sign-in token was issued to {azp}, not to this UI.")
-        return claims
+    # -- the flow
 
-    def user(self, user_id: str) -> Account:
-        """The Clerk user as an Account: username (or primary email), party from
-        ``public_metadata.party``, display name from the profile."""
+    def authorize_url(self, redirect_uri: str, state: str, nonce: str, challenge: str) -> str:
+        query = urlencode(
+            {
+                "response_type": "code",
+                "client_id": self.client_id,
+                "redirect_uri": redirect_uri,
+                "scope": self.scopes,
+                "state": state,
+                "nonce": nonce,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+        return f"{self.metadata()['authorization_endpoint']}?{query}"
+
+    def exchange(self, code: str, redirect_uri: str, verifier: str) -> dict[str, Any]:
+        """The token endpoint's answer for an authorization code (client_secret_basic)."""
         try:
             with self._client() as client:
-                response = client.get(
-                    f"{CLERK_API}/users/{user_id}",
-                    headers={"Authorization": f"Bearer {self._secret}"},
+                response = client.post(
+                    self.metadata()["token_endpoint"],
+                    data={
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "redirect_uri": redirect_uri,
+                        "code_verifier": verifier,
+                    },
+                    auth=(self.client_id, self._secret),
+                    headers={"Accept": "application/json"},
                 )
-                response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ClerkLoginError("Clerk did not answer; try again in a moment.") from exc
-        return account_from_clerk(response.json())
+            raise LoginError("The identity provider did not answer; try again.") from exc
+        if response.status_code != 200:
+            detail = ""
+            try:
+                detail = response.json().get("error_description") or response.json().get("error")
+            except ValueError:
+                pass
+            raise LoginError(f"The identity provider refused the login code. {detail}".strip())
+        return response.json()
 
-    def login(self, token: str, origins: set[str]) -> Account:
-        return self.user(self.claims(token, origins)["sub"])
+    def claims(self, id_token: str, nonce: str) -> dict[str, Any]:
+        """The verified ID token: signature, issuer, audience, expiry and nonce."""
+        key = self._key_for(id_token)
+        try:
+            claims = jwt.decode(
+                id_token,
+                key,
+                algorithms=["RS256"],
+                audience=self.client_id,
+                issuer=self.issuer,
+                leeway=self._leeway,
+                options={"require": ["exp", "iat", "sub"]},
+            )
+        except jwt.PyJWTError as exc:
+            raise LoginError(f"The ID token did not verify ({exc}).") from exc
+        if claims.get("nonce") != nonce:
+            raise LoginError("The ID token does not belong to this login attempt.")
+        return claims
 
-
-def primary_email(user: dict[str, Any]) -> str | None:
-    wanted = user.get("primary_email_address_id")
-    for entry in user.get("email_addresses") or []:
-        if entry.get("id") == wanted:
-            return entry.get("email_address")
-    return None
-
-
-def account_from_clerk(user: dict[str, Any]) -> Account:
-    party = (user.get("public_metadata") or {}).get("party")
-    email = primary_email(user)
-    who = user.get("username") or email or user["id"]
-    if party not in PARTIES:
-        raise ClerkLoginError(
-            f"{who} is signed in but has no party yet. Ask the operator to run"
-            f" `python -m server.auth set-party {email or who} lab|auditor`."
+    def account(self, claims: dict[str, Any]) -> Account:
+        """The ID token's holder as an Account: the party from the groups claim, the
+        username from preferred_username (its local part) or the email, the display name."""
+        groups = claims.get(self.groups_claim) or []
+        if isinstance(groups, str):
+            groups = [groups]
+        parties = {self.groups[g] for g in groups if g in self.groups}
+        login = claims.get("preferred_username") or claims.get("email") or claims["sub"]
+        if len(parties) != 1:
+            wanted = " or ".join(self.groups)
+            if parties:
+                raise LoginError(f"{login} is in both party groups ({wanted}); it must be in one.")
+            raise LoginError(
+                f"{login} is signed in but is in neither party group. Ask the Okta"
+                f" administrator to add you to {wanted}."
+            )
+        username = login.split("@", 1)[0] if "@" in login else login
+        name = claims.get("name") or " ".join(
+            filter(None, [claims.get("given_name"), claims.get("family_name")])
         )
-    name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or who
-    return Account(username=who, party=party, display_name=name, password_hash="")
-
-
-def set_party(secret_key: str, email: str, party: str, *, transport: Any | None = None) -> str:
-    """Set ``public_metadata.party`` on the Clerk user with this email; returns the user id."""
-    if party not in PARTIES:
-        raise ValueError(f"party must be one of {PARTIES}")
-    headers = {"Authorization": f"Bearer {secret_key}"}
-    with httpx.Client(timeout=10, transport=transport) as client:
-        found = client.get(f"{CLERK_API}/users", params={"email_address": email}, headers=headers)
-        found.raise_for_status()
-        users = found.json()
-        if len(users) != 1:
-            raise LookupError(f"{len(users)} Clerk users have the email {email}; expected one")
-        user_id = users[0]["id"]
-        done = client.patch(
-            f"{CLERK_API}/users/{user_id}/metadata",
-            json={"public_metadata": {"party": party}},
-            headers=headers,
+        return Account(
+            username=username, party=parties.pop(), display_name=name or username, password_hash=""
         )
-        done.raise_for_status()
-    return user_id
+
+    def login(self, code: str, redirect_uri: str, verifier: str, nonce: str) -> tuple[Account, str]:
+        """Code to Account, plus the raw ID token (for the provider's logout)."""
+        tokens = self.exchange(code, redirect_uri, verifier)
+        id_token = tokens.get("id_token")
+        if not id_token:
+            raise LoginError("The identity provider returned no ID token.")
+        return self.account(self.claims(id_token, nonce)), id_token
+
+    def logout_url(self, id_token: str, post_logout_redirect_uri: str) -> str | None:
+        """The provider's end-session address, so Log out ends the Okta session too and the
+        next Sign in asks who you are. None if the provider has none."""
+        try:
+            endpoint = self.metadata().get("end_session_endpoint")
+        except LoginError:
+            return None
+        if not endpoint:
+            return None
+        query = urlencode(
+            {"id_token_hint": id_token, "post_logout_redirect_uri": post_logout_redirect_uri}
+        )
+        return f"{endpoint}?{query}"
 
 
 # -------------------------------------------------------------------------------- CLI
@@ -306,28 +385,11 @@ def main(argv: list[str] | None = None) -> int:
         "bootstrap", help='first-boot accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..."'
     )
     boot.add_argument("--file", type=Path, default=None)
-    who = sub.add_parser(
-        "set-party", help="Clerk: bind the user with this email to a party (needs CLERK_SECRET_KEY)"
-    )
-    who.add_argument("email")
-    who.add_argument("party", choices=PARTIES)
     args = parser.parse_args(argv)
 
     from server.config import load_settings  # local import keeps the CLI free of FastAPI
 
-    settings = load_settings()
-    if args.command == "set-party":
-        if not settings.clerk_secret_key:
-            print("set CLERK_SECRET_KEY (ui/.env or the environment)", file=sys.stderr)
-            return 1
-        try:
-            user_id = set_party(settings.clerk_secret_key, args.email, args.party)
-        except (LookupError, httpx.HTTPError) as exc:
-            print(f"not set: {exc}", file=sys.stderr)
-            return 1
-        print(f"{args.email} ({user_id}) is now the {args.party}")
-        return 0
-    path = args.file or settings.accounts_file
+    path = args.file or load_settings().accounts_file
     if args.command == "bootstrap":
         for entry in filter(None, os.environ.get("UI_BOOTSTRAP_ACCOUNTS", "").split(",")):
             username, party, password = entry.strip().split(":", 2)

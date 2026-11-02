@@ -14,7 +14,7 @@ AIAB_TRUST_FILE=$HOME/.aiab-dev/trust.json make dev
 # fish shell:  env AIAB_TRUST_FILE=$HOME/.aiab-dev/trust.json make dev
 ```
 
-Open http://127.0.0.1:8090 and log in. To log in through Clerk instead of local accounts, see [Login](#login). The UI reads and edits agreement folders in the checkout directly. Without `AIAB_TRUST_FILE` the UI pins the keys in `static/aiab/baked/trust.json`, which is right for reading the committed plan but means you cannot sign (those private keys are not yours). Optional: `AIAB_BOX_URL=https://…` shows what the box is running (`/aiab/manifest`).
+Open http://127.0.0.1:8090 and log in. To log in through Okta instead of local accounts, see [Login](#login). The UI reads and edits agreement folders in the checkout directly. Without `AIAB_TRUST_FILE` the UI pins the keys in `static/aiab/baked/trust.json`, which is right for reading the committed plan but means you cannot sign (those private keys are not yours). Optional: `AIAB_BOX_URL=https://…` shows what the box is running (`/aiab/manifest`).
 
 To sign: the Sign screen shows one `openssl` command (OpenSSL 3; on a Mac `brew install openssl`) that signs the version digest with your private key and prints the signature; paste it and press Verify and store. Making a key pair is two more `openssl` lines, and the public key is submitted on the same screen. The UI never edits the trust file: the keys it verifies against are the checkout's `static/aiab/baked/trust.json`, the same file on the deploy branch that the release bakes into the box. Submitting a key opens a pull request (`keys/<party>-…`) that changes that file; `approve-keys.yml` checks and merges it and starts the release that puts it into the box, and the Sign screen follows the pull request, the check and the release per party. Signatures made with a key production does not trust are refused everywhere, including here.
 
@@ -24,15 +24,11 @@ Nothing is deployed for an agreement: a signed agreement is run from the Runs sc
 
 Who may use the UI, and which party they are, is decided outside the agreement: one account per person, each bound to `lab` or `auditor`. Only a user's own party's signature and key submissions are accepted from them.
 
-With `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` set (in `ui/.env` locally, in the service environment on Render), accounts live in [Clerk](https://clerk.com). The login page is Clerk's sign-in; once it has signed the person in, the page posts Clerk's session token to `/login`, the server checks the token's signature against the instance's key set and its `azp` against this UI's origin, reads the user from Clerk's Backend API, and sets the same signed `aiab_ui` cookie as before (12 hours). The party is the user's `public_metadata.party` in Clerk; a user without one is told so and cannot get in. The operator sets it once per person:
+With `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` set (in `ui/.env` locally, in the service environment on Render), people sign in through Okta, or any OpenID Connect provider: *Sign in with Okta* sends the browser to the provider (authorization code with PKCE); the provider sends it back to `/login/callback` with a code; the server exchanges the code, checks the ID token's signature against the provider's published keys, its issuer, audience, expiry and nonce, and sets the same signed `aiab_ui` cookie as before (12 hours). The party is an Okta group: members of `aiab-lab` are the lab, of `aiab-auditor` the auditor (`OIDC_GROUP_LAB`, `OIDC_GROUP_AUDITOR` rename them; `OIDC_GROUPS_CLAIM` and `OIDC_SCOPES` adapt to a provider that names the claim differently). A person in neither group, or in both, is told so and cannot get in. The change log records the part of the Okta login before the `@`. Removing a person from the group takes effect when their cookie expires. Log out ends the Okta session too, so the next sign-in asks who you are.
 
-```sh
-make party EMAIL=teddy@example.com PARTY=lab       # python -m server.auth set-party
-```
+The Okta side is one app integration (web application, redirect URI `<ui>/login/callback`, sign-out URI `<ui>/login`, a groups claim filter for `aiab-`) and the two groups; the exact clicks are in [docs/OIDC_AUTH_MIGRATION.md](../docs/OIDC_AUTH_MIGRATION.md), which is also the plan for moving a deployment from local accounts.
 
-The cookie carries the Clerk `username` (or the primary email when there is none) as the name the change log records, so set usernames in Clerk to the names people had before. Removing a user in Clerk takes effect when their cookie expires; delete the account rather than only its party if it has to be at once, and Log out ends both the UI cookie and Clerk's own browser session. Restrict sign-ups in the Clerk dashboard (Access mode: invite-only) so only invited people can create accounts.
-
-Without the two keys the UI uses local accounts in `UI_ACCOUNTS_FILE` (hashed passwords, `make account`), as it did before Clerk. That is the laptop default and the rollback path. Moving a deployment from local accounts to Clerk: [docs/CLERK_AUTH_MIGRATION.md](../docs/CLERK_AUTH_MIGRATION.md).
+Without the three settings the UI uses local accounts in `UI_ACCOUNTS_FILE` (hashed passwords, `make account`), as it did before. That is the laptop default and the rollback path.
 
 ## Logs: what the logging proxy recorded
 
@@ -55,7 +51,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | `../agreements/<name>/` | An agreement: `plan.json` (the graph), tests, signatures, `history.jsonl`. Git-ignored. |
 | [`server/config.py`](server/config.py) | Environment variables → settings. |
 | [`playground/`](playground/) | The plan builder: the graph-and-YAML editor embedded in the plan page, built once into `playground/dist`. |
-| [`server/auth.py`](server/auth.py) | Login: Clerk session tokens checked and turned into the UI's signed session cookie, the party from Clerk (`python -m server.auth set-party`); or local accounts with hashed passwords (`python -m server.auth add`). |
+| [`server/auth.py`](server/auth.py) | Login: OpenID Connect against Okta (authorization code with PKCE, ID token checked, the party from the groups claim) turned into the UI's signed session cookie; or local accounts with hashed passwords (`python -m server.auth add`). |
 | [`server/plan_view.py`](server/plan_view.py) | Turns the plan folder into what the screens show; saves the plan through the box's loader, stores signatures, archives old-format agreements. |
 | [`server/box.py`](server/box.py) | Reads the box's manifest and health. Never writes. |
 | [`server/publish.py`](server/publish.py) | The git side: a key change as a branch and pull request with `gh`, draft backups, the checkout following its branch. |
@@ -150,12 +146,12 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
 1. Push the branch named in `render.yaml` (`branch:`) to GitHub.
 2. On render.com, sign in with GitHub, choose **New → Blueprint**, pick this repository. Render reads `render.yaml` and asks for the values marked `sync: false`:
    - `GITHUB_TOKEN`: a GitHub token that can push branches and open pull requests on this repository (fine-grained token with Contents and Pull requests read/write, or a bot account's token). Key submissions push with it.
-   - `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`: the Clerk instance's keys (API keys page of the dashboard); see [Login](#login). Bind each user to a party with `make party` before they log in.
-   - `UI_BOOTSTRAP_ACCOUNTS`: only without Clerk keys: the local logins to create on first boot, `teddy:lab:<password>,caleb:auditor:<password>`. Remove the variable afterwards.
+   - `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`: the Okta org URL and the app integration's client ID and secret; see [Login](#login). People must be in the `aiab-lab` or `aiab-auditor` group before they log in.
+   - `UI_BOOTSTRAP_ACCOUNTS`: only without Okta settings: the local logins to create on first boot, `teddy:lab:<password>,caleb:auditor:<password>`. Remove the variable afterwards.
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
    - `AIAB_LOG_KEY`: optional, only for the Logs screen; production's log reader key from 1Password.
    - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Ignored when `AIAB_LOG_KEY` is set.
-3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo` (and, without Clerk, creates the local accounts).
+3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo` (and, without Okta, creates the local accounts).
 4. Open the service URL, log in, and submit each party's public key on a Sign screen, as locally.
 
 What lives where: the image holds the UI code and the static part it imports; the disk holds the checkout the UI edits (`/data/repo`), the accounts, the trust file and the runs. Redeploys replace the image and keep the disk. `AIAB_CHECKOUT_BRANCH` is the branch whose release pins and trust file the UI works with. Agreement drafts live on that disk and never reach GitHub.
@@ -169,7 +165,7 @@ docker run --rm -p 8090:8090 -v /path/to/origin.git:/origin.git -v aiab-data:/da
   -e AIAB_CHECKOUT_BRANCH=ui-design -e UI_BOOTSTRAP_ACCOUNTS=teddy:lab:lab-pass-123 aiab-ui
 ```
 
-Environment, for any host: `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository key submissions push from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for key PRs, default `production`), `AIAB_TRUST_FILE` (default the checkout's `static/aiab/baked/trust.json`; set it to a dev trust file for local signing with dev keys), `AIAB_BOX_URL` (default the host in the release pins), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `AIAB_AUTO_PULL` (fast-forward the checkout to its remote branch every minute when clean; on by default on Render), `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` (Clerk login; without them `UI_ACCOUNTS_FILE`, default `ui/accounts.json`, holds local accounts), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
+Environment, for any host: `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository key submissions push from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for key PRs, default `production`), `AIAB_TRUST_FILE` (default the checkout's `static/aiab/baked/trust.json`; set it to a dev trust file for local signing with dev keys), `AIAB_BOX_URL` (default the host in the release pins), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `AIAB_AUTO_PULL` (fast-forward the checkout to its remote branch every minute when clean; on by default on Render), `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` (Okta login; without them `UI_ACCOUNTS_FILE`, default `ui/accounts.json`, holds local accounts), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
 
 ## Integration contract with the box (from master, Jon)
 

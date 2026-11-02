@@ -28,13 +28,15 @@ services:
         value: dev       # a key submission opens its pull request against this branch
       - key: UI_SESSION_SECRET
         generateValue: true
-      - key: CLERK_PUBLISHABLE_KEY  # Clerk login (clerk.com): the instance's publishable key, pk_...
+      - key: OIDC_ISSUER            # Okta login: the org's issuer, e.g. https://lucid.okta.com; all three set = Okta, none = local accounts
         sync: false
-      - key: CLERK_SECRET_KEY       # ... and its secret key, sk_...; both set = Clerk, neither = local accounts
+      - key: OIDC_CLIENT_ID         # the Okta app integration's client ID
+        sync: false
+      - key: OIDC_CLIENT_SECRET     # ... and its client secret
         sync: false
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
         sync: false
-      - key: UI_BOOTSTRAP_ACCOUNTS   # local accounts only (no Clerk keys), first boot: "teddy:lab:<password>,..."
+      - key: UI_BOOTSTRAP_ACCOUNTS   # local accounts only (no Okta settings), first boot: "teddy:lab:<password>,..."
         sync: false
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false
