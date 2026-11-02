@@ -86,7 +86,7 @@ three settings in `ui/.env` and has the laptop redirect URI on the app integrati
 
 Before settling on Okta, a Clerk application was created to try the hosted alternative:
 *AIAB agreement UI*, `app_3LXuiIYb6yGh6zBtynTJyvhp2CG`, in Jonathan's Clerk workspace,
-with two users (`jonathan`, `aiab-e2e-auditor`). It is not used by anything. Delete it from
+with one user (`jonathan`). It is not used by anything. Delete it from
 the Clerk dashboard once this change is merged.
 
 ## What to know about the design
