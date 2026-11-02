@@ -26,7 +26,7 @@
       var halt = {{ halt | default(false) | tojson }}, signedOut = {{ signed_out | default(false) | tojson }};
       var form = document.getElementById("clerk-login"), status = document.getElementById("clerk-status");
       var out = document.getElementById("clerk-out"), mount = document.getElementById("clerk-sign-in");
-      var sent = false;
+      var sent = false, here = window.location.pathname + window.location.search;
       function say(text) { status.textContent = text; status.hidden = !text; }
       async function exchange() {
         if (sent || !Clerk.session) return;
@@ -50,12 +50,14 @@
               await Clerk.signOut(); window.location.href = "/login";
             });
           } else {
-            Clerk.mountSignIn(mount, { routing: "hash" });
+            Clerk.mountSignIn(mount, { routing: "hash", forceRedirectUrl: here });
           }
           return;
         }
         if (Clerk.isSignedIn) { exchange(); return; }
-        Clerk.mountSignIn(mount, { routing: "hash" });
+        // After sign-in the component navigates to forceRedirectUrl: this same page, where
+        // the isSignedIn branch exchanges with `next` intact, should the listener lose the race.
+        Clerk.mountSignIn(mount, { routing: "hash", forceRedirectUrl: here });
         Clerk.addListener(function (state) { if (state.session) exchange(); });
       });
     })();

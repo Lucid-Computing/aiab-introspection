@@ -174,8 +174,15 @@ def test_logout_asks_the_page_to_end_the_clerk_session_too(clerk, client):
 
 def test_without_clerk_the_local_accounts_still_work(tmp_path, monkeypatch, client):
     monkeypatch.setattr(web, "clerk", None)
-    monkeypatch.setattr(
-        web, "settings", replace(load_settings(), accounts_file=tmp_path / "accounts.json")
+    monkeypatch.setattr(  # whatever ui/.env holds, this test is the no-Clerk case
+        web,
+        "settings",
+        replace(
+            load_settings(),
+            accounts_file=tmp_path / "accounts.json",
+            clerk_publishable_key=None,
+            clerk_secret_key=None,
+        ),
     )
     auth.save_account(
         web.settings.accounts_file,

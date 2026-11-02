@@ -216,7 +216,9 @@ class ClerkLogin:
                 key,
                 algorithms=["RS256"],
                 leeway=self._leeway,
-                options={"require": ["exp", "sub"]},
+                # Clerk's session token has no aud; a dashboard customisation that adds one
+                # must not turn every login into "did not verify".
+                options={"require": ["exp", "sub"], "verify_aud": False},
             )
         except jwt.ExpiredSignatureError as exc:
             raise ClerkLoginError("The sign-in token has expired. Try again.") from exc
