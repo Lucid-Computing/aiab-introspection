@@ -15,11 +15,16 @@ What changes: who checks the password (Clerk), where the party is stored (the Cl
 
 ## 1. Create the Clerk application
 
-1. In the Clerk dashboard create an application (name it after the UI, e.g. *AIAB
-   agreement UI*). Enable **Email** with password or email code as the sign-in method, and
-   enable **Username** under *User & authentication* so each person can carry the name
-   the change log already uses.
-2. **Access mode: Invite-only** (`dashboard.clerk.com/~/user-authentication/access-mode`).
+Done on 2026-11-02 through Clerk's MCP server (`mcp.clerk.com`): application **AIAB
+agreement UI** (`app_3LXuiIYb6yGh6zBtynTJyvhp2CG`), development instance
+`ins_3LXuiDRk5zHHVDpsoAR3R3iOD7S`, publishable key
+`pk_test_c3RpbGwta29pLTQ2MTQuY2xlcmsuYWNjb3VudHMuZGV2JA` (Frontend API
+`still-koi-4614.clerk.accounts.dev`). What was set, and why, for the next application:
+
+1. Sign-in: email with a code (Clerk's default) plus **username** (`auth_username`:
+   used for sign-in and sign-up, required), so each person carries the name the change
+   log already uses. Usernames are 4 to 64 characters.
+2. **Access mode: Invite-only** (`auth_access_control.sign_up_mode = restricted`).
    Nobody can sign up unless invited, which is the property the local file had.
 3. **Instance.** The dev UI runs at `aiab-ui-dev.onrender.com`, a host we do not own DNS
    for, so it uses the application's *development* instance (`pk_test_…` / `sk_test_…`):
@@ -32,8 +37,11 @@ What changes: who checks the password (Clerk), where the party is stored (the Cl
 
 ## 2. Create the two users and bind them to their parties
 
-For each of the two people (the lab's signer and the auditor's), from the dashboard's
-*Users* page:
+Done for the first account on 2026-11-02: `jonathan` (jonathan.ng@lucidcomputing.ai,
+`user_3LXupVojrCP4RZHe9XUZGm3Zrn1`), party `lab`, created without a password: the first
+sign-in goes through the email code, and a password can be set afterwards. The auditor's
+account is still to be created. For each person, from the dashboard's *Users* page (or
+the MCP server's `create_user` and `update_user_metadata`):
 
 1. **Invite** their email (Invite-only mode sends the invitation; they set their own
    password or use an email code). Or **Create user** directly with email and password.
@@ -91,6 +99,18 @@ Laptops keep working without Clerk keys until that follow-up: `make account` and
 password form are the local default. A developer who wants the real login locally puts the
 development instance's keys in `ui/.env`; the development instance accepts
 `http://127.0.0.1:8090`.
+
+## Okta
+
+Nothing in the UI changes for Okta. Clerk handles it as an enterprise connection (SAML or
+OIDC to an Okta Workforce tenant, under *SSO connections* in the dashboard, bound to the
+organisation's email domain): the person signs in through Okta on Clerk's sign-in box,
+Clerk issues the same session token, and the UI checks it the same way. Two things to
+know: Clerk creates the user at their first Okta sign-in, so either create the user with
+the same email beforehand and set the party then (Clerk links by email), or set the party
+right after the first sign-in, which is refused until then with the `set-party` command.
+And enterprise connections are free on a development instance but a paid add-on on a
+production instance.
 
 ## What to know about the design
 
