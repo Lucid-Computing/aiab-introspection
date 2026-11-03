@@ -10,13 +10,11 @@ Live audit API: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev
 
 Explore a recorded run: [Inside an audit](https://aiab-signed-audit-run.surge.sh). Operator commands: [evaluation, offline verification and release automation](docs/AUDIT_OPERATIONS.md).
 
-**Run the live demo yourself:** [PM quick start](docs/PM_DEMO.md). It uses stub logger records and real attested inference; no Docker, GPU or Tailscale setup required.
-
 The repository is split into three parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AIAB_DESIGN_SPEC.md) for the design.
 
 | Folder | Part | Owner | Changes |
 | --- | --- | --- | --- |
-| [`static/`](static/) | The box: runtime, auditor tooling, deployment, tests, and its own chat-demo front end (`static/webchat/`). Python project root. | Jonathan | With development |
+| [`static/`](static/) | The box: runtime, auditor tooling, deployment, tests. Python project root. | Jonathan | With development |
 | [`plan/`](plan/) | An example audit plan: code, prompts, settings, both parties' signatures. The CLI commands in the docs use it. Agreements the UI edits live under `agreements/` (git-ignored) and travel to the box signed, with each run; nothing is baked into the image. | Jonathan | With every agreement |
 | [`ui/`](ui/) | The agreement UI: edit, review, sign and run agreements; show attestation and runs. Never part of the image. | Jonathan | Independently |
 
@@ -31,4 +29,4 @@ make check          # lint + tests
 make image          # builds the enclave image from the repository root
 ```
 
-The old chat-demo README is at [static/README.md](static/README.md).
+The box's own README is at [static/README.md](static/README.md).

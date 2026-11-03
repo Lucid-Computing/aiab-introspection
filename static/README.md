@@ -17,7 +17,6 @@ What is here:
 | `aiab/audit/` | shared pieces: the wire protocol and signatures, the report signer, the model client, the HTTP routes |
 | `auditor/` | the auditor tool: `baked.py` is the command the UI's Runs page calls step by step |
 | `deploy/` | the Dockerfile, the reproducible-build script, and `tinfoil/audit/` with the release script and the release pins |
-| `demo/audit/` | the walkthrough script the Runs page mirrors, the demo logger stand-in, and evidence from past releases |
 | `tests/` | pytest; `tests/fixtures/graph-plan/` is a signed example plan with transcripts |
 
 The plan format and what each block may do: [../docs/PLAN_SPEC.md](../docs/PLAN_SPEC.md).

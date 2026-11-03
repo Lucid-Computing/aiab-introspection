@@ -1,6 +1,6 @@
 """Run a signed agreement against the live box, one step at a time, through the auditor CLI.
 
-This mirrors static/demo/audit/walkthrough.py. The UI adds no verification logic: every
+The UI adds no verification logic: every
 step is one call of ``python -m auditor.baked`` from the static part, and the screen shows
 what that command printed or wrote. A run is a folder under the runs directory holding
 plan/ (a frozen copy of the agreement as it was sent, signatures included), state.json (the

@@ -26,7 +26,7 @@ static/ or trust.json change --> production --push or approve-keys dispatch--> r
                                    +--> commits the new release pins and the matching config/trust/manifest back to production [skip ci]
 ```
 
-The box never fetches anything at run time. The trust keys and the model binding are inside the image, so the hardware attestation covers them; the plan arrives signed with each run and is verified against those keys. Clients (the UI's Runs page, `scripts/demo-live`) read the release pins from the repository and refuse a box that does not match.
+The box never fetches anything at run time. The trust keys and the model binding are inside the image, so the hardware attestation covers them; the plan arrives signed with each run and is verified against those keys. Clients (the UI's Runs page, `python -m auditor.baked`) read the release pins from the repository and refuse a box that does not match.
 
 ## What the release job needs, once
 

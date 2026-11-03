@@ -111,7 +111,7 @@ volume is configured. [Prompt caching](https://docs.tinfoil.sh/sdk/prompt-cachin
    attestation, allowed/blocked traffic, signed reports, and wrong-pin refusal.
 
 10. **Adversarial deployment acceptance.** The staged
-    [adversarial driver](../demo/ADVERSARIAL.md) exercises local startup refusal and
+    adversarial driver (removed from the repository on 3 Nov 2026) exercises local startup refusal and
     provides operator-assisted live probes. Tamper/debug/configuration/restart
     deployments and direct-inference bypass remain unperformed. A threshold change
     in measured YAML can change the Tinfoil release digest while keeping the same

@@ -21,9 +21,8 @@ On the development machine, test-role keys/tokens are protected files in
 Only public keys enter measured trust. Provider credentials remain in the operator's
 existing Tinfoil credential store and the configured enclave secrets.
 
-See [full operations and commands](../../../../docs/BAKED_PLAN_OPERATIONS.md),
-[the v0.5 design](../../../../docs/AIAB_DESIGN_SPEC.md) and
-[live evidence](../../../demo/audit/baked-evidence/README.md).
+See [full operations and commands](../../../../docs/BAKED_PLAN_OPERATIONS.md) and
+[the v0.5 design](../../../../docs/AIAB_DESIGN_SPEC.md).
 `release.py` automates build, measurement, supported Tinfoil update, independent
 verification and synthetic acceptance once invoked. The supported update is
 `POST /api/containers/:id/update` with `tag` and `hold:false`; CLI `relaunch` was

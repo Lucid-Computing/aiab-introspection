@@ -1,6 +1,6 @@
 # Folder-based audit operations
 
-Current deployed release: **v0.2.2**. [Deployment pins](../static/deploy/tinfoil/audit/release.json) and [live acceptance evidence](../static/demo/audit/baked-evidence/README.md).
+Current deployed release: **v0.2.2**. [Deployment pins](../static/deploy/tinfoil/audit/release.json).
 
 The runtime runs jointly signed plan bundles, one sent with each run (see
 [Send the plan with the run](#send-the-plan-with-the-run)); the image holds no plan.
@@ -12,7 +12,7 @@ model call made by the parent broker. The plan is written in the agreement UI's 
 which applies the same checks (`plan_ir.py`). The native logger is a separate workstream. The broader mandatory requirements are tracked in
 [REQUIREMENTS_COMPLIANCE.md](REQUIREMENTS_COMPLIANCE.md).
 
-Machine-readable [plan](../schemas/plan-ir-v0.schema.json) (generated from `plan_ir.py`), [submission](../schemas/record-submission-v1.schema.json), [logger evidence](../schemas/record-export-evidence-v1.schema.json) and [report](../schemas/report-v3.schema.json) schemas are checked in. Semantic restrictions are enforced by the static runtime.
+The code is the schema: `static/aiab/baked/plan_ir.py` defines the plan, and `records.py` and `runtime.py` in the same folder define the submission, the logger evidence and the report. (The JSON schema snapshots under `schemas/` were removed on 3 Nov 2026.) Semantic restrictions are enforced by the static runtime.
 
 ## Contract and security decisions
 

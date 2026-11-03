@@ -12,7 +12,6 @@ The audit API is deployed at **https://aiab-signed-audit.lucid-computing.contain
 
 - [Deployment setup](../static/deploy/tinfoil/audit/README.md): container ID/resources, credential location, release publication/update procedure and shutdown behavior.
 - [Exact deployment pins](../static/deploy/tinfoil/audit/release.json): hostname, config repository, release digest and policy digest.
-- [Repeatable live E2E command and results](../static/demo/audit/evidence/README.md).
 - [Actual signed demo plan](../plan/demo-signed-plan.json).
 
 For reusable evaluation, offline verification, result-capacity calculation and release automation, see [AUDIT_OPERATIONS.md](AUDIT_OPERATIONS.md). Explore a recorded run in the [interactive visualization](https://aiab-signed-audit-run.surge.sh).
@@ -41,7 +40,7 @@ The Tinfoil shim must expose `/aiab/runs/*` as well as `/aiab/runs`. Role authen
 
 ## Minimal plan and configurable report
 
-Machine-readable snapshots are in `schemas/`; the implementation constants in `static/aiab/audit/protocol.py` and `report.py` are authoritative. All objects reject unknown fields. JSON parsing rejects duplicate keys and non-finite numbers. Canonicalization is RFC 8785. Digests are `sha256:` plus SHA-256 of canonical JSON. Ed25519 keys/signatures use standard base64; signed bytes are `AIAB/<kind>/v1` followed by a NUL byte and canonical JSON, with kinds `plan`, `logger-export`, and `report`.
+The implementation constants in `static/aiab/audit/protocol.py` and `report.py` are authoritative (the `schemas/` snapshots were removed on 3 Nov 2026). All objects reject unknown fields. JSON parsing rejects duplicate keys and non-finite numbers. Canonicalization is RFC 8785. Digests are `sha256:` plus SHA-256 of canonical JSON. Ed25519 keys/signatures use standard base64; signed bytes are `AIAB/<kind>/v1` followed by a NUL byte and canonical JSON, with kinds `plan`, `logger-export`, and `report`.
 
 A plan contains the two public keys, runtime image digest, logger/time-window scope, pinned model, classification policy/examples/threshold/evaluation commitments, one program, an output schema and resource limits. Both signatures cover the entire plan. Updating any field requires both parties to sign again.
 
@@ -67,7 +66,7 @@ One boolean constrains the result to one bit; timing, metadata, errors and repea
 
 ## Mock logger and eventual integration
 
-The user explicitly authorized a mock logger because the real logger is not ready. `static/demo/audit/mock_logger.py` signs synthetic exports with real Ed25519 and exact-byte SHA-256 chaining. The deployed verifier has no unsigned-input bypass and no model stub.
+The user explicitly authorized a mock logger because the real logger is not ready. The mock logger (`static/demo/audit/mock_logger.py`, removed from the repository on 3 Nov 2026; `auditor.baked mock-export` does the job now) signed synthetic exports with real Ed25519 and exact-byte SHA-256 chaining. The deployed verifier has no unsigned-input bypass and no model stub.
 
 `aiab-logger-export/v1` binds the exact concatenated text bytes, ordered chunk chain, sequence, previous head, count, time window and source key. The input commitment binds scope, text digest and signed statement digest. `complete: true` is a trusted exporter's signed assertion; it does not independently establish that every real event was captured or that a Rekor/WORM checkpoint was verified. A malicious authorized logger could omit events before signing.
 
@@ -88,7 +87,7 @@ uv run aiab-plan assemble --plan plan.json --lab-signature lab.sig --auditor-sig
 
 `register`, `submit`, and `report` each require `--host`, `--repo`, `--release-digest`, `--policy-digest`, `--token-file` and `--output`. Register/submit additionally take `--input`. Report takes `--run-id`, `--plan` and `--input-commitment`. Output files must not already exist. Keys and tokens must be protected private files; never put them in a plan or command argument.
 
-`uv run python demo/audit/acceptance.py --help` describes the real Tinfoil acceptance driver. It exercises signed plan registration, tamper rejection, real confidential classification of three synthetic cases, idempotency and schema-invalid output rejection. Its small fixture set is a smoke test, not a robust RSI evaluation. A final plan must commit to the actual evaluation record before it is signed.
+The acceptance driver (`static/demo/audit/acceptance.py`, removed from the repository on 3 Nov 2026) exercised signed plan registration, tamper rejection, real confidential classification of three synthetic cases, idempotency and schema-invalid output rejection. Its small fixture set is a smoke test, not a robust RSI evaluation. A final plan must commit to the actual evaluation record before it is signed.
 
 Deploy with `python -m aiab.audit.main`. Supply measured `AIAB_AUDIT_TRUST_JSON` (or `AIAB_AUDIT_TRUST_FILE`) plus separately provisioned `TINFOIL_API_KEY`, `AIAB_LAB_TOKEN`, `AIAB_AUDITOR_TOKEN`, `AIAB_LOGGER_TOKEN`. Trust pins the published runtime image digest; first build the generic executor, then generate trust/manifest and sign plans. Startup fails if attested inference cannot be verified. `/aiab/health` becomes unavailable after a model transport failure.
 
