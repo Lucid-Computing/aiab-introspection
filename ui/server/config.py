@@ -40,17 +40,17 @@ class Settings:
 
     anthropic_api_key: str | None = field(default=None, repr=False)
     # OpenID Connect login (WorkOS AuthKit; any provider with a discovery document). Issuer,
-    # client id and secret set: Sign in goes through the provider and parties_file says which
-    # party each email is. oidc_group set: the ID token's groups claim must name it too
-    # (Okta; needs the groups scope). Local accounts in accounts_file work either way.
+    # client id and secret set: Sign in goes through the provider; emails in admins_file are
+    # the lab, everyone else is the auditor. oidc_group set: the ID token's groups claim must
+    # name it too (Okta; needs the groups scope). Local accounts in accounts_file work either way.
     oidc_issuer: str | None = None
     oidc_client_id: str | None = None
     oidc_client_secret: str | None = field(default=None, repr=False)
     oidc_provider_name: str = "WorkOS"  # what the Sign in button and error messages call it
-    oidc_group: str | None = None  # empty: no group check; parties_file alone gates
+    oidc_group: str | None = None  # empty: no group check; anyone the provider signs in
     oidc_groups_claim: str = "groups"
     oidc_scopes: str = "openid profile email"
-    parties_file: Path = UI_ROOT / "parties.json"  # {"lab": [emails], "auditor": [emails]}
+    admins_file: Path = UI_ROOT / "admins.json"  # {"admin": [emails]}: the lab
     # Signatures are checked against production's trust file as GitHub serves it, the same
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
@@ -157,7 +157,7 @@ def load_settings() -> Settings:
         oidc_group=env.get("OIDC_GROUP", "").strip() or None,
         oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
-        parties_file=Path(env.get("UI_PARTIES_FILE", UI_ROOT / "parties.json")).resolve(),
+        admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
     )
 
 

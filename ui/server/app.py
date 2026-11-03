@@ -36,7 +36,7 @@ oidc: OidcLogin | None = (
         settings.oidc_issuer,  # type: ignore[arg-type]
         settings.oidc_client_id,  # type: ignore[arg-type]
         settings.oidc_client_secret,  # type: ignore[arg-type]
-        parties_file=settings.parties_file,
+        admins_file=settings.admins_file,
         group=settings.oidc_group,
         groups_claim=settings.oidc_groups_claim,
         scopes=settings.oidc_scopes,
