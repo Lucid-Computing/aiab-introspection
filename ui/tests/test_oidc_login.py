@@ -342,7 +342,8 @@ def test_without_okta_the_local_accounts_still_work(tmp_path, monkeypatch, clien
 def test_bootstrap_adds_new_accounts_and_keeps_existing_passwords(tmp_path, monkeypatch, capsys):
     path = tmp_path / "accounts.json"
     auth.save_account(path, auth.Account("lab@lab.com", "lab", "Lab", auth.hash_password("kept-1")))
-    monkeypatch.setenv("UI_BOOTSTRAP_ACCOUNTS", "lab@lab.com:lab:lab123,auditor@auditor.com:auditor:auditor123,x:lab:short")
+    entries = "lab@lab.com:lab:lab123,auditor@auditor.com:auditor:auditor123,x:lab:short"
+    monkeypatch.setenv("UI_BOOTSTRAP_ACCOUNTS", entries)
     assert auth.main(["bootstrap", "--file", str(path)]) == 0
     assert auth.authenticate(path, "lab@lab.com", "kept-1") is not None  # not overwritten
     assert auth.authenticate(path, "auditor@auditor.com", "auditor123").party == "auditor"

@@ -422,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     boot = sub.add_parser(
         "bootstrap",
-        help='accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..." not yet in the file'
+        help='accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..." not yet in the file',
     )
     boot.add_argument("--file", type=Path, default=None)
     who = sub.add_parser(
