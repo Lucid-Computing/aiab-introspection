@@ -55,14 +55,15 @@ export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DATA/repo/static/deploy/tinfoil/
 # set (who may use the UI, and whether as lab or auditor, is ui/parties.json, committed
 # with the code and shipped in the image; see docs/OIDC_AUTH_MIGRATION.md). Local password
 # accounts work next to WorkOS, or alone without it; the accounts file is created on first
-# boot from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..." and edited with server.auth add.
+# start from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..." (new names only) and edited with
+# server.auth add.
 if [ -n "${OIDC_ISSUER:-}" ] && [ -n "${OIDC_CLIENT_ID:-}" ] && [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
   echo "login: OpenID Connect ($OIDC_ISSUER) and local accounts"
 else
   echo "login: local accounts only (no OIDC settings)"
 fi
-if [ ! -f "$DATA/accounts.json" ] && [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then
-  echo "login: creating local accounts from UI_BOOTSTRAP_ACCOUNTS"
+if [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then
+  echo "login: local accounts from UI_BOOTSTRAP_ACCOUNTS (new ones only; existing passwords kept)"
   uv run --no-sync python -m server.auth bootstrap
 fi
 exec uv run --no-sync uvicorn server.app:app --host 0.0.0.0 --port "${PORT:-8090}"

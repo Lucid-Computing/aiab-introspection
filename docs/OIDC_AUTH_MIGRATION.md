@@ -1,7 +1,7 @@
 # Moving the agreement UI's login from local accounts to WorkOS
 
 The agreement UI (`ui/`) signed people in against a local file of hashed passwords
-(`accounts.json` on the Render disk, created once from `UI_BOOTSTRAP_ACCOUNTS`). It now
+(`accounts.json` on the Render disk, filled from `UI_BOOTSTRAP_ACCOUNTS`). It now
 signs them in through WorkOS AuthKit with OpenID Connect when `OIDC_ISSUER`,
 `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` are set. The local file keeps working next to
 WorkOS, for demo users the operator makes on the UI side and as a way in when WorkOS is
@@ -53,7 +53,8 @@ entry. Turn sign-ups off if that is unwanted. Email verification is on: a new us
 first login asks for a code sent to their address.
 
 Demo accounts, two ways. On the UI side, without touching WorkOS: `make account
-NAME=demo PARTY=auditor` in the service's shell (or `UI_BOOTSTRAP_ACCOUNTS` on first boot)
+NAME=demo PARTY=auditor` in the service's shell (or `UI_BOOTSTRAP_ACCOUNTS`, applied on every
+start for names not yet in the file)
 makes a local password account; it logs in through the password form under the WorkOS
 button. In WorkOS: *Users › Create user* with an email and a password (or the `createUser`
 operation), then add the email to `parties.json`. One such user exists already:
@@ -67,8 +68,8 @@ service points at the Staging application for now.
 ## 2. Switch the deployment
 
 1. On the Render service, set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`
-   to the values above. `UI_BOOTSTRAP_ACCOUNTS` can go (it was first-boot only; the
-   accounts file exists). `OIDC_GROUP` and `OIDC_SCOPES` stay unset: WorkOS has no groups
+   to the values above (done 2026-11-03). `UI_BOOTSTRAP_ACCOUNTS` holds the demo
+   accounts `lab@lab.com` (lab) and `auditor@auditor.com` (auditor). `OIDC_GROUP` and `OIDC_SCOPES` stay unset: WorkOS has no groups
    claim, and the defaults fit it.
 2. Say who is which party in `ui/parties.json`, which is committed with the code and
    shipped in the image: `make party EMAIL=teddy@lucid.example PARTY=lab` for each

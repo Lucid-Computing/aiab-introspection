@@ -152,11 +152,11 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
 2. On render.com, sign in with GitHub, choose **New → Blueprint**, pick this repository. Render reads `render.yaml` and asks for the values marked `sync: false`:
    - `GITHUB_TOKEN`: a GitHub token that can push branches and open pull requests on this repository (fine-grained token with Contents and Pull requests read/write, or a bot account's token). Key submissions push with it.
    - `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`: the AuthKit domain and the Connect application's client ID and secret; see [Login](#login) and the migration doc for the AIAB › Staging values. People must be in `ui/parties.json` (committed) before they log in.
-   - `UI_BOOTSTRAP_ACCOUNTS`: optional; local password accounts to create on first boot, `demo:auditor:<password>,...`. They work next to WorkOS. Remove the variable afterwards; `make account` in the service's shell adds more.
+   - `UI_BOOTSTRAP_ACCOUNTS`: optional; local password accounts, `lab@lab.com:lab:<password>,...` (6 characters or more). Checked on every start: names not yet in the accounts file are added, existing ones are left alone. They work next to WorkOS; `make account` in the service's shell adds more.
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
    - `AIAB_LOG_KEY`: optional, only for the Logs screen; production's log reader key from 1Password.
    - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Ignored when `AIAB_LOG_KEY` is set.
-3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo` (and creates the local accounts from `UI_BOOTSTRAP_ACCOUNTS`, if set).
+3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo` (and adds the local accounts from `UI_BOOTSTRAP_ACCOUNTS`, if set).
 4. Open the service URL, log in, and submit each party's public key on a Sign screen, as locally.
 
 What lives where: the image holds the UI code and the static part it imports; the disk holds the checkout the UI edits (`/data/repo`), the accounts, the trust file and the runs. Redeploys replace the image and keep the disk. `AIAB_CHECKOUT_BRANCH` is the branch whose release pins and trust file the UI works with. Agreement drafts live on that disk and never reach GitHub.

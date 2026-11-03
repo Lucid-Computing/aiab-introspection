@@ -39,6 +39,7 @@ from urllib.parse import urlencode
 import httpx
 import jwt
 
+MIN_PASSWORD = 6  # demo accounts such as lab123; real people sign in through the provider
 PBKDF2_ITERATIONS = 600_000
 PARTIES = ("lab", "auditor")
 SESSION_TTL_SECONDS = 12 * 3600
@@ -420,7 +421,8 @@ def main(argv: list[str] | None = None) -> int:
         "--file", type=Path, default=None, help="accounts file (default ui/accounts.json)"
     )
     boot = sub.add_parser(
-        "bootstrap", help='first-boot accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..."'
+        "bootstrap",
+        help='accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..." not yet in the file'
     )
     boot.add_argument("--file", type=Path, default=None)
     who = sub.add_parser(
@@ -441,11 +443,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     path = args.file or settings.accounts_file
     if args.command == "bootstrap":
+        existing = load_accounts(path)
         for entry in filter(None, os.environ.get("UI_BOOTSTRAP_ACCOUNTS", "").split(",")):
             username, party, password = entry.strip().split(":", 2)
-            if party not in PARTIES or len(password) < 8:
-                print(f"skipping {username}: bad party or password shorter than 8", file=sys.stderr)
+            if party not in PARTIES or len(password) < MIN_PASSWORD:
+                print(f"skipping {username}: bad party or password too short", file=sys.stderr)
                 continue
+            if username in existing:
+                continue  # already there, possibly with a changed password: leave it alone
             save_account(
                 path,
                 Account(
@@ -461,8 +466,8 @@ def main(argv: list[str] | None = None) -> int:
     if password != getpass.getpass("again: "):
         print("passwords differ", file=sys.stderr)
         return 1
-    if len(password) < 8:
-        print("use at least 8 characters", file=sys.stderr)
+    if len(password) < MIN_PASSWORD:
+        print(f"use at least {MIN_PASSWORD} characters", file=sys.stderr)
         return 1
     save_account(
         path,
