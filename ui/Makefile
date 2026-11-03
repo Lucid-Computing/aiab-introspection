@@ -11,7 +11,7 @@ dev:
 	uv run uvicorn server.app:app --reload --port $(PORT)
 
 # WorkOS login: which party an email is.   make party EMAIL=teddy@lucid.example PARTY=lab
-# (PARTY=none removes them; writes ui/parties.json, git-ignored)
+# (PARTY=none removes them; writes ui/parties.json, which is committed: commit and deploy)
 party:
 	uv run python -m server.auth party $(EMAIL) $(PARTY)
 

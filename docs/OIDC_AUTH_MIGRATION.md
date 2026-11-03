@@ -7,7 +7,7 @@ signs them in through WorkOS AuthKit with OpenID Connect when `OIDC_ISSUER`,
 WorkOS, for demo users the operator makes on the UI side and as a way in when WorkOS is
 down. This is the plan for switching a deployment over. There are two accounts to move
 (the lab's and the auditor's). The WorkOS side is already done for the dev service; what
-is left is three settings and two party entries on Render, and a deploy.
+is left is the parties file, three settings on Render (set), and a deploy.
 
 What stays the same: the party model (`lab` / `auditor`), the `aiab_ui` session cookie and
 every route behind it, the change-log attribution by username, the Sign and key screens.
@@ -70,12 +70,11 @@ service points at the Staging application for now.
    to the values above. `UI_BOOTSTRAP_ACCOUNTS` can go (it was first-boot only; the
    accounts file exists). `OIDC_GROUP` and `OIDC_SCOPES` stay unset: WorkOS has no groups
    claim, and the defaults fit it.
-2. Say who is which party. Either `UI_PARTIES="teddy@lucid.example:lab,caleb@other.example:auditor"`
-   on the service (applied on every start), or after the deploy, in the service's shell,
-   `python -m server.auth party teddy@lucid.example lab` for each person. Both write
-   `/data/parties.json`; a change applies at the next login. The email is the one WorkOS
-   puts in the ID token, case does not matter. A person signed in to WorkOS but not in
-   the file is refused with the exact command to run.
+2. Say who is which party in `ui/parties.json`, which is committed with the code and
+   shipped in the image: `make party EMAIL=teddy@lucid.example PARTY=lab` for each
+   person, then commit. The email is the one WorkOS puts in the ID token, case does not
+   matter. A person signed in to WorkOS but not in the file is refused with the exact
+   command to run. Changing the file means a commit and a deploy.
 3. Deploy this change (the dev service is image-backed: merge to `dev`, the UI image
    workflow builds and deploys it; or trigger *Build agreement UI image* by hand).
 4. Check the start log says `login: OpenID Connect (https://….authkit.app) and local

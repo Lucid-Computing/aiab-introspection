@@ -5,4 +5,3 @@ runs/
 .env.*
 logs/
 # Who is lab and who is auditor under the Okta login. Local; the server writes it.
-parties.json
