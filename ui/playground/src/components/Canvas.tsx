@@ -10,12 +10,13 @@ import {
   ReactFlow,
   useReactFlow,
 } from "@xyflow/react";
-import { type Dispatch, type DragEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type Dispatch, useCallback, useEffect, useMemo, useState } from "react";
 import { type FlowNode, planToFlow } from "../plan/graph";
-import { autoLayout, NODE_H, NODE_W } from "../plan/layout";
-import { addNode, connect, deleteNodes, disconnect } from "../plan/ops";
-import type { Issue, NodeType } from "../plan/types";
+import { autoLayout } from "../plan/layout";
+import { connect, deleteNodes, disconnect } from "../plan/ops";
+import type { Issue } from "../plan/types";
 import type { Action, State } from "../state/store";
+import NewBlock from "./NewBlock";
 import PlanNodeView from "./PlanNodeView";
 
 const nodeTypes = {
@@ -26,7 +27,6 @@ const nodeTypes = {
   final_report: PlanNodeView,
 };
 
-export const DND_TYPE = "application/x-aiab-node";
 
 interface Props {
   state: State;
@@ -123,25 +123,8 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
     [dispatch, plan],
   );
 
-  const onDrop = useCallback(
-    (e: DragEvent) => {
-      const type = e.dataTransfer.getData(DND_TYPE) as NodeType;
-      if (!type) return;
-      e.preventDefault();
-      const pos = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-      const { plan: next, id } = addNode(plan, type);
-      dispatch({
-        type: "setPlan",
-        plan: next,
-        layout: { ...layout, [id]: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 } },
-        select: id,
-      });
-    },
-    [dispatch, flow, layout, plan],
-  );
-
   return (
-    <div className="canvas" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+    <div className="canvas">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -165,6 +148,7 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
           </ControlButton>
         </Controls>
       </ReactFlow>
+      <NewBlock plan={plan} layout={layout} dispatch={dispatch} />
     </div>
   );
 }

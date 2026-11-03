@@ -3,12 +3,12 @@ import { Graph, layout as dagreLayout } from "@dagrejs/dagre";
 import { splitRef } from "./ports";
 import type { Layout, Plan, PlanNode } from "./types";
 
-export const NODE_W = 240;
+export const NODE_W = 320;
 /** Height of a card with one port row; see nodeHeight. */
-export const NODE_H = 136;
+export const NODE_H = 158;
 /** Card height above and below the port rows (styles.css fixes every line height). */
-const CARD_BASE = 116;
-const ROW_H = 20;
+const CARD_BASE = 134;
+const ROW_H = 24;
 
 /** Rendered height: the card lists one row per input, plus the "add input" row on dynamic nodes. */
 export function nodeHeight(n: PlanNode): number {

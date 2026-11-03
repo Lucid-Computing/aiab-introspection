@@ -4,19 +4,11 @@ import { AGREEMENT, loadAgreement, READONLY, saveAgreement, type ServerIssue } f
 import Canvas from "./components/Canvas";
 import CodePane from "./components/CodePane";
 import Inspector from "./components/Inspector";
-import Palette from "./components/Palette";
-import SimulateDialog from "./components/SimulateDialog";
 import { badBindings, lintPlan } from "./plan/lint";
 import { SAMPLE_SOURCES, samplePlan } from "./plan/samples";
 import type { Issue } from "./plan/types";
 import { exportYaml, locateIssues, planToYaml, yamlToPlan } from "./plan/yaml";
-import { initialState, persist, reducer, type View } from "./state/store";
-
-const VIEWS: [View, string][] = [
-  ["graph", "Graph"],
-  ["split", "Split"],
-  ["code", "Code"],
-];
+import { initialState, persist, reducer } from "./state/store";
 
 /** What the server holds for the agreement being edited (agreement mode only). */
 interface Server {
@@ -36,9 +28,10 @@ const fromServer = (issues: ServerIssue[]): Issue[] =>
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
-  const [simOpen, setSimOpen] = useState(false);
+  // The plan panel (title, description, all issues) opens from the status button.
+  const [planOpen, setPlanOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const { plan, view } = state;
+  const { plan, codeOpen, selected } = state;
   const [server, setServer] = useState<Server>({
     digest: "",
     savedYaml: "",
@@ -110,6 +103,10 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  useEffect(() => {
+    if (selected) setPlanOpen(false);
+  }, [selected]);
+
   const [toast, setToast] = useState(state.toast);
   useEffect(() => {
     if (!state.toast) return;
@@ -167,8 +164,8 @@ export default function App() {
     dispatch({ type: "toast", text: `Imported ${file.name}${r.layout ? "" : " (laid out automatically)"}` });
   };
 
-  const showGraph = view !== "code";
-  const showCode = view !== "graph";
+  // Which half shows next to the diagram: a block's settings, or the plan as text.
+  const pane = Boolean(selected) || planOpen;
   const canSave = Boolean(AGREEMENT) && server.editable && dirty && nErr === 0 && !server.saving;
   const saveNote = !AGREEMENT
     ? null
@@ -214,22 +211,12 @@ export default function App() {
               ))}
             </select>
           )}
-          <div className="seg" role="tablist">
-            {VIEWS.map(([v, label]) => (
-              <button
-                key={v}
-                role="tab"
-                aria-selected={view === v}
-                className={view === v ? "on" : ""}
-                onClick={() => dispatch({ type: "view", view: v })}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
           <button
             className={`bar-status ${state.codeIssues.length ? "bad" : nErr ? "bad" : nWarn ? "warn" : "ok"}`}
-            onClick={() => dispatch({ type: "select", id: null })}
+            onClick={() => {
+              dispatch({ type: "select", id: null });
+              setPlanOpen(true);
+            }}
             title="Show all issues"
           >
             {state.codeIssues.length
@@ -279,14 +266,22 @@ export default function App() {
               Revert
             </button>
           )}
-          <button className="btn btn--ghost btn--sm" onClick={() => setSimOpen(true)}>
-            Simulate
-          </button>
           {AGREEMENT && server.editable && (
             <button className="btn btn--primary btn--sm" onClick={save} disabled={!canSave} title="Save a new version">
               Save
             </button>
           )}
+          <button
+            className={`bar-toggle${codeOpen ? " on" : ""}`}
+            aria-pressed={codeOpen}
+            title={codeOpen ? "Hide the plan as text" : "Show the plan as text"}
+            onClick={() => dispatch({ type: "toggleCode" })}
+          >
+            <svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true">
+              <rect x="0.75" y="0.75" width="16.5" height="14.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <rect x="10" y="2.5" width="5.75" height="11" fill="currentColor" />
+            </svg>
+          </button>
           <input
             ref={fileInput}
             type="file"
@@ -300,26 +295,37 @@ export default function App() {
           />
         </header>
 
-        <main className={`work work--${view}${state.selected ? " has-sel" : ""}`}>
-          {/* In split view the inspector takes the palette's column while a node is selected. */}
-          {showGraph &&
-            (view === "split" && state.selected ? (
-              <aside className="side side--left">
-                <Inspector plan={plan} selected={state.selected} issues={issues} dispatch={dispatch} />
+        {/* At most two halves: the diagram, and either a block's settings or the plan as text.
+            With the text open, the selected block's settings sit as a card over the diagram. */}
+        <main className={`work ${codeOpen || pane ? "work--two" : "work--one"}`}>
+          <section className="graph">
+            <Canvas state={state} dispatch={dispatch} issues={issues} bad={bad} />
+            {codeOpen && pane && (
+              <div className="card-over">
+                <Inspector
+                  plan={plan}
+                  selected={selected}
+                  issues={issues}
+                  dispatch={dispatch}
+                  onClose={() => setPlanOpen(false)}
+                />
+              </div>
+            )}
+          </section>
+          {codeOpen ? (
+            <CodePane state={state} dispatch={dispatch} lint={located} />
+          ) : (
+            pane && (
+              <aside className="side">
+                <Inspector
+                  plan={plan}
+                  selected={selected}
+                  issues={issues}
+                  dispatch={dispatch}
+                  onClose={() => setPlanOpen(false)}
+                />
               </aside>
-            ) : (
-              <Palette plan={plan} layout={state.layout} dispatch={dispatch} />
-            ))}
-          {showGraph && (
-            <section className="graph">
-              <Canvas state={state} dispatch={dispatch} issues={issues} bad={bad} />
-            </section>
-          )}
-          {showCode && <CodePane state={state} dispatch={dispatch} lint={located} />}
-          {view === "graph" && (
-            <aside className="side">
-              <Inspector plan={plan} selected={state.selected} issues={issues} dispatch={dispatch} />
-            </aside>
+            )
           )}
         </main>
 
@@ -327,13 +333,6 @@ export default function App() {
           <div key={toast.seq} className={`toast ${toast.kind}`} role="status" onClick={() => setToast(null)}>
             {toast.text}
           </div>
-        )}
-        {simOpen && (
-          <SimulateDialog
-            plan={plan}
-            blocked={issues.filter((i) => i.severity === "error").map((i) => i.message)}
-            onClose={() => setSimOpen(false)}
-          />
         )}
       </div>
     </ReactFlowProvider>

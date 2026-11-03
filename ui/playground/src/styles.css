@@ -27,10 +27,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .bar-link { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-2); }
 .bar-link:hover { color: var(--ink-1); text-decoration: underline; text-underline-offset: 3px; }
 .bar .btn--sm { padding: 5px 10px; font-size: var(--text-xs); }
-.seg { display: inline-flex; border: var(--border-ink); }
-.seg button { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); padding: 5px 12px; }
-.seg button + button { border-left: var(--border-ink); }
-.seg button.on { background: var(--ink-1); color: var(--paper-1); }
+/* Shows or hides the plan as text; the filled half of the icon is the half that opens. */
+.bar-toggle { display: inline-flex; align-items: center; padding: 4px 6px; color: var(--ink-2); border: 1px solid transparent; }
+.bar-toggle:hover { color: var(--ink-1); }
+.bar-toggle.on { color: var(--ink-1); border-color: var(--ink-1); }
 .bar-status { font-family: var(--font-mono); font-size: var(--text-xs); padding: 4px 6px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
 .bar-status::before { content: ""; width: 8px; height: 8px; background: var(--ink-3); }
 .bar-status.ok::before { background: var(--amber); }
@@ -41,25 +41,27 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .bar-note.bad { color: var(--destructive); }
 .bar-note.ok { color: var(--ink-1); }
 
-/* ---- work area ---- */
+/* ---- work area: the diagram alone, or the diagram and one more half ---- */
 .work { display: grid; min-height: 0; overflow: hidden; }
-.work--graph { grid-template-columns: 170px 1fr 380px; }
-.work--split { grid-template-columns: 170px minmax(0, 1fr) minmax(420px, 42%); }
-.work--split.has-sel { grid-template-columns: 380px minmax(0, 1fr) minmax(420px, 38%); }
-.side--left { border-left: none; border-right: var(--border-hairline); }
-.work--code { grid-template-columns: minmax(0, 1fr); }
+.work--one { grid-template-columns: minmax(0, 1fr); }
+.work--two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .work > * { min-height: 0; min-width: 0; }
 .graph { position: relative; height: 100%; }
 .canvas { position: absolute; inset: 0; background: var(--paper-1); }
 .side { border-left: var(--border-hairline); overflow-y: auto; background: var(--paper-1); }
+/* With the text open, the selected block grows into a card over the diagram half. */
+.card-over { position: absolute; inset: 14px; overflow-y: auto; z-index: 5; background: var(--paper-1); border: 1px solid var(--ink-1); border-left-width: 6px; box-shadow: 4px 4px 0 0 var(--ink-1); }
+.card-over .insp--input_logs { border-left-color: var(--ink-3); }
+.card-over:has(.insp--classifier) { border-left-color: var(--amber); }
+.card-over:has(.insp--run_llm) { border-left-color: var(--amber-ink); }
 
-/* ---- palette ---- */
-.palette { border-right: var(--border-hairline); padding: var(--space-3) var(--space-2); overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-.pal { display: flex; align-items: center; gap: 6px; text-align: left; padding: 7px 10px; border-left: 3px solid transparent; font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); cursor: grab; }
+/* ---- New block: a button on the diagram with the block kinds ---- */
+.newblock { position: absolute; top: 12px; left: 12px; z-index: 6; }
+.newblock-menu { position: absolute; top: 100%; left: 0; margin-top: 4px; min-width: 240px; display: flex; flex-direction: column; background: var(--paper-1); border: var(--border-ink); box-shadow: var(--shadow-offset); }
+.pal { display: flex; align-items: center; gap: 8px; text-align: left; padding: 9px 12px; border-left: 3px solid transparent; font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); }
 .pal:hover { background: var(--paper-2); }
-.palette-help { margin-top: auto; font-size: 11.5px; color: var(--ink-3); line-height: 1.4; padding: 0 4px; }
 
-/* Per-type identity, shared by palette and nodes: a coloured left bar and header. */
+/* Per-type identity, shared by the New block menu and the cards: a coloured left bar and header. */
 .pal--input_logs, .pn--input_logs { border-left-color: var(--ink-3); }
 .pal--classifier, .pn--classifier { border-left-color: var(--amber); }
 .pal--run_python, .pn--run_python { border-left-color: var(--ink-1); }
@@ -68,37 +70,40 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 
 /* ---- nodes ---- */
 /* Fixed line heights throughout the card: layout.ts predicts the height from the row count. */
-.pn { position: relative; width: 240px; background: var(--paper-1); border: 1px solid var(--rule-strong); border-left-width: 4px; padding: 6px 10px 0; font-size: var(--text-xs); }
+.pn { position: relative; width: 320px; background: var(--paper-1); border: 1px solid var(--rule-strong); border-left-width: 4px; padding: 8px 12px 0; font-size: var(--text-sm); }
 .pn.is-selected { border-color: var(--ink-1); box-shadow: 3px 3px 0 0 var(--ink-1); }
 .pn.has-error { border-color: var(--destructive); }
-.pn-head { display: flex; align-items: center; height: 14px; line-height: 14px; font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); }
+/* Unfinished (nothing connected yet, no fields yet): dashed and quiet, not red. */
+.pn.is-unfinished { border-top-style: dashed; border-right-style: dashed; border-bottom-style: dashed; border-top-color: var(--ink-3); border-right-color: var(--ink-3); border-bottom-color: var(--ink-3); }
+.pn-head { display: flex; align-items: center; height: 16px; line-height: 16px; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); }
 .pn--classifier .pn-head { color: var(--amber-ink); }
 .pn-err { margin-left: auto; color: var(--paper-1); background: var(--destructive); font-weight: 600; padding: 0 5px; }
+.pn-hint { margin-left: auto; color: var(--ink-3); text-transform: none; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pn-glyph { font-family: var(--font-mono); }
-.pn-title { height: 18px; line-height: 18px; margin-top: 2px; font-size: 14px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-line { height: 16px; line-height: 16px; margin-top: 2px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn--run_python .pn-line { font-family: var(--font-mono); font-size: 11px; }
+.pn-title { height: 24px; line-height: 24px; margin-top: 2px; font-size: 16px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-line { height: 18px; line-height: 18px; margin-top: 2px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn--run_python .pn-line { font-family: var(--font-mono); font-size: 12px; }
 
 /* I/O footer: inputs on the left edge, the output on the right edge, one row each. */
-.pn-io { margin: 6px -10px 0 -10px; font-family: var(--font-mono); font-size: 10.5px; }
+.pn-io { margin: 8px -12px 0 -12px; font-family: var(--font-mono); font-size: 11.5px; }
 .pn-ins { border-top: var(--border-hairline); padding: 2px 0; }
 .pn-out { border-top: var(--border-hairline); padding: 3px 0 5px; background: var(--paper-2); }
-.pn-row { position: relative; display: flex; align-items: center; gap: 6px; height: 20px; line-height: 20px; padding: 0 10px; white-space: nowrap; }
-.pn-row--out { padding-right: 12px; }
+.pn-row { position: relative; display: flex; align-items: center; gap: 8px; height: 24px; line-height: 24px; padding: 0 12px; white-space: nowrap; }
+.pn-row--out { padding-right: 14px; }
 .pn-port-name { color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; }
 .pn-row--out .pn-port-name { font-weight: 600; }
 .pn-port-type { color: var(--ink-3); }
-.pn-port-type.is-unbound { color: var(--destructive); }
+.pn-port-type.is-unbound { color: var(--ink-3); }
 .pn-row--none { color: var(--ink-3); }
 .pn-row--new { color: var(--ink-3); opacity: 0.45; }
 .pn:hover .pn-row--new, .pn-row--new:has(.connectingto) { opacity: 1; }
-.pn-shape { height: 16px; line-height: 16px; padding: 0 10px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-shape { height: 18px; line-height: 18px; padding: 0 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pn-out--report .pn-shape { color: var(--ink-1); }
 
 /* Type badges: the same look on a node's output, on the inputs that read it and in the
    inspector, so the two ends of an edge can be compared at a glance. The output badge is
    filled: it is the thing to look for. A red input badge is a type the node does not accept. */
-.tbadge { display: inline-block; padding: 0 6px; height: 16px; line-height: 16px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--ink-1); color: var(--ink-1); background: var(--paper-1); white-space: nowrap; }
+.tbadge { display: inline-block; padding: 0 6px; height: 18px; line-height: 18px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--ink-1); color: var(--ink-1); background: var(--paper-1); white-space: nowrap; }
 .tbadge::before { display: inline-block; width: 1em; margin-right: 2px; font-weight: 400; }
 .tbadge--LogRecords::before { content: "▤"; }
 .tbadge--Items::before { content: "≡"; }
@@ -107,7 +112,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .tbadge--Report::before { content: "■"; }
 .tbadge--unknown { border-style: dashed; color: var(--ink-3); }
 .pn-row--out .tbadge { background: var(--ink-1); color: var(--paper-1); }
-.pn-out--report .pn-row--out .tbadge { background: var(--paper-1); color: var(--ink-1); border-style: double; border-width: 3px; height: 16px; line-height: 10px; }
+.pn-out--report .pn-row--out .tbadge { background: var(--paper-1); color: var(--ink-1); border-style: double; border-width: 3px; height: 18px; line-height: 12px; }
 .tbadge.is-bad { background: var(--destructive); border-color: var(--destructive); color: var(--paper-1); }
 .pn-handle.react-flow__handle { width: 9px; height: 9px; background: var(--paper-1); border: 1.5px solid var(--ink-2); }
 .pn-handle.react-flow__handle:hover, .react-flow__handle.connectingto, .react-flow__handle.connectionindicator.valid { background: var(--amber); border-color: var(--ink-1); }
@@ -177,7 +182,6 @@ details.f > summary { cursor: pointer; }
 .f .btn--sm { align-self: flex-start; padding: 2px 8px; font-size: 11px; margin-top: 2px; }
 .contract { font-family: var(--font-mono); font-size: 11.5px; background: var(--paper-2); border: var(--border-hairline); padding: 6px 8px; white-space: pre-wrap; overflow-x: auto; }
 .contract.big { font-size: 13px; }
-.sim-badge { display: inline-block; margin-left: 6px; padding: 0 5px; border: 1px solid var(--amber-ink); color: var(--amber-ink); font-size: 10px; }
 .rec-preview { max-height: 260px; overflow: auto; border: var(--border-strong); }
 .rec-preview table { border-collapse: collapse; font-size: 11.5px; width: 100%; }
 .rec-preview th { position: sticky; top: 0; background: var(--paper-2); text-align: left; font-family: var(--font-mono); font-weight: 500; font-size: 10.5px; padding: 3px 6px; }
@@ -207,20 +211,11 @@ details.f > summary { cursor: pointer; }
 .code-issues li.warning { color: var(--ink-2); }
 .code-issues .mono { display: inline-block; min-width: 3.5em; color: var(--ink-3); }
 
-/* ---- simulate + toast ---- */
-.modal.sim { max-width: 760px; max-height: 88vh; overflow-y: auto; padding: var(--space-6); }
-.modal.sim h3 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
-.sim-banner { border: 1px solid var(--amber-ink); background: var(--paper-2); color: var(--ink-1); font-family: var(--font-mono); font-size: var(--text-xs); padding: 8px 10px; box-shadow: inset 4px 0 0 0 var(--amber); }
-.sim-warn { margin-top: var(--space-3); color: var(--destructive); font-size: var(--text-sm); }
-.sim-warn ul { padding-left: 1.2em; }
-.sim-steps td { border-top: var(--border-hairline); padding: 4px 6px; }
-.sim-notes { padding-left: 1.2em; font-size: var(--text-sm); color: var(--ink-2); }
+/* ---- toast ---- */
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: 640px; background: var(--ink-1); color: var(--paper-1); padding: 8px 14px; font-size: var(--text-sm); border-left: 4px solid var(--amber); z-index: 50; cursor: pointer; box-shadow: var(--shadow-offset); }
 .toast.error { border-left-color: var(--destructive); }
 
 @media (max-width: 900px) {
-  .work--graph, .work--split { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
-  .palette { flex-direction: row; overflow-x: auto; border-right: none; border-bottom: var(--border-ink); }
-  .palette-help { display: none; }
-  .side, .work--split .code { border-left: none; border-top: var(--border-ink); max-height: 45vh; }
+  .work--two { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .side, .work--two .code { border-left: none; border-top: var(--border-ink); }
 }

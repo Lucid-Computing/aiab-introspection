@@ -1,10 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Plan · AIAB agreement{% endblock %}
 {% block head %}<style>
-/* The builder spans the whole viewport width, breaking out of the page container. 100vw
-   includes the vertical scrollbar, so the page clips the few pixels of horizontal overflow. */
-html { overflow-x: clip; }
-.builder { display: block; width: 100vw; max-width: 100vw; margin-left: calc(50% - 50vw); height: calc(100vh - 150px); min-height: 640px; border: 1px solid var(--line, #d9d9d9); border-left: 0; border-right: 0; background: #fff; }
+.builder { display: block; width: 100%; height: calc(100vh - 150px); min-height: 640px; border: 1px solid var(--line, #d9d9d9); background: #fff; }
 .nodes-table td, .nodes-table th { vertical-align: top; }
 </style>{% endblock %}
 {% block content %}
@@ -26,11 +23,9 @@ html { overflow-x: clip; }
   <form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--primary">Edit this plan</button></form>
   <a class="btn btn--ghost" href="{{ base }}/sign">Sign this plan</a>
   {% else %}
-  <form method="post" action="{{ base }}/plan/finish" class="inline"><button class="btn btn--ghost">Finish editing</button></form>
   <a class="btn btn--primary" href="{{ base }}/sign">Sign this plan</a>
   {% endif %}
   <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>
-  <span class="text-muted">{% if edit %}You are editing. Save in the builder writes a new version through the box's own loader; a plan the box would refuse is not saved. Both parties sign the new version.{% else %}Read only. Edit this plan takes the agreement for you and removes existing signatures.{% endif %}</span>
 </div>
 {% endif %}
 

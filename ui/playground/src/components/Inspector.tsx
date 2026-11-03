@@ -4,7 +4,6 @@ import { connect, deleteNodes, disconnect, renameInput, renameNode, renameOutput
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportJsonSchema, reportSource } from "../plan/report";
 import { describeNode } from "../plan/shape";
-import { simulate } from "../plan/simulate";
 import {
   type Classifier,
   FIELD_TYPES,
@@ -31,11 +30,13 @@ interface Props {
   selected: string | null;
   issues: Issue[];
   dispatch: Dispatch<Action>;
+  /** Closes the plan panel (the one shown when no block is selected). */
+  onClose?: () => void;
 }
 
-export default function Inspector({ plan, selected, issues, dispatch }: Props) {
+export default function Inspector({ plan, selected, issues, dispatch, onClose }: Props) {
   const node = plan.nodes.find((n) => n.id === selected);
-  if (!node) return <PlanPanel plan={plan} issues={issues} dispatch={dispatch} />;
+  if (!node) return <PlanPanel plan={plan} issues={issues} dispatch={dispatch} onClose={onClose} />;
 
   const set = (next: PlanNode) => dispatch({ type: "update", f: (p) => updateNode(p, node.id, () => next) });
   const op = (r: { ok: true; plan: Plan } | { ok: false; message: string }, select?: string) =>
@@ -142,11 +143,29 @@ function IoStrip({ plan, node }: { plan: Plan; node: PlanNode }) {
   );
 }
 
-function PlanPanel({ plan, issues, dispatch }: { plan: Plan; issues: Issue[]; dispatch: Dispatch<Action> }) {
+function PlanPanel({
+  plan,
+  issues,
+  dispatch,
+  onClose,
+}: {
+  plan: Plan;
+  issues: Issue[];
+  dispatch: Dispatch<Action>;
+  onClose?: () => void;
+}) {
   const setMeta = (patch: Partial<Plan>) => dispatch({ type: "update", f: (p) => ({ ...p, ...patch }) });
   return (
     <div className="insp">
-      <div className="insp-head">Plan</div>
+      <div className="insp-head">
+        Plan
+        <span className="bar-spacer" />
+        {onClose && (
+          <button className="x" title="Close" onClick={onClose}>
+            ×
+          </button>
+        )}
+      </div>
       <p className="insp-blurb">Select a block to edit it.</p>
       <Field label="Plan id">
         <CommitInput
@@ -728,7 +747,6 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
   const c = node.config;
   const cfg = (patch: Partial<FinalReport["config"]>) => set({ ...node, config: { ...c, ...patch } });
   const paths = reportPaths(plan, node);
-  const sim = useMemo(() => simulate(plan), [plan]);
   const typeOf = (p: string) => paths.find((x) => x.path === p)?.type;
   return (
     <>
@@ -840,16 +858,6 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
           <pre className="contract">{JSON.stringify(reportJsonSchema(node), null, 2)}</pre>
         </details>
       </Advanced>
-      <div className="f">
-        <span className="f-label">
-          Preview <span className="sim-badge">simulated</span>
-        </span>
-        <pre className="contract">{JSON.stringify(sim.report, null, 2)}</pre>
-        <span className={`f-hint${sim.reportBytes > c.privacy.max_result_bytes ? " danger" : ""}`}>
-          {sim.reportBytes} of {c.privacy.max_result_bytes} bytes. Mock values from synthetic logs; nothing was
-          executed.
-        </span>
-      </div>
     </>
   );
 }

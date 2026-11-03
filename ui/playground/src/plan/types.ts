@@ -192,6 +192,8 @@ export type Layout = z.infer<typeof LayoutSchema>;
 
 export interface Issue {
   severity: "error" | "warning";
+  /** An error every new block starts with (nothing connected, no fields yet): shown as unfinished, not broken. */
+  kind?: "incomplete";
   message: string;
   nodeId?: string;
   /** Path into the plan document, for line numbers in the code view. */

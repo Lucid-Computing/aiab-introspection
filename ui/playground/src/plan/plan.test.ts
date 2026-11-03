@@ -4,8 +4,8 @@ import { completeLayout } from "./layout";
 import { lintPlan, pythonIssues } from "./lint";
 import { addNode, connect, deleteNodes, renameInput, renameNode, renameOutput } from "./ops";
 import { SAMPLE_SOURCES, deployedSample, samplePlan } from "./samples";
+import deployedPlan from "../../../../plan/plan.json";
 import { classificationShape, describeNode, describeOutput, reportShape } from "./shape";
-import { simulate } from "./simulate";
 import type { Plan } from "./types";
 import { validatePlan } from "./validate";
 import { exportYaml, planToYaml, yamlToPlan } from "./yaml";
@@ -31,20 +31,12 @@ describe("samples", () => {
     expect(lintPlan(plan).filter((i) => i.severity === "error")).toEqual([]);
   });
 
-  it("the first sample is the deployed plan, every block type once, straight through", () => {
+  it("the first sample is the deployed plan: whatever plan/plan.json holds, logs first, report last", () => {
     const deployed = samplePlan("deployed");
-    expect(deployed.plan_id).toBe("destructive-commands");
-    expect(deployed.nodes.map((n) => n.type)).toEqual([
-      "input_logs",
-      "run_python",
-      "run_llm",
-      "classifier",
-      "final_report",
-    ]);
-    expect(deployed.limits.max_model_calls_per_run).toBe(128);
-    expect(lintPlan(deployed).filter((i) => i.severity === "warning").map((i) => i.message)).toEqual([
-      expect.stringContaining("proxy/coding-agents"),
-    ]);
+    expect(deployed.plan_id).toBe(deployedPlan.plan_id);
+    expect(deployed.nodes[0].type).toBe("input_logs");
+    expect(deployed.nodes[deployed.nodes.length - 1].type).toBe("final_report");
+    expect(deployed.nodes.length).toBe(deployedPlan.nodes.length);
   });
 
   it("falls back to the simple sample when the baked deployed plan is not a plan", () => {
@@ -414,32 +406,6 @@ describe("layout", () => {
   });
 });
 
-describe("simulation", () => {
-  it.each(samples)("%s produces a deterministic report with every declared field", (_, plan) => {
-    const a = simulate(plan);
-    expect(a).toEqual(simulate(plan));
-    const report = plan.nodes.find((n) => n.type === "final_report")!;
-    expect(Object.keys(a.report ?? {})).toEqual(
-      report.type === "final_report" ? report.config.fields.map((f) => f.name) : [],
-    );
-    expect(Object.values(a.report ?? {})).not.toContain(null);
-  });
-
-  it("the simple plan flags the physics sessions in the synthetic logs", () => {
-    const sim = simulate(simple());
-    expect(sim.report).toEqual({ flagged: true });
-    const physics = sim.outputs.physics;
-    expect(
-      physics.type === "Classifications" &&
-        physics.value.filter((c) => c.label === "physics_research").map((c) => c.item_id),
-    ).toEqual(["s01", "s03", "s07"]);
-  });
-
-  it("never claims Python ran", () => {
-    expect(simulate(samplePlan("two-classifiers")).notes.join()).toMatch(/Python not executed/);
-  });
-});
-
 describe("port shapes (what the cards and inspector show)", () => {
   const node = (plan: Plan, id: string) => plan.nodes.find((n) => n.id === id)!;
 
@@ -492,6 +458,25 @@ describe("port shapes (what the cards and inspector show)", () => {
 
   it("a Value output with no fields says so", () => {
     const { plan, id } = addNode(samplePlan("simple"), "run_python");
-    expect(describeOutput(node(plan, id))).toMatchObject({ type: "Value", shape: "no fields declared", note: "0 fields" });
+    const n = node(plan, id);
+    if (n.type !== "run_python") throw new Error("expected a Run Python block");
+    n.config.output.fields = {};
+    expect(describeOutput(n)).toMatchObject({ type: "Value", shape: "no fields declared", note: "0 fields" });
+  });
+});
+
+describe("new blocks", () => {
+  it("are titled like the others, counting up per kind", () => {
+    const a = addNode(samplePlan("simple"), "run_python");
+    const b = addNode(a.plan, "run_python");
+    expect(a.plan.nodes.find((n) => n.id === a.id)!.title).toBe("Run Python");
+    expect(b.plan.nodes.find((n) => n.id === b.id)!.title).toBe("Run Python 2");
+  });
+
+  it("start unfinished, not broken: the only errors are the missing connections", () => {
+    const { plan } = addNode(addNode(samplePlan("simple"), "run_llm").plan, "run_python");
+    const errors = lintPlan(plan).filter((i) => i.severity === "error");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.every((i) => i.kind === "incomplete")).toBe(true);
   });
 });

@@ -10,8 +10,6 @@ import { type Issue, type Layout, LayoutSchema, type Plan, PlanSchema } from "..
 import { validatePlan } from "../plan/validate";
 import { planToYaml, yamlToPlan } from "../plan/yaml";
 
-export type View = "graph" | "code" | "split";
-
 export interface State {
   plan: Plan;
   layout: Layout;
@@ -19,7 +17,8 @@ export interface State {
   /** Why the current `yaml` is not applied; empty when it matches `plan`. */
   codeIssues: Issue[];
   selected: string | null;
-  view: View;
+  /** Whether the plan-as-text panel is shown next to the diagram. */
+  codeOpen: boolean;
   sample: string;
   toast: { text: string; kind: "info" | "error"; seq: number } | null;
   /** Bumped when positions change for reasons other than dragging, so the canvas refits. */
@@ -36,7 +35,7 @@ export type Action =
   | { type: "moveNodes"; layout: Layout }
   | { type: "relayout"; layout: Layout }
   | { type: "select"; id: string | null }
-  | { type: "view"; view: View }
+  | { type: "toggleCode" }
   | { type: "toast"; text: string; kind?: "info" | "error" };
 
 export function reducer(s: State, a: Action): State {
@@ -89,8 +88,8 @@ export function reducer(s: State, a: Action): State {
       return { ...s, layout: a.layout, fitSeq: s.fitSeq + 1 };
     case "select":
       return s.selected === a.id ? s : { ...s, selected: a.id };
-    case "view":
-      return { ...s, view: a.view, fitSeq: s.fitSeq + 1 };
+    case "toggleCode":
+      return { ...s, codeOpen: !s.codeOpen, fitSeq: s.fitSeq + 1 };
     case "toast":
       return { ...s, toast: { text: a.text, kind: a.kind ?? "info", seq: (s.toast?.seq ?? 0) + 1 } };
   }
@@ -105,7 +104,7 @@ export function initialState(): State {
     yaml: "",
     codeIssues: [],
     selected: null,
-    view: "split",
+    codeOpen: false,
     sample: "deployed",
     toast: null,
     fitSeq: 0,
@@ -128,7 +127,7 @@ export function initialState(): State {
       layout: completeLayout(plan.plan, layout.success ? layout.data : {}),
       yaml,
       codeIssues: parsed.ok ? [] : parsed.issues,
-      view: ["graph", "code", "split"].includes(saved.view) ? saved.view : fresh.view,
+      codeOpen: saved.codeOpen === true,
       sample: typeof saved.sample === "string" ? saved.sample : fresh.sample,
     };
   } catch {
@@ -141,7 +140,7 @@ export function persist(s: State): void {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ plan: s.plan, layout: s.layout, yaml: s.yaml, view: s.view, sample: s.sample }),
+      JSON.stringify({ plan: s.plan, layout: s.layout, yaml: s.yaml, codeOpen: s.codeOpen, sample: s.sample }),
     );
   } catch {
     // storage full or blocked: the page still works, it just will not survive a refresh

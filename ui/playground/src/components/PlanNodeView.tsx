@@ -17,7 +17,9 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const meta = NODE_META[n.type];
   const rule = INPUT_RULES[n.type];
   const { inputs, output } = data.io;
-  const errors = data.issues.filter((i) => i.severity === "error").length;
+  // A fresh block is unfinished (nothing connected yet); only a real mistake is an error.
+  const errors = data.issues.filter((i) => i.severity === "error" && i.kind !== "incomplete").length;
+  const todo = data.issues.find((i) => i.kind === "incomplete");
   // React Flow caches handle positions per node; re-measure when the set of handles changes.
   const updateInternals = useUpdateNodeInternals();
   const handleKey = `${inputs.map((i) => i.name).join(",")}|${output?.name ?? ""}`;
@@ -25,14 +27,18 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
 
   return (
     <div
-      className={`pn pn--${n.type}${selected ? " is-selected" : ""}${errors ? " has-error" : ""}`}
+      className={`pn pn--${n.type}${selected ? " is-selected" : ""}${errors ? " has-error" : todo ? " is-unfinished" : ""}`}
       title={data.issues.map((i) => i.message).join("\n") || undefined}
     >
       <div className="pn-head">
         <span className="pn-kind">
           {meta.glyph} {meta.label}
         </span>
-        {errors > 0 && <span className="pn-err">!</span>}
+        {errors > 0 ? (
+          <span className="pn-err">!</span>
+        ) : (
+          todo && <span className="pn-hint">{todo.message.replace(`${n.id}: `, "")}</span>
+        )}
       </div>
       <div className="pn-title" title={n.title || n.id}>
         {n.title || n.id}

@@ -51,8 +51,8 @@ export function newNode(type: NodeType, id: string): PlanNode {
         type,
         inputs: {},
         config: {
-          code: "def run(**inputs):\n    # Each declared input arrives as a keyword argument.\n    return {}\n",
-          output: { name: "result", type: "Value", fields: {} },
+          code: "def run(**inputs):\n    # Each declared input arrives as a keyword argument.\n    return {\"count\": 0}\n",
+          output: { name: "result", type: "Value", fields: { count: "integer" } },
         },
       };
     case "run_llm":
@@ -63,8 +63,8 @@ export function newNode(type: NodeType, id: string): PlanNode {
         config: {
           model: { ...DEFAULT_MODEL },
           system_prompt: "You are a careful analyst. Answer only in the requested JSON format.",
-          user_prompt: "",
-          output: { name: "result", type: "Value", fields: {} },
+          user_prompt: "Read the input and answer in the requested JSON format.",
+          output: { name: "result", type: "Value", fields: { answer: "string" } },
         },
       };
     case "final_report":
@@ -94,9 +94,21 @@ export function freshId(plan: Plan, base: string): string {
   for (let k = 2; ; k++) if (!ids.has(`${base}_${k}`)) return `${base}_${k}`;
 }
 
+const LABEL: Record<NodeType, string> = {
+  input_logs: "Input Logs",
+  classifier: "Classifier",
+  run_python: "Run Python",
+  run_llm: "Run LLM",
+  final_report: "Final Report",
+};
+
+/** Add a block of this kind, titled like the others ("Classifier", then "Classifier 2"). */
 export function addNode(plan: Plan, type: NodeType): { plan: Plan; id: string } {
   const id = freshId(plan, ID_BASE[type]);
-  return { plan: { ...plan, nodes: [...plan.nodes, newNode(type, id)] }, id };
+  const same = plan.nodes.filter((n) => n.type === type).length;
+  const { id: i, type: t, ...rest } = newNode(type, id);
+  const node = { id: i, type: t, title: same ? `${LABEL[type]} ${same + 1}` : LABEL[type], ...rest } as PlanNode;
+  return { plan: { ...plan, nodes: [...plan.nodes, node] }, id };
 }
 
 export function deleteNodes(plan: Plan, ids: string[]): Plan {

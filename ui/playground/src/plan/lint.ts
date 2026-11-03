@@ -41,6 +41,8 @@ export function lintPlan(plan: Plan): Issue[] {
     issues.push({ severity: "error", nodeId, path, message });
   const warn = (nodeId: string, path: (string | number)[], message: string) =>
     issues.push({ severity: "warning", nodeId, path, message });
+  const todo = (nodeId: string, path: (string | number)[], message: string) =>
+    issues.push({ severity: "error", kind: "incomplete", nodeId, path, message });
 
   const reports = plan.nodes.filter((n) => n.type === "final_report");
   if (!plan.nodes.some((n) => n.type === "input_logs"))
@@ -77,7 +79,7 @@ export function lintPlan(plan: Plan): Issue[] {
           );
         break;
       case "classifier": {
-        if (!n.inputs.items) err(n.id, at(i, "inputs"), `${n.id}: connect logs or items to classify`);
+        if (!n.inputs.items) todo(n.id, at(i, "inputs"), `${n.id}: connect logs or items to classify`);
         const names = n.config.labels.map((l) => l.name);
         if (names.length < 2) err(n.id, at(i, "config", "labels"), `${n.id}: a classifier needs at least two labels`);
         const dup = names.find((l, k) => names.indexOf(l) !== k);
@@ -91,7 +93,7 @@ export function lintPlan(plan: Plan): Issue[] {
       case "run_python":
       case "run_llm": {
         const ins = Object.keys(n.inputs);
-        if (!ins.length) err(n.id, at(i, "inputs"), `${n.id}: connect at least one input`);
+        if (!ins.length) todo(n.id, at(i, "inputs"), `${n.id}: connect at least one input`);
         const out = n.config.output;
         if (out.type === "Value" && !Object.keys(out.fields).length)
           warn(
@@ -131,8 +133,8 @@ export function lintPlan(plan: Plan): Issue[] {
         break;
       }
       case "final_report": {
-        if (!n.inputs.result) err(n.id, at(i, "inputs"), `${n.id}: connect the one result to release`);
-        if (!n.config.fields.length) err(n.id, at(i, "config", "fields"), `${n.id}: the report has no fields`);
+        if (!n.inputs.result) todo(n.id, at(i, "inputs"), `${n.id}: connect the one result to release`);
+        if (!n.config.fields.length) todo(n.id, at(i, "config", "fields"), `${n.id}: the report has no fields`);
         n.config.fields.forEach((f, k) => {
           const p = at(i, "config", "fields", k);
           const path = fieldPath(f);
