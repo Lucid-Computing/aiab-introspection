@@ -7,14 +7,14 @@ import Inspector from "./components/Inspector";
 import { badBindings, lintPlan } from "./plan/lint";
 import { SAMPLE_SOURCES, samplePlan } from "./plan/samples";
 import type { Issue } from "./plan/types";
-import { exportYaml, locateIssues, planToYaml, yamlToPlan } from "./plan/yaml";
+import { exportJson, locateIssues, planToJson, jsonToPlan } from "./plan/json";
 import { initialState, persist, reducer } from "./state/store";
 
 /** What the server holds for the agreement being edited (agreement mode only). */
 interface Server {
   digest: string;
-  /** The YAML of the plan as last loaded or saved: the baseline for "unsaved changes". */
-  savedYaml: string;
+  /** The JSON of the plan as last loaded or saved: the baseline for "unsaved changes". */
+  savedCode: string;
   editable: boolean;
   loading: boolean;
   saving: boolean;
@@ -34,7 +34,7 @@ export default function App() {
   const { plan, codeOpen, selected } = state;
   const [server, setServer] = useState<Server>({
     digest: "",
-    savedYaml: "",
+    savedCode: "",
     editable: false,
     loading: Boolean(AGREEMENT),
     saving: false,
@@ -58,7 +58,7 @@ export default function App() {
         setServer((x) => ({
           ...x,
           digest: s.digest,
-          savedYaml: planToYaml(s.plan),
+          savedCode: planToJson(s.plan),
           editable: s.editable && !READONLY,
           loading: false,
           refused: fromServer(s.issues),
@@ -78,22 +78,22 @@ export default function App() {
   const issues = useMemo(() => [...server.refused, ...lint], [server.refused, lint]);
   const bad = useMemo(() => badBindings(plan), [plan]);
   const located = useMemo(
-    () => (state.codeIssues.length ? issues : locateIssues(state.yaml, issues)),
+    () => (state.codeIssues.length ? issues : locateIssues(state.code, issues)),
     // Only re-locate when the applied text changes, not on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issues, state.codeIssues.length ? "" : state.yaml],
+    [issues, state.codeIssues.length ? "" : state.code],
   );
   const nErr = issues.filter((i) => i.severity === "error").length;
   const nWarn = issues.length - nErr;
 
   // A new edit retires the server's objections to the previous attempt.
-  const currentYaml = planToYaml(plan);
+  const currentCode = planToJson(plan);
   useEffect(() => {
     if (server.refused.length) setServer((x) => ({ ...x, refused: [] }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentYaml]);
+  }, [currentCode]);
 
-  const dirty = Boolean(AGREEMENT) && !server.loading && !server.error && currentYaml !== server.savedYaml;
+  const dirty = Boolean(AGREEMENT) && !server.loading && !server.error && currentCode !== server.savedCode;
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => {
@@ -120,7 +120,7 @@ export default function App() {
     setServer((x) => ({ ...x, saving: true }));
     const r = await saveAgreement(AGREEMENT, plan, server.digest);
     if (r.ok) {
-      setServer((x) => ({ ...x, saving: false, digest: r.digest, savedYaml: currentYaml, refused: [] }));
+      setServer((x) => ({ ...x, saving: false, digest: r.digest, savedCode: currentCode, refused: [] }));
       dispatch({ type: "toast", text: `Saved. New version ${r.digest.slice(7, 19)}…` });
     } else {
       setServer((x) => ({ ...x, saving: false, refused: fromServer(r.issues) }));
@@ -129,7 +129,7 @@ export default function App() {
     }
   };
 
-  const modified = (key: string) => planToYaml(plan) !== planToYaml(samplePlan(key));
+  const modified = (key: string) => planToJson(plan) !== planToJson(samplePlan(key));
   const loadSample = (key: string) => {
     if (
       modified(state.sample) &&
@@ -140,16 +140,16 @@ export default function App() {
   };
 
   const download = () => {
-    const blob = new Blob([exportYaml(plan, state.layout)], { type: "text/yaml" });
+    const blob = new Blob([exportJson(plan, state.layout)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${plan.plan_id}.plan.yaml`;
+    a.download = `${plan.plan_id}.plan.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
 
   const importFile = async (file: File) => {
-    const r = yamlToPlan(await file.text(), { allowLayout: true });
+    const r = jsonToPlan(await file.text(), { allowLayout: true });
     if (!r.ok) {
       dispatch({
         type: "toast",
@@ -257,7 +257,7 @@ export default function App() {
                 dirty &&
                 window.confirm("Discard the unsaved changes and go back to the saved plan?") &&
                 (() => {
-                  const r = yamlToPlan(server.savedYaml);
+                  const r = jsonToPlan(server.savedCode);
                   if (r.ok) dispatch({ type: "loadPlan", plan: r.plan });
                 })()
               }
@@ -285,7 +285,7 @@ export default function App() {
           <input
             ref={fileInput}
             type="file"
-            accept=".yaml,.yml,text/yaml"
+            accept=".json,application/json"
             hidden
             onChange={(e) => {
               const f = e.target.files?.[0];

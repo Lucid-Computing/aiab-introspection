@@ -8,20 +8,20 @@ import deployedPlan from "../../../../plan/plan.json";
 import { classificationShape, describeNode, describeOutput, reportShape } from "./shape";
 import type { Plan } from "./types";
 import { validatePlan } from "./validate";
-import { exportYaml, planToYaml, yamlToPlan } from "./yaml";
+import { exportJson, jsonToPlan, linesOf, planToJson } from "./json";
 
 const samples = SAMPLE_SOURCES.map((s) => [s.key, samplePlan(s.key)] as const);
 const simple = () => samplePlan("simple");
 const clone = <T>(x: T): T => structuredClone(x);
 
 function mustParse(text: string): Plan {
-  const r = yamlToPlan(text);
+  const r = jsonToPlan(text);
   if (!r.ok) throw new Error(r.issues.map((i) => `${i.line}: ${i.message}`).join("\n"));
   return r.plan;
 }
 
 function errors(text: string) {
-  const r = yamlToPlan(text);
+  const r = jsonToPlan(text);
   expect(r.ok).toBe(false);
   return r.ok ? [] : r.issues;
 }
@@ -174,7 +174,7 @@ describe("lint mirrors the box's rules", () => {
 
 describe("lint (soft issues)", () => {
   it("flags type-incompatible connections without rejecting the plan", () => {
-    const text = planToYaml(simple()).replace("result: physics.results", "result: logs.records");
+    const text = planToJson(simple()).replace('"result": "physics.results"', '"result": "logs.records"');
     const plan = mustParse(text);
     const msgs = lintPlan(plan).map((i) => i.message);
     expect(msgs.some((m) => /report\.result: receives LogRecords/.test(m))).toBe(true);
@@ -188,7 +188,7 @@ describe("lint (soft issues)", () => {
     report.config.fields.push({ name: "wrong", type: "boolean", from: "sessions" });
     const msgs = lintPlan(p).map((i) => i.message);
     expect(msgs).toContain(
-      'report.missing: "combine" declares no field "missing" (fields: flagged, physics_share, biology_share, sessions)',
+      'report.missing: "combine" declares no field "missing" (fields: biology_share, flagged, physics_share, sessions)',
     );
     expect(msgs).toContain("report.wrong: declared boolean but sessions is integer");
   });
@@ -200,47 +200,43 @@ describe("lint (soft issues)", () => {
 });
 
 describe("graph → code (serialisation)", () => {
-  it("writes Python and prompts as readable block text", () => {
-    const text = planToYaml(samplePlan("multi-step"));
-    expect(text).toContain("      code: |\n        import re\n");
-    expect(text).toContain("      user_prompt: |\n        Session transcript:\n        {{session}}\n");
-    expect(text).toContain("      session: sessions.sessions\n");
-  });
-
-  it("leaves out values equal to their defaults", () => {
-    const text = planToYaml(samplePlan("two-classifiers"));
-    expect(text).not.toMatch(/temperature|max_output_tokens|group_by|window|max_records|keywords|inputs: \{\}/);
-    expect(text).toContain("      model: { id: gpt-oss-safeguard-120b }\n");
-    expect(text).toContain("        - { name: flagged, type: boolean }\n");
-    // Non-default values stay.
-    expect(text).toContain("threshold: 0.6");
+  it("writes the plan as the box saves it: every key, defaults included, keys sorted", () => {
+    const plan = samplePlan("two-classifiers");
+    const text = planToJson(plan);
+    const raw = JSON.parse(text);
+    expect(raw).toEqual(JSON.parse(JSON.stringify(plan)));
+    expect(Object.keys(raw)).toEqual([...Object.keys(raw)].sort());
+    expect(Object.keys(raw.nodes[0])).toEqual([...Object.keys(raw.nodes[0])].sort());
+    // Defaults are written out, so the text is the whole plan.
+    expect(text).toContain('"temperature": 0');
+    expect(text).toContain('"max_output_tokens": 512');
   });
 
   it("keeps layout out of the plan code", () => {
     const p = simple();
-    expect(planToYaml(p)).not.toContain("layout");
-    const exported = exportYaml(p, { logs: { x: 1, y: 2 } });
-    const r = yamlToPlan(exported, { allowLayout: true });
+    expect(planToJson(p)).not.toContain("layout");
+    const exported = exportJson(p, { logs: { x: 1, y: 2 } });
+    const r = jsonToPlan(exported, { allowLayout: true });
     expect(r.ok && r.layout).toEqual({ logs: { x: 1, y: 2 } });
     expect(r.ok && r.plan).toEqual(p);
     // The code view itself does not accept a layout key.
-    expect(yamlToPlan(exported).ok).toBe(false);
+    expect(jsonToPlan(exported).ok).toBe(false);
   });
 });
 
 describe("code → graph (parsing)", () => {
-  it("adding a node and binding in YAML adds a graph node and edge", () => {
-    const text =
-      planToYaml(simple()) +
-      `  - id: tally
-    type: run_python
-    inputs:
-      physics: physics.results
-    config:
-      code: "def run(physics):\\n    return {'n': len(physics)}\\n"
-      output: { name: totals, type: Value, fields: { n: integer } }
-`;
-    const plan = mustParse(text);
+  it("adding a node and binding in JSON adds a graph node and edge", () => {
+    const raw = JSON.parse(planToJson(simple()));
+    raw.nodes.push({
+      id: "tally",
+      type: "run_python",
+      inputs: { physics: "physics.results" },
+      config: {
+        code: "def run(physics):\n    return {'n': len(physics)}\n",
+        output: { name: "totals", type: "Value", fields: { n: "integer" } },
+      },
+    });
+    const plan = mustParse(JSON.stringify(raw, null, 2));
     const { nodes, edges } = planToFlow(plan, completeLayout(plan, {}));
     expect(nodes.map((n) => n.id)).toContain("tally");
     expect(edges.find((e) => e.target === "tally")).toMatchObject({
@@ -250,47 +246,57 @@ describe("code → graph (parsing)", () => {
     });
   });
 
-  it("deleting a node in YAML removes it from the graph", () => {
-    const text = planToYaml(samplePlan("two-classifiers"))
-      .replace(/ {2}- id: biology[\s\S]*?(?= {2}- id: combine)/, "")
-      .replace("      biology: biology.results\n", "");
-    const plan = mustParse(text);
+  it("deleting a node in JSON removes it from the graph", () => {
+    const raw = JSON.parse(planToJson(samplePlan("two-classifiers")));
+    raw.nodes = raw.nodes.filter((n: { id: string }) => n.id !== "biology");
+    const combine = raw.nodes.find((n: { id: string }) => n.id === "combine");
+    delete combine.inputs.biology;
+    const plan = mustParse(JSON.stringify(raw, null, 2));
     expect(plan.nodes.map((n) => n.id)).toEqual(["logs", "physics", "combine", "report"]);
     expect(planToFlow(plan, {}).edges.map((e) => e.id)).not.toContain("combine.biology");
   });
 });
 
-describe("invalid YAML", () => {
+describe("invalid JSON", () => {
   it("reports syntax errors with a line number", () => {
-    const text = planToYaml(simple()).replace("  - id: physics", "  - id: [physics");
+    const text = planToJson(simple()).replace('"id": "physics"', '"id": physics');
     const [e] = errors(text);
-    expect(e.message).toMatch(/^YAML syntax/);
-    expect(e.line).toBeGreaterThan(1);
+    expect(e.message).toMatch(/^JSON syntax/);
+    expect(e.line).toBe(text.split("\n").findIndex((l) => l.includes('"id": physics')) + 1);
   });
 
   it("reports schema errors at the offending line", () => {
-    const text = planToYaml(simple()).replace("threshold: 0.6", "threshold: 7");
+    const text = planToJson(simple()).replace('"threshold": 0.6', '"threshold": 7');
     const [e] = errors(text);
-    const line = text.split("\n").findIndex((l) => l.includes("threshold: 7")) + 1;
+    const line = text.split("\n").findIndex((l) => l.includes('"threshold": 7')) + 1;
     expect(e.line).toBe(line);
     expect(e.message).toMatch(/config\.threshold/);
   });
 
   it("reports dangling references at the binding", () => {
-    const text = planToYaml(simple()).replace("items: logs.records", "items: log.records");
+    const text = planToJson(simple()).replace('"items": "logs.records"', '"items": "log.records"');
     const [e] = errors(text);
     expect(e.message).toContain('no node "log"');
-    expect(e.line).toBe(text.split("\n").findIndex((l) => l.includes("items: log.records")) + 1);
+    expect(e.line).toBe(text.split("\n").findIndex((l) => l.includes('"items": "log.records"')) + 1);
   });
 
-  it("rejects a non-mapping document", () => {
-    expect(errors("- just\n- a list\n")[0].message).toMatch(/must be a YAML mapping/);
+  it("rejects a document that is not an object", () => {
+    expect(errors("[1, 2]\n")[0].message).toMatch(/must be a JSON object/);
+  });
+
+  it("finds the lines of a block, to highlight it when selected", () => {
+    const text = planToJson(simple());
+    const r = linesOf(text, ["nodes", 1]);
+    const lines = text.split("\n");
+    expect(r && lines[r.from - 1].trim()).toBe("{");
+    expect(r && lines.slice(r.from - 1, r.to).join("\n")).toContain('"id": "physics"');
+    expect(r && lines[r.to - 1].trim()).toMatch(/^\}/);
   });
 });
 
 describe("round trips preserve semantics", () => {
-  it.each(samples)("%s: IR → YAML → IR", (_, plan) => {
-    expect(mustParse(planToYaml(plan))).toEqual(plan);
+  it.each(samples)("%s: IR → JSON → IR", (_, plan) => {
+    expect(mustParse(planToJson(plan))).toEqual(plan);
   });
 
   it.each(samples)("%s: IR → graph → IR", (_, plan) => {
@@ -304,19 +310,19 @@ describe("round trips preserve semantics", () => {
     const g1 = planToFlow(plan, layout);
     const fromGraph = flowToPlan(plan, g1.nodes, g1.edges);
     if (!fromGraph.ok) throw new Error("graph did not convert");
-    const g2 = planToFlow(mustParse(planToYaml(fromGraph.plan)), layout);
+    const g2 = planToFlow(mustParse(planToJson(fromGraph.plan)), layout);
     expect(g2.nodes).toEqual(g1.nodes);
     expect(g2.edges).toEqual(g1.edges);
   });
 
-  it("is stable: YAML → IR → YAML gives the same text", () => {
-    const text = planToYaml(samplePlan("multi-step"));
-    expect(planToYaml(mustParse(text))).toBe(text);
+  it("is stable: JSON → IR → JSON gives the same text", () => {
+    const text = planToJson(samplePlan("multi-step"));
+    expect(planToJson(mustParse(text))).toBe(text);
   });
 
   it("keeps Python source and prompts byte for byte", () => {
     const p = samplePlan("multi-step");
-    const back = mustParse(planToYaml(p));
+    const back = mustParse(planToJson(p));
     const py = (q: Plan) => q.nodes.find((n) => n.id === "sessions")!;
     const llm = (q: Plan) => q.nodes.find((n) => n.id === "summarise")!;
     expect(py(back)).toEqual(py(p));
@@ -418,10 +424,11 @@ describe("port shapes (what the cards and inspector show)", () => {
       shape: "[{item_id, label: physics_research | other | abstain, score, evidence_ids}]",
       note: "2 labels",
     });
+    // A Value's fields come out in key order, which is sorted, as in the saved file.
     expect(describeOutput(node(plan, "combine"))).toMatchObject({
       name: "verdict",
       type: "Value",
-      shape: "{flagged: boolean, physics_share: number, biology_share: number, sessions: integer}",
+      shape: "{biology_share: number, flagged: boolean, physics_share: number, sessions: integer}",
       note: "4 fields",
     });
     expect(describeOutput(node(plan, "report"))).toMatchObject({ name: "releases", type: "Report" });
@@ -433,11 +440,12 @@ describe("port shapes (what the cards and inspector show)", () => {
   it("lists inputs with the type and shape they receive, and marks unconnected ones", () => {
     const plan = samplePlan("two-classifiers");
     const combine = describeNode(plan, node(plan, "combine")).inputs;
+    // Inputs are listed in key order, which is sorted, as in the saved file.
     expect(combine.map((i) => [i.name, i.ref, i.type])).toEqual([
-      ["physics", "physics.results", "Classifications"],
       ["biology", "biology.results", "Classifications"],
+      ["physics", "physics.results", "Classifications"],
     ]);
-    expect(combine[0].shape).toContain("label: physics_research | other | abstain");
+    expect(combine[1].shape).toContain("label: physics_research | other | abstain");
 
     const { plan: withClassifier, id } = addNode(plan, "classifier");
     expect(describeNode(withClassifier, node(withClassifier, id)).inputs).toEqual([

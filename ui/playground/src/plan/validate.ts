@@ -18,8 +18,42 @@ export type Result = { ok: true; plan: Plan } | { ok: false; issues: Issue[] };
 export function validatePlan(raw: unknown): Result {
   const parsed = PlanSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, issues: zodIssues(parsed.error, raw) };
-  const issues = structuralIssues(parsed.data);
-  return issues.length ? { ok: false, issues } : { ok: true, plan: parsed.data };
+  const plan = normalised(parsed.data);
+  const issues = structuralIssues(plan);
+  return issues.length ? { ok: false, issues } : { ok: true, plan };
+}
+
+/** A record keyed by name with its keys sorted. */
+function sortedKeys<T extends Record<string, unknown>>(o: T): T {
+  return Object.fromEntries(
+    Object.keys(o)
+      .sort()
+      .map((k) => [k, o[k]]),
+  ) as T;
+}
+
+/**
+ * The saved plan.json sorts every key, so a block's inputs (and a Value's fields) are kept
+ * in that order here as well: the cards, the settings pane and the text then agree.
+ */
+function normalised(plan: Plan): Plan {
+  return {
+    ...plan,
+    nodes: plan.nodes.map((n) => {
+      const node = { ...n, inputs: sortedKeys(n.inputs) };
+      if (node.type === "run_python")
+        return {
+          ...node,
+          config: { ...node.config, output: { ...node.config.output, fields: sortedKeys(node.config.output.fields) } },
+        };
+      if (node.type === "run_llm")
+        return {
+          ...node,
+          config: { ...node.config, output: { ...node.config.output, fields: sortedKeys(node.config.output.fields) } },
+        };
+      return node;
+    }),
+  };
 }
 
 function zodIssues(error: z.ZodError, raw: unknown): Issue[] {

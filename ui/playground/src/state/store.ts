@@ -1,6 +1,6 @@
 /**
- * Editor state. `plan` is always a valid IR (it has passed validatePlan); `yaml` is the code
- * editor's text, which may be invalid while the user types. Graph edits rewrite `yaml`;
+ * Editor state. `plan` is always a valid IR (it has passed validatePlan); `code` is the code
+ * editor's text, which may be invalid while the user types. Graph edits rewrite `code`;
  * valid code edits replace `plan` without touching the text the user is typing.
  */
 import { AGREEMENT } from "../agreement";
@@ -8,13 +8,13 @@ import { completeLayout } from "../plan/layout";
 import { samplePlan } from "../plan/samples";
 import { type Issue, type Layout, LayoutSchema, type Plan, PlanSchema } from "../plan/types";
 import { validatePlan } from "../plan/validate";
-import { planToYaml, yamlToPlan } from "../plan/yaml";
+import { planToJson, jsonToPlan } from "../plan/json";
 
 export interface State {
   plan: Plan;
   layout: Layout;
-  yaml: string;
-  /** Why the current `yaml` is not applied; empty when it matches `plan`. */
+  code: string;
+  /** Why the current `code` is not applied; empty when it matches `plan`. */
   codeIssues: Issue[];
   selected: string | null;
   /** Whether the plan-as-text panel is shown next to the diagram. */
@@ -30,8 +30,8 @@ export type Action =
   /** An edit computed from the current plan; use when several may arrive in one event. */
   | { type: "update"; f: (plan: Plan) => Plan }
   | { type: "loadPlan"; plan: Plan; layout?: Layout; sample?: string }
-  | { type: "editYaml"; text: string }
-  | { type: "applyYaml"; text: string }
+  | { type: "editCode"; text: string }
+  | { type: "applyCode"; text: string }
   | { type: "moveNodes"; layout: Layout }
   | { type: "relayout"; layout: Layout }
   | { type: "select"; id: string | null }
@@ -47,7 +47,7 @@ export function reducer(s: State, a: Action): State {
         ...s,
         plan: a.plan,
         layout,
-        yaml: planToYaml(a.plan),
+        code: planToJson(a.plan),
         codeIssues: [],
         selected: selected && a.plan.nodes.some((n) => n.id === selected) ? selected : null,
       };
@@ -59,18 +59,18 @@ export function reducer(s: State, a: Action): State {
         ...s,
         plan: a.plan,
         layout: completeLayout(a.plan, a.layout ?? {}),
-        yaml: planToYaml(a.plan),
+        code: planToJson(a.plan),
         codeIssues: [],
         selected: null,
         sample: a.sample ?? s.sample,
         fitSeq: s.fitSeq + 1,
       };
-    case "editYaml":
-      return { ...s, yaml: a.text };
-    case "applyYaml": {
-      if (a.text !== s.yaml) return s; // stale (the user kept typing)
-      if (!s.codeIssues.length && a.text === planToYaml(s.plan)) return s; // already applied
-      const r = yamlToPlan(a.text);
+    case "editCode":
+      return { ...s, code: a.text };
+    case "applyCode": {
+      if (a.text !== s.code) return s; // stale (the user kept typing)
+      if (!s.codeIssues.length && a.text === planToJson(s.plan)) return s; // already applied
+      const r = jsonToPlan(a.text);
       if (!r.ok) return { ...s, codeIssues: r.issues };
       const added = r.plan.nodes.some((n) => !s.layout[n.id]);
       return {
@@ -95,13 +95,13 @@ export function reducer(s: State, a: Action): State {
   }
 }
 
-const STORAGE_KEY = "aiab-playground/v1";
+const STORAGE_KEY = "aiab-playground/v2";
 
 export function initialState(): State {
   const fresh: State = {
     plan: samplePlan("deployed"),
     layout: {},
-    yaml: "",
+    code: "",
     codeIssues: [],
     selected: null,
     codeOpen: false,
@@ -110,7 +110,7 @@ export function initialState(): State {
     fitSeq: 0,
   };
   fresh.layout = completeLayout(fresh.plan, {});
-  fresh.yaml = planToYaml(fresh.plan);
+  fresh.code = planToJson(fresh.plan);
   if (AGREEMENT) return fresh; // the server's plan replaces this as soon as it loads
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -119,13 +119,13 @@ export function initialState(): State {
     const plan = validatePlan(PlanSchema.parse(saved.plan));
     if (!plan.ok) return fresh;
     const layout = LayoutSchema.safeParse(saved.layout);
-    const yaml = typeof saved.yaml === "string" ? saved.yaml : planToYaml(plan.plan);
-    const parsed = yamlToPlan(yaml);
+    const code = typeof saved.code === "string" ? saved.code : planToJson(plan.plan);
+    const parsed = jsonToPlan(code);
     return {
       ...fresh,
       plan: plan.plan,
       layout: completeLayout(plan.plan, layout.success ? layout.data : {}),
-      yaml,
+      code,
       codeIssues: parsed.ok ? [] : parsed.issues,
       codeOpen: saved.codeOpen === true,
       sample: typeof saved.sample === "string" ? saved.sample : fresh.sample,
@@ -140,7 +140,7 @@ export function persist(s: State): void {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ plan: s.plan, layout: s.layout, yaml: s.yaml, codeOpen: s.codeOpen, sample: s.sample }),
+      JSON.stringify({ plan: s.plan, layout: s.layout, code: s.code, codeOpen: s.codeOpen, sample: s.sample }),
     );
   } catch {
     // storage full or blocked: the page still works, it just will not survive a refresh

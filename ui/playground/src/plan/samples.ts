@@ -6,7 +6,7 @@
 import deployedPlan from "../../../../plan/plan.json";
 import type { Plan } from "./types";
 import { validatePlan } from "./validate";
-import { yamlToPlan } from "./yaml";
+import { parse as parseYaml } from "yaml";
 
 const SIMPLE = `version: aiab-plan-ir/v0
 plan_id: physics_research
@@ -278,9 +278,10 @@ export function deployedSample(raw: unknown = deployedPlan): Plan {
   return fromYaml("simple");
 }
 
+/** The samples above are written in YAML for brevity; the builder itself only shows JSON. */
 function fromYaml(key: string): Plan {
   const s = SAMPLE_SOURCES.find((x) => x.key === key) ?? SAMPLE_SOURCES[1];
-  const r = yamlToPlan(s.yaml);
+  const r = validatePlan(parseYaml(s.yaml));
   if (!r.ok) throw new Error(`sample ${s.key} is invalid: ${r.issues.map((i) => i.message).join("; ")}`);
   return r.plan;
 }

@@ -40,7 +40,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | [`../static/auditor/baked.py`](../static/auditor/baked.py) | `digest`, `sign`, `verify`, `commit-evaluation` and the run/report client. |
 | `../agreements/<name>/` | An agreement: `plan.json` (the graph), tests, signatures, `history.jsonl`. Git-ignored. |
 | [`server/config.py`](server/config.py) | Environment variables → settings. |
-| [`playground/`](playground/) | The plan builder: the graph-and-YAML editor embedded in the plan page, built once into `playground/dist`. |
+| [`playground/`](playground/) | The plan builder: the graph-and-JSON editor embedded in the plan page, built once into `playground/dist`. |
 | [`server/auth.py`](server/auth.py) | Local accounts with hashed passwords, signed session cookie, `python -m server.auth add`. |
 | [`server/plan_view.py`](server/plan_view.py) | Turns the plan folder into what the screens show; saves the plan through the box's loader, stores signatures, archives old-format agreements. |
 | [`server/box.py`](server/box.py) | Reads the box's manifest and health. Never writes. |
@@ -58,7 +58,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 ## The plan builder
 
 `playground/` is the plan builder: a React app that edits the plan as a graph of five block
-types (Input Logs, Classifier, Run Python, Run LLM, Final Report) or as YAML, with every
+types (Input Logs, Classifier, Run Python, Run LLM, Final Report) or as `plan.json` text, with every
 step showing what it reads and what it produces. The plan page embeds it in an iframe at
 `/audit-plan-playground/?agreement=<id>`; it loads the agreement's `plan.json` from
 `GET /a/<id>/plan.json` and saves with `PUT`, which runs the box's loader

@@ -69,7 +69,7 @@ export function lintPlan(plan: Plan): Issue[] {
           warn(
             n.id,
             at(i, "config", "source"),
-            `${n.id}: "${n.config.source}" names the logs the parties mean; the simulation uses ${FALLBACK_SOURCE}`,
+            `${n.id}: "${n.config.source}" names the logs the parties mean; the preview uses ${FALLBACK_SOURCE}`,
           );
         if (!n.config.filter.kinds.length)
           err(
