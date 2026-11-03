@@ -10,12 +10,12 @@ sync:
 dev:
 	uv run uvicorn server.app:app --reload --port $(PORT)
 
-# Okta login: which party an email is.   make party EMAIL=teddy@lucid.example PARTY=lab
+# WorkOS login: which party an email is.   make party EMAIL=teddy@lucid.example PARTY=lab
 # (PARTY=none removes them; writes ui/parties.json, git-ignored)
 party:
 	uv run python -m server.auth party $(EMAIL) $(PARTY)
 
-# Local accounts (no Okta settings): make account NAME=teddy PARTY=lab
+# Local accounts (with or without WorkOS): make account NAME=teddy PARTY=lab
 # (prompts for a password; writes ui/accounts.json)
 account:
 	uv run python -m server.auth add $(NAME) $(PARTY)

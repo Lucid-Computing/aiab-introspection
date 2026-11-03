@@ -28,9 +28,9 @@ services:
         value: dev       # a key submission opens its pull request against this branch
       - key: UI_SESSION_SECRET
         generateValue: true
-      - key: OIDC_ISSUER            # Okta login: the org's issuer, e.g. https://lucid.okta.com; all three set = Okta, none = local accounts
+      - key: OIDC_ISSUER            # WorkOS login: the environment's AuthKit domain, e.g. https://genuine-breeze-65-staging.authkit.app; none of the three = local accounts only
         sync: false
-      - key: OIDC_CLIENT_ID         # the Okta app integration's client ID
+      - key: OIDC_CLIENT_ID         # the WorkOS Connect application's client ID
         sync: false
       - key: OIDC_CLIENT_SECRET     # ... and its client secret
         sync: false
@@ -38,7 +38,7 @@ services:
         sync: false
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
         sync: false
-      - key: UI_BOOTSTRAP_ACCOUNTS   # local password accounts, first boot only: "demo:auditor:<password>,..."; work next to Okta
+      - key: UI_BOOTSTRAP_ACCOUNTS   # local password accounts, first boot only: "demo:auditor:<password>,..."; work next to WorkOS
         sync: false
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false

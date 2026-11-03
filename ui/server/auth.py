@@ -1,17 +1,18 @@
-"""Who is logged in, and which party they are: OpenID Connect login (Okta), the signed
+"""Who is logged in, and which party they are: OpenID Connect login (WorkOS), the signed
 session cookie, and the local accounts the UI used before.
 
 The identity provider authenticates; the UI's own cookie authorises. ``GET /login/start``
 sends the browser to the provider's authorization endpoint (authorization code flow with
 PKCE, state and nonce kept in a short-lived signed cookie). ``GET /login/callback``
 exchanges the code, checks the ID token against the provider's key set, and the app
-issues the same ``SessionSigner`` cookie as before, carrying the party. One Okta group
-(``aiab`` by default) says who may use the UI at all; which party they are is the UI's own
-business: ``parties.json`` maps emails to ``lab`` or ``auditor``, and
-``python -m server.auth party EMAIL PARTY`` edits it. Not in the group, or not in the file,
-cannot log in.
+issues the same ``SessionSigner`` cookie as before, carrying the party. Which party they
+are is the UI's own business: ``parties.json`` maps emails to ``lab`` or ``auditor``, and
+``python -m server.auth party EMAIL PARTY`` edits it. Not in the file, cannot log in. A
+provider group can gate access as well (``group=``, read from the ID token's groups claim;
+Okta puts one there, WorkOS does not).
 
-Any OpenID Connect provider works; Okta is the one this was written against. Local accounts
+Any OpenID Connect provider with a discovery document works; WorkOS AuthKit is the one this
+runs against, and Okta was tested the same way. Local accounts
 with hashed passwords in ``accounts.json`` (``python -m server.auth add USERNAME PARTY``)
 work next to it, and alone without the provider settings: demo users the operator makes on
 this side, laptops, and a way in when the provider is down. See docs/OIDC_AUTH_MIGRATION.md.
@@ -223,9 +224,9 @@ class OidcLogin:
         client_secret: str,
         *,
         parties_file: Path,
-        group: str | None = "aiab",
+        group: str | None = None,
         groups_claim: str = "groups",
-        scopes: str = "openid profile email groups",
+        scopes: str = "openid profile email",
         transport: Any | None = None,
         leeway: int = 10,
     ) -> None:
@@ -365,8 +366,8 @@ class OidcLogin:
                 groups = [groups]
             if self.group not in groups:
                 raise LoginError(
-                    f"{login} is signed in but not in the {self.group} group. Ask the Okta"
-                    " administrator to add you."
+                    f"{login} is signed in but not in the {self.group} group. Ask the"
+                    " identity provider's administrator to add you."
                 )
         party = load_parties(self.parties_file).get(email)
         if party is None:
@@ -391,8 +392,8 @@ class OidcLogin:
         return self.account(self.claims(id_token, nonce)), id_token
 
     def logout_url(self, id_token: str, post_logout_redirect_uri: str) -> str | None:
-        """The provider's end-session address, so Log out ends the Okta session too and the
-        next Sign in asks who you are. None if the provider has none."""
+        """The provider's end-session address, so Log out ends the provider session too and
+        the next Sign in asks who you are. None if the provider has none (WorkOS)."""
         try:
             endpoint = self.metadata().get("end_session_endpoint")
         except LoginError:
@@ -423,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     boot.add_argument("--file", type=Path, default=None)
     who = sub.add_parser(
-        "party", help="Okta login: which party this email is (writes parties.json)"
+        "party", help="OpenID Connect login: which party this email is (writes parties.json)"
     )
     who.add_argument("email")
     who.add_argument("party", choices=(*PARTIES, "none"), help="none removes the email")

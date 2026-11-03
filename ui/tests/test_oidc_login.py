@@ -1,5 +1,5 @@
 """OpenID Connect login: the browser goes to the provider and comes back with a code; the
-server exchanges it, checks the ID token and issues its own cookie; one Okta group gates
+server exchanges it, checks the ID token and issues its own cookie; an optional provider group gates
 access and parties.json names the party."""
 
 import json
@@ -58,6 +58,7 @@ class FakeOkta:
         }
         claims.update(self.claims)
         claims.update(override)
+        claims = {k: v for k, v in claims.items() if v is not None}  # None: leave it out
         return jwt.encode(claims, self.private, algorithm="RS256", headers={"kid": "okta-key-1"})
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -103,7 +104,8 @@ def okta(keypair, monkeypatch, tmp_path):
         CLIENT_ID,
         CLIENT_SECRET,
         parties_file=parties,
-        group="aiab",
+        group="aiab",  # the Okta shape: a group in the ID token, fetched with its scope
+        scopes="openid profile email groups",
         transport=httpx.MockTransport(fake),
     )
     monkeypatch.setattr(web, "oidc", login)
@@ -141,14 +143,15 @@ def start(client, okta, next_path="/a/bio/plan"):
     assert f"{url.scheme}://{url.netloc}{url.path}" == f"{ISSUER}/oauth2/v1/authorize"
     assert q["response_type"] == "code" and q["client_id"] == CLIENT_ID
     assert q["redirect_uri"] == REDIRECT and q["code_challenge_method"] == "S256"
-    assert "groups" in q["scope"].split()
+    assert ("groups" in q["scope"].split()) == bool(web.oidc.group)  # scope follows the setting
     okta.nonce = q["nonce"]
     return q
 
 
-def test_login_page_offers_okta_and_the_password_form(okta, client):
+def test_login_page_offers_the_provider_and_the_password_form(okta, client):
     html = client.get("/login?next=/runs").text
     assert 'href="/login/start?next=/runs"' in html and 'name="password"' in html
+    assert "Sign in with WorkOS" in html
 
 
 def test_the_whole_flow_issues_the_ui_cookie_with_the_party_from_the_group(okta, client):
@@ -193,12 +196,27 @@ def test_not_in_the_group_or_not_in_the_parties_file_is_refused(okta, client):
     assert response.status_code == 303
 
 
-def test_no_group_setting_means_anyone_okta_signs_in_with_a_party(okta, client):
+def test_no_group_setting_means_the_parties_file_alone_gates(okta, client):
+    """The WorkOS shape: no groups claim in the ID token at all, and no groups scope."""
     web.oidc.group = None
-    okta.claims = {"groups": []}
+    web.oidc.scopes = "openid profile email"
+    okta.claims = {"groups": None}
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
     assert response.status_code == 303
+    assert web.signer.read(response.cookies[web.COOKIE])["party"] == "lab"
+    auth.save_party(web.settings.parties_file, "teddy@lucid.example", None)  # dropped
+    q = start(client, okta)
+    response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
+    assert response.status_code == 200 and "has no party yet" in response.text
+
+
+def test_defaults_are_the_workos_shape(monkeypatch):
+    for key in ("OIDC_GROUP", "OIDC_SCOPES", "OIDC_PROVIDER_NAME"):
+        monkeypatch.delenv(key, raising=False)
+    settings = load_settings()
+    assert settings.oidc_group is None and settings.oidc_scopes == "openid profile email"
+    assert settings.oidc_provider_name == "WorkOS"
 
 
 def test_party_file_and_cli(tmp_path, monkeypatch):
@@ -225,7 +243,7 @@ def test_wrong_state_missing_cookie_and_provider_errors_are_refused(okta, client
         "/login/callback",
         params={"state": q["state"], "error": "access_denied", "error_description": "no app"},
     )
-    assert refused.status_code == 200 and "Okta refused: no app" in refused.text
+    assert refused.status_code == 200 and "WorkOS refused: no app" in refused.text
     bad_code = client.get("/login/callback", params={"code": "bad-code", "state": q["state"]})
     assert bad_code.status_code == 200 and "bad code" in bad_code.text
     fresh = TestClient(web.app, follow_redirects=False)  # no login cookie at all
@@ -258,7 +276,7 @@ def test_local_accounts_work_next_to_okta(okta, client):
     assert client.post("/logout").headers["location"] == "/login"  # no Okta session to end
 
 
-def test_logout_ends_the_okta_session_too(okta, client):
+def test_logout_ends_the_provider_session_too_when_it_has_an_end_session_endpoint(okta, client):
     q = start(client, okta)
     client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
     response = client.post("/logout")

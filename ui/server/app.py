@@ -29,8 +29,8 @@ from server.plan_view import PARTIES
 settings = load_settings()
 signer = SessionSigner(settings.session_secret)
 stamp = Stamp(settings.session_secret)  # the state of a login in flight, in its own cookie
-# OpenID Connect (Okta) when configured. The local accounts file works alongside it: demo
-# and emergency accounts the operator makes on this side, with `make account`.
+# OpenID Connect (WorkOS, or any provider) when configured. The local accounts file works
+# alongside it: demo and emergency accounts the operator makes on this side (`make account`).
 oidc: OidcLogin | None = (
     OidcLogin(
         settings.oidc_issuer,  # type: ignore[arg-type]
@@ -334,7 +334,8 @@ async def login_callback(request: Request) -> Response:
         )
     if qp.get("error"):
         detail = qp.get("error_description") or qp["error"]
-        return render(request, "login.html", next=pending["next"], err=f"Okta refused: {detail}")
+        refused = f"{settings.oidc_provider_name} refused: {detail}"
+        return render(request, "login.html", next=pending["next"], err=refused)
     if not qp.get("code"):
         return render(request, "login.html", next=pending["next"], err="No login code came back.")
     redirect_uri = public_origin(request) + "/login/callback"
@@ -360,7 +361,7 @@ async def login(
     password: str = Form(""),
     next: str = Form("/"),
 ) -> Response:
-    """The local accounts' password form. Works with or without Okta: local accounts are
+    """The local accounts' password form. Works with or without the provider: local accounts are
     the operator's own (demo users, a way in when the provider is down)."""
     target = safe_next(next)
     account = authenticate(settings.accounts_file, username.strip(), password)
