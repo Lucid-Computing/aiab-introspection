@@ -1,7 +1,0 @@
-**
-!Dockerfile
-!index.html
-!demo_prompts.json
-!entrypoint.sh
-!nginx.conf
-!.dockerignore

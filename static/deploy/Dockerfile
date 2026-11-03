@@ -24,8 +24,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
 WORKDIR /app
 COPY --from=dependencies /app/.venv /app/.venv
 COPY static/aiab/ /app/aiab/
-COPY static/classifiers/ /app/classifiers/
 # No plan is baked: every run submission carries its jointly signed plan.
 USER 65532:65532
-EXPOSE 8443 8080
-CMD ["python", "-m", "aiab.main"]
+EXPOSE 8080
+CMD ["python", "-m", "aiab.baked.main"]
