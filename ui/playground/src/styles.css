@@ -57,6 +57,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 
 /* ---- New block: a button on the diagram with the block kinds ---- */
 .newblock { position: absolute; top: 12px; left: 12px; z-index: 6; }
+/* While a block's card covers the diagram half, the button would sit on the card: hide it. */
+.graph:has(.card-over) .newblock { display: none; }
 .newblock-menu { position: absolute; top: 100%; left: 0; margin-top: 4px; min-width: 240px; display: flex; flex-direction: column; background: var(--paper-1); border: var(--border-ink); box-shadow: var(--shadow-offset); }
 .pal { display: flex; align-items: center; gap: 8px; text-align: left; padding: 9px 12px; border-left: 3px solid transparent; font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); }
 .pal:hover { background: var(--paper-2); }
