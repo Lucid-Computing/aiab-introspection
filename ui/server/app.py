@@ -449,7 +449,8 @@ async def _agreements_page(request: Request, **extra) -> Response:
     )
 
 
-KEY_WAIT_MAX = 5 * 60  # a key submission older than this is no longer waited for
+# A key submission older than this is no longer waited for; a box release takes minutes.
+KEY_WAIT_MAX = 30 * 60
 
 
 def _key_marker() -> Path:
@@ -1122,34 +1123,42 @@ async def set_key(
         return back(here, err=f"The {party} key was not submitted: {pushed.error}")
     pv.record_change(target, user, "key", f"public key: {party}", f"submitted {public_key}")
     where = pushed.pr_url or pushed.compare_url or f"branch {pushed.branch}"
-    _remember_key(party, public_key, user, pushed.pr_url)  # every page blocks until trusted
+    _remember_key(party, public_key, user, pushed.pr_url)  # every page blocks until the box has it
     return back(
         here,
-        msg=f"The {party} key is submitted ({where}). The check merges it within a minute;"
-        " every page waits until production trusts it. Sign once it says trusted.",
+        msg=f"The {party} key is submitted ({where}). The check merges it within a minute and"
+        " the box is released with it; every page waits until the box trusts it.",
     )
 
 
 @app.get("/keys/status.json")
 async def keys_status_json(request: Request) -> JSONResponse:
-    """Progress of the key submission in flight, looked up live on GitHub. Clears the
-    marker once production trusts the key or the check rejected it, so pages stop
-    blocking."""
+    """Progress of the key submission in flight: the pull request on GitHub, then the box
+    release. Clears the marker once the box trusts the key (or, with no box configured,
+    once production does), or the check rejected it, so pages stop blocking."""
     if user_of(request) is None:
         return JSONResponse({"error": "login"}, status_code=401)
     wait = _key_wait()
     if wait is None:
         return JSONResponse({"waiting": False})
     deploystatus.forget_keys()
-    keys = await deploystatus.keys(settings, _ui_keys(), None)
+    box = await box_status(settings.box_url)
+    manifest = box.get("manifest") or {}
+    keys = await deploystatus.keys(settings, _ui_keys(), manifest.get("parties"))
     info = keys["parties"].get(wait["party"]) or {}
-    trusted = info.get("production") == wait["key"]
-    settled = not info.get("busy") and (trusted or info.get("tone") == "bad")
+    on_production = info.get("production") == wait["key"]
+    # A box that is configured but not answering is most likely restarting with the new
+    # image: keep waiting (KEY_WAIT_MAX caps it) rather than declare the key trusted.
+    in_box = info.get("box") == wait["key"] if box.get("configured") else True
+    trusted = on_production and in_box
+    settled = trusted or (not info.get("busy") and info.get("tone") == "bad")
     if settled:
         _forget_key()
     label = info.get("label")
     if not settled and not info.get("busy"):
         label = "waiting for GitHub to show the pull request"
+    if not settled and on_production and box.get("configured") and not manifest:
+        label = "trusted on production · the box is restarting with the new key"
     return JSONResponse(
         {"waiting": not settled, "party": wait["party"], "label": label, "tone": info.get("tone")}
     )

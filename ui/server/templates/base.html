@@ -77,9 +77,9 @@
 {% if key_wait %}
 <script>
   // A public key submission is in flight: block this page (clicks and keyboard), ask the
-  // server every few seconds where the pull request stands, show that as progress, and
-  // reload once production trusts the key or the check rejected it. The server stops
-  // waiting after five minutes.
+  // server every few seconds where the pull request and then the box release stand, show
+  // that as progress, and reload once the box trusts the key or the check rejected it. The
+  // server stops waiting after thirty minutes.
   (function () {
     var busy = document.getElementById("busy"), text = document.getElementById("busy-text");
     if (!busy || !text) return;
