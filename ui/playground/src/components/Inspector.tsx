@@ -1,8 +1,7 @@
-import { type Dispatch, useMemo } from "react";
-import { LOG_SOURCES, selectRecords, sourceAgents } from "../plan/mockLogs";
+import type { Dispatch } from "react";
 import { connect, deleteNodes, disconnect, renameInput, renameNode, renameOutput, updateNode } from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
-import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportJsonSchema, reportSource } from "../plan/report";
+import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
 import { describeNode } from "../plan/shape";
 import {
   type Classifier,
@@ -21,8 +20,8 @@ import {
 } from "../plan/types";
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
-import { Advanced, CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
-import { MODEL_OPTIONS, NODE_META } from "./nodeMeta";
+import { CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
+import { NODE_META } from "./nodeMeta";
 import { TypeBadge } from "./PlanNodeView";
 
 interface Props {
@@ -210,16 +209,17 @@ function PlanPanel({
   );
 }
 
+/** Run Python and Run LLM name their inputs (the names are the arguments); other blocks are wired on the diagram. */
 function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }) {
   const rule = INPUT_RULES[node.type];
-  if (rule.kind === "none") return null;
+  if (rule.kind !== "dynamic") return null;
   // Outputs this node could read without a cycle or a type mismatch.
   const candidates = plan.nodes
     .map((s) => ({ s, out: outputPort(s) }))
     .filter(
       ({ s, out }) => out && s.id !== node.id && accepts(node.type, out.type) && !wouldCycle(plan, s.id, node.id),
     );
-  const names = rule.kind === "fixed" ? rule.ports : Object.keys(node.inputs);
+  const names = Object.keys(node.inputs);
   return (
     <div className="f">
       <span className="f-label">Inputs</span>
@@ -228,15 +228,11 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
           {names.map((name) => (
             <tr key={name}>
               <td>
-                {rule.kind === "dynamic" ? (
-                  <CommitInput
-                    className="mono"
-                    value={name}
-                    onCommit={(v) => op(renameInput(plan, node.id, name, v))}
-                  />
-                ) : (
-                  <span className="mono">{name}</span>
-                )}
+                <CommitInput
+                  className="mono"
+                  value={name}
+                  onCommit={(v) => op(renameInput(plan, node.id, name, v))}
+                />
               </td>
               <td className="io-arrow">←</td>
               <td>
@@ -265,22 +261,20 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
                   </span>
                 )}
               </td>
-              {rule.kind === "dynamic" && (
-                <td>
-                  <button
-                    className="x"
-                    title="Remove input"
-                    onClick={() => op({ ok: true, plan: disconnect(plan, node.id, name) })}
-                  >
-                    ×
-                  </button>
-                </td>
-              )}
+              <td>
+                <button
+                  className="x"
+                  title="Remove input"
+                  onClick={() => op({ ok: true, plan: disconnect(plan, node.id, name) })}
+                >
+                  ×
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
-      {rule.kind === "dynamic" && candidates.length > 0 && (
+      {candidates.length > 0 && (
         <select
           className="add-input"
           value=""
@@ -300,59 +294,35 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
   );
 }
 
-function ModelField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <Field label="Model" hint="Mock list; the box pins one model per plan.">
-      <input list="models" className="mono" value={value} onChange={(e) => onChange(e.target.value)} />
-      <datalist id="models">
-        {MODEL_OPTIONS.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
-    </Field>
-  );
-}
-
 function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => void }) {
   const c = node.config;
   const cfg = (patch: Partial<InputLogs["config"]>) => set({ ...node, config: { ...c, ...patch } });
-  const agents = sourceAgents(c.source);
-  const records = useMemo(() => selectRecords(node), [node]);
   return (
     <>
-      <Field label="Log source">
-        <select
-          value={c.source}
-          onChange={(e) => cfg({ source: e.target.value, input_scope: { ...c.input_scope, agents: [] } })}
-        >
-          {!LOG_SOURCES[c.source] && <option value={c.source}>{c.source} (unknown)</option>}
-          {Object.entries(LOG_SOURCES).map(([k, s]) => (
-            <option key={k} value={k}>
-              {s.label}
-            </option>
-          ))}
-        </select>
+      <Field label="Agents (one per line, empty = all)" hint="The agent ids whose logs this plan may read.">
+        <LinesInput
+          value={c.input_scope.agents}
+          onChange={(agents) => cfg({ input_scope: { ...c.input_scope, agents } })}
+        />
       </Field>
       <div className="f">
-        <span className="f-label">Agents (none ticked = all)</span>
+        <span className="f-label">Record kinds</span>
         <div className="checks">
-          {agents.map((a) => (
-            <label key={a}>
+          {RECORD_KINDS.map((k) => (
+            <label key={k}>
               <input
                 type="checkbox"
-                checked={c.input_scope.agents.includes(a)}
+                checked={c.filter.kinds.includes(k)}
                 onChange={(e) =>
                   cfg({
-                    input_scope: {
-                      ...c.input_scope,
-                      agents: e.target.checked
-                        ? [...c.input_scope.agents, a]
-                        : c.input_scope.agents.filter((x) => x !== a),
+                    filter: {
+                      ...c.filter,
+                      kinds: RECORD_KINDS.filter((x) => (x === k ? e.target.checked : c.filter.kinds.includes(x))),
                     },
                   })
                 }
               />
-              {a}
+              {k}
             </label>
           ))}
         </div>
@@ -360,77 +330,23 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
       <Field label="Keywords (one per line, empty = all)">
         <LinesInput value={c.filter.keywords} onChange={(keywords) => cfg({ filter: { ...c.filter, keywords } })} />
       </Field>
-      <Advanced>
-        <div className="row2">
-          <Field label="Window start">
-            <input
-              className="mono"
-              placeholder="2026-10-01T00:00:00Z"
-              value={c.input_scope.window_start ?? ""}
-              onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_start: e.target.value || undefined } })}
-            />
-          </Field>
-          <Field label="Window end">
-            <input
-              className="mono"
-              placeholder="(open)"
-              value={c.input_scope.window_end ?? ""}
-              onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_end: e.target.value || undefined } })}
-            />
-          </Field>
-        </div>
-        <div className="f">
-          <span className="f-label">Record kinds</span>
-          <div className="checks">
-            {RECORD_KINDS.map((k) => (
-              <label key={k}>
-                <input
-                  type="checkbox"
-                  checked={c.filter.kinds.includes(k)}
-                  onChange={(e) =>
-                    cfg({
-                      filter: {
-                        ...c.filter,
-                        kinds: RECORD_KINDS.filter((x) => (x === k ? e.target.checked : c.filter.kinds.includes(x))),
-                      },
-                    })
-                  }
-                />
-                {k}
-              </label>
-            ))}
-          </div>
-        </div>
-        <Field label="Max records">
-          <NumberInput value={c.max_records} min={1} onChange={(max_records) => cfg({ max_records })} />
+      <div className="row2">
+        <Field label="Window start">
+          <input
+            className="mono"
+            placeholder="2026-10-01T00:00:00Z"
+            value={c.input_scope.window_start ?? ""}
+            onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_start: e.target.value || undefined } })}
+          />
         </Field>
-      </Advanced>
-      <div className="f">
-        <span className="f-label">Preview · {records.length} synthetic records</span>
-        <div className="rec-preview">
-          <table>
-            <thead>
-              <tr>
-                <th>id</th>
-                <th>agent / session</th>
-                <th>kind</th>
-                <th>content</th>
-              </tr>
-            </thead>
-            <tbody>
-              {records.slice(0, 40).map((r) => (
-                <tr key={r.id}>
-                  <td className="mono">{r.id}</td>
-                  <td className="mono">
-                    {r.agent_id}/{r.session_id}
-                  </td>
-                  <td>{r.kind}</td>
-                  <td>{r.content}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Field label="Window end">
+          <input
+            className="mono"
+            placeholder="(open)"
+            value={c.input_scope.window_end ?? ""}
+            onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_end: e.target.value || undefined } })}
+          />
+        </Field>
       </div>
     </>
   );
@@ -508,49 +424,6 @@ function ClassifierForm({ node, set }: { node: Classifier; set: (n: PlanNode) =>
           )}
         </div>
       </Field>
-      <Advanced>
-        <ModelField value={c.model.id} onChange={(id) => cfg({ model: { ...c.model, id } })} />
-        <div className="row2">
-          <Field label="Classify each">
-            <select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as "session" | "record" })}>
-              <option value="session">session</option>
-              <option value="record">record</option>
-            </select>
-          </Field>
-          <Field label="Window (records/call)">
-            <NumberInput value={c.window} min={1} onChange={(window) => cfg({ window })} />
-          </Field>
-        </div>
-        <Field label="Output contract">
-          <div className="checks">
-            <label>
-              <input type="checkbox" checked disabled /> label
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={c.output_contract.score}
-                onChange={(e) => cfg({ output_contract: { ...c.output_contract, score: e.target.checked } })}
-              />{" "}
-              score
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={c.output_contract.evidence_ids}
-                onChange={(e) => cfg({ output_contract: { ...c.output_contract, evidence_ids: e.target.checked } })}
-              />{" "}
-              evidence_ids
-            </label>
-          </div>
-        </Field>
-        <Field label="Positive examples" hint="One per line: should get a flagged label.">
-          <LinesInput value={c.positive_examples} onChange={(positive_examples) => cfg({ positive_examples })} />
-        </Field>
-        <Field label="Negative examples" hint="One per line: should not be flagged.">
-          <LinesInput value={c.negative_examples} onChange={(negative_examples) => cfg({ negative_examples })} />
-        </Field>
-      </Advanced>
     </>
   );
 }
@@ -702,27 +575,6 @@ function RunLlmForm({ plan, node, set, op }: { plan: Plan; node: RunLlm; set: (n
         />
       </Field>
       <OutputEditor plan={plan} node={node} op={op} set={set} />
-      <Advanced>
-        <ModelField value={c.model.id} onChange={(id) => cfg({ model: { ...c.model, id } })} />
-        <div className="row2">
-          <Field label="Temperature">
-            <NumberInput
-              value={c.model.temperature}
-              min={0}
-              max={2}
-              step={0.1}
-              onChange={(temperature) => cfg({ model: { ...c.model, temperature } })}
-            />
-          </Field>
-          <Field label="Max output tokens">
-            <NumberInput
-              value={c.model.max_output_tokens}
-              min={1}
-              onChange={(max_output_tokens) => cfg({ model: { ...c.model, max_output_tokens } })}
-            />
-          </Field>
-        </div>
-      </Advanced>
     </>
   );
 }
@@ -825,39 +677,13 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
           + field
         </button>
       </div>
-      <Advanced>
-        <div className="f">
-          <span className="f-label">Release policy</span>
-          <label className="inline-check">
-            <input
-              type="checkbox"
-              checked={c.privacy.allow_free_text}
-              onChange={(e) => cfg({ privacy: { ...c.privacy, allow_free_text: e.target.checked } })}
-            />
-            Allow free-text (string) fields
-          </label>
-          <div className="row2">
-            <Field label="Min count" hint="Smaller counts are released as 0.">
-              <NumberInput
-                value={c.privacy.min_count}
-                min={1}
-                onChange={(min_count) => cfg({ privacy: { ...c.privacy, min_count } })}
-              />
-            </Field>
-            <Field label="Max result bytes">
-              <NumberInput
-                value={c.privacy.max_result_bytes}
-                min={1}
-                onChange={(max_result_bytes) => cfg({ privacy: { ...c.privacy, max_result_bytes } })}
-              />
-            </Field>
-          </div>
-        </div>
-        <details className="f">
-          <summary className="f-label">Output schema (JSON Schema)</summary>
-          <pre className="contract">{JSON.stringify(reportJsonSchema(node), null, 2)}</pre>
-        </details>
-      </Advanced>
+      <Field label="Min count" hint="A count smaller than this is released as 0, so one person's session cannot be singled out.">
+        <NumberInput
+          value={c.privacy.min_count}
+          min={1}
+          onChange={(min_count) => cfg({ privacy: { ...c.privacy, min_count } })}
+        />
+      </Field>
     </>
   );
 }

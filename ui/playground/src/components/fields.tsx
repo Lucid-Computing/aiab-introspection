@@ -117,16 +117,6 @@ export function LinesInput({
   );
 }
 
-/** Settings most plans leave alone, folded away. */
-export function Advanced({ children }: { children: ReactNode }) {
-  return (
-    <details className="adv">
-      <summary>Advanced</summary>
-      <div className="adv-body">{children}</div>
-    </details>
-  );
-}
-
 const pythonExt = [python()];
 
 export function PythonEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
