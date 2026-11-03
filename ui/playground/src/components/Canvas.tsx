@@ -79,16 +79,18 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
     return () => clearTimeout(t);
   }, [state.fitSeq, flow]);
 
+  // Selection is ours, and it happens on a click only (onNodeClick): pressing a block to
+  // drag it must not open its settings. React Flow's own select changes are dropped.
   const onNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
-      setNodes((ns) => applyNodeChanges(changes, ns));
-      const removed = changes.filter((c) => c.type === "remove").map((c) => c.id);
+      const kept = changes.filter((c) => c.type !== "select");
+      setNodes((ns) => applyNodeChanges(kept, ns));
+      const removed = kept.filter((c) => c.type === "remove").map((c) => c.id);
       if (removed.length) dispatch({ type: "update", f: (p) => deleteNodes(p, removed) });
       const moved: State["layout"] = {};
-      for (const c of changes)
+      for (const c of kept)
         if (c.type === "position" && c.position && c.dragging === false) moved[c.id] = c.position;
       if (Object.keys(moved).length) dispatch({ type: "moveNodes", layout: moved });
-      for (const c of changes) if (c.type === "select" && c.selected) dispatch({ type: "select", id: c.id });
     },
     [dispatch],
   );
@@ -133,6 +135,8 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         isValidConnection={(c) => c.source !== c.target}
+        onNodeClick={(_, n) => dispatch({ type: "select", id: n.id })}
+        selectNodesOnDrag={false}
         onPaneClick={() => dispatch({ type: "select", id: null })}
         deleteKeyCode={["Backspace", "Delete"]}
         fitView
