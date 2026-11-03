@@ -1,10 +1,11 @@
 """OpenID Connect login: the browser goes to the provider and comes back with a code; the
 server exchanges it, checks the ID token and issues its own cookie; an optional provider group gates
-access and parties.json names the party."""
+access; admins.json says who is the lab, everyone else is the auditor."""
 
 import json
 import time
 from dataclasses import replace
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -96,14 +97,13 @@ class FakeOkta:
 def okta(keypair, monkeypatch, tmp_path):
     private, jwk = keypair
     fake = FakeOkta(private, jwk)
-    parties = tmp_path / "parties.json"
-    auth.save_party(parties, "Teddy@lucid.example", "lab")  # case does not matter
-    auth.save_party(parties, "caleb@auditor.example", "auditor")
+    admins = tmp_path / "admins.json"
+    auth.save_admin(admins, "Teddy@lucid.example", True)  # case does not matter
     login = auth.OidcLogin(
         ISSUER,
         CLIENT_ID,
         CLIENT_SECRET,
-        parties_file=parties,
+        admins_file=admins,
         group="aiab",  # the Okta shape: a group in the ID token, fetched with its scope
         scopes="openid profile email groups",
         transport=httpx.MockTransport(fake),
@@ -117,7 +117,7 @@ def okta(keypair, monkeypatch, tmp_path):
             oidc_issuer=ISSUER,
             oidc_client_id=CLIENT_ID,
             oidc_client_secret=CLIENT_SECRET,
-            parties_file=parties,
+            admins_file=admins,
             accounts_file=tmp_path / "accounts.json",
         ),
     )
@@ -125,7 +125,7 @@ def okta(keypair, monkeypatch, tmp_path):
         web.settings.accounts_file,
         auth.Account("demo", "auditor", "Demo", auth.hash_password("demo-pass-1234")),
     )
-    fake.parties = parties
+    fake.admins = admins
     return fake
 
 
@@ -167,7 +167,7 @@ def test_the_whole_flow_issues_the_ui_cookie_with_the_party_from_the_group(okta,
     assert asked["code_verifier"] and asked["auth"].startswith("Basic ")
 
 
-def test_the_parties_file_names_the_auditor(okta, client):
+def test_anyone_not_on_the_admin_list_is_the_auditor(okta, client):
     okta.claims = {"preferred_username": "caleb@auditor.example", "email": "caleb@auditor.example"}
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
@@ -175,7 +175,7 @@ def test_the_parties_file_names_the_auditor(okta, client):
     assert web.signer.read(response.cookies[web.COOKIE])["username"] == "caleb"
 
 
-def test_not_in_the_group_or_not_in_the_parties_file_is_refused(okta, client):
+def test_not_in_the_group_is_refused_and_a_stranger_is_the_auditor(okta, client):
     okta.claims = {"groups": ["Everyone"]}
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
@@ -187,16 +187,16 @@ def test_not_in_the_group_or_not_in_the_parties_file_is_refused(okta, client):
     }
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
-    assert response.status_code == 200 and web.COOKIE not in response.cookies
-    assert "party stranger@lucid.example lab|auditor" in response.text
-    # The operator adds them; the next login works without a restart.
-    auth.save_party(okta.parties, "stranger@lucid.example", "lab")
+    assert response.status_code == 303
+    assert web.signer.read(response.cookies[web.COOKIE])["party"] == "auditor"
+    # The operator makes them an admin; the next login is the lab without a restart.
+    auth.save_admin(okta.admins, "stranger@lucid.example", True)
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
-    assert response.status_code == 303
+    assert web.signer.read(response.cookies[web.COOKIE])["party"] == "lab"
 
 
-def test_no_group_setting_means_the_parties_file_alone_gates(okta, client):
+def test_no_group_setting_means_anyone_signed_in_gets_in(okta, client):
     """The WorkOS shape: no groups claim in the ID token at all, and no groups scope."""
     web.oidc.group = None
     web.oidc.scopes = "openid profile email"
@@ -205,10 +205,11 @@ def test_no_group_setting_means_the_parties_file_alone_gates(okta, client):
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
     assert response.status_code == 303
     assert web.signer.read(response.cookies[web.COOKIE])["party"] == "lab"
-    auth.save_party(web.settings.parties_file, "teddy@lucid.example", None)  # dropped
+    auth.save_admin(web.settings.admins_file, "teddy@lucid.example", False)  # demoted
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
-    assert response.status_code == 200 and "has no party yet" in response.text
+    assert response.status_code == 303
+    assert web.signer.read(response.cookies[web.COOKIE])["party"] == "auditor"
 
 
 def test_defaults_are_the_workos_shape(monkeypatch):
@@ -219,20 +220,21 @@ def test_defaults_are_the_workos_shape(monkeypatch):
     assert settings.oidc_provider_name == "WorkOS"
 
 
-def test_party_file_and_cli(tmp_path, monkeypatch):
-    path = tmp_path / "parties.json"
-    auth.save_party(path, "A@x.example", "lab")
-    auth.save_party(path, "b@x.example", "lab")
-    auth.save_party(path, "b@x.example", "auditor")  # moves, never in both
-    assert auth.load_parties(path) == {"a@x.example": "lab", "b@x.example": "auditor"}
-    assert json.loads(path.read_text()) == {"lab": ["a@x.example"], "auditor": ["b@x.example"]}
-    auth.save_party(path, "a@x.example", None)
-    assert auth.load_parties(path) == {"b@x.example": "auditor"}
-    with pytest.raises(ValueError):
-        auth.save_party(path, "c@x.example", "owner")
-    assert auth.main(["party", "c@x.example", "lab", "--file", str(path)]) == 0
-    assert auth.main(["party", "b@x.example", "none", "--file", str(path)]) == 0
-    assert auth.load_parties(path) == {"c@x.example": "lab"}
+def test_admin_file_and_cli(tmp_path, monkeypatch):
+    path = tmp_path / "admins.json"
+    assert auth.load_admins(path) == set()  # no file yet: nobody is the lab
+    auth.save_admin(path, "B@x.example", True)
+    auth.save_admin(path, "a@x.example", True)
+    auth.save_admin(path, "a@x.example", True)  # twice is once
+    assert json.loads(path.read_text()) == {"admin": ["a@x.example", "b@x.example"]}
+    assert auth.main(["admin", "c@x.example", "--file", str(path)]) == 0
+    assert auth.main(["admin", "b@x.example", "--remove", "--file", str(path)]) == 0
+    assert auth.load_admins(path) == {"a@x.example", "c@x.example"}
+
+
+def test_the_committed_admins_file_is_the_lab():
+    admins = auth.load_admins(Path(__file__).resolve().parents[1] / "admins.json")
+    assert admins == {"jonathan.ng@lucidcomputing.ai", "teddy.chang@lucidcomputing.ai"}
 
 
 def test_wrong_state_missing_cookie_and_provider_errors_are_refused(okta, client):
@@ -305,7 +307,7 @@ def test_discovery_must_name_the_same_issuer(keypair, tmp_path):
         ISSUER,
         CLIENT_ID,
         CLIENT_SECRET,
-        parties_file=tmp_path / "p.json",
+        admins_file=tmp_path / "a.json",
         transport=httpx.MockTransport(lying),
     )
     with pytest.raises(auth.LoginError, match="calls itself"):

@@ -7,12 +7,13 @@ signs them in through WorkOS AuthKit with OpenID Connect when `OIDC_ISSUER`,
 WorkOS, for demo users the operator makes on the UI side and as a way in when WorkOS is
 down. This is the plan for switching a deployment over. There are two accounts to move
 (the lab's and the auditor's). The WorkOS side is already done for the dev service; what
-is left is the parties file, three settings on Render (set), and a deploy.
+is left is the admin list, three settings on Render (set), and a deploy.
 
 What stays the same: the party model (`lab` / `auditor`), the `aiab_ui` session cookie and
 every route behind it, the change-log attribution by username, the Sign and key screens.
 What changes: real people's passwords are checked by WorkOS, their party is stored in
-`ui/parties.json` in the repository, and the login page shows both ways in. Code:
+`ui/admins.json` in the repository (admins are the lab, everyone else the auditor), and the
+login page shows both ways in. Code:
 `ui/server/auth.py` (`OidcLogin`, `Stamp`), `ui/server/app.py` (`/login`, `/login/start`,
 `/login/callback`, `/logout`), `ui/server/templates/login.html`.
 
@@ -48,8 +49,8 @@ answer with that issuer.
 
 Who may sign in is a WorkOS matter: anyone with a user in the environment. The Staging
 environment currently **allows self sign-up** (*Authentication › Sign-up*), so anyone
-can make a WorkOS account there; they still cannot use the UI without a `parties.json`
-entry. Turn sign-ups off if that is unwanted. Email verification is on: a new user's
+can make a WorkOS account there and will get in as the auditor. Turn sign-ups off if that
+is unwanted. Email verification is on: a new user's
 first login asks for a code sent to their address.
 
 Demo accounts, two ways. On the UI side, without touching WorkOS: `make account
@@ -57,7 +58,8 @@ NAME=demo PARTY=auditor` in the service's shell (or `UI_BOOTSTRAP_ACCOUNTS`, app
 start for names not yet in the file)
 makes a local password account; it logs in through the password form under the WorkOS
 button. In WorkOS: *Users › Create user* with an email and a password (or the `createUser`
-operation), then add the email to `parties.json`. One such user exists already:
+operation); they are the auditor unless the email is in `admins.json`. One such user
+exists already:
 `jonathan.ng+aiab-demo@lucidcomputing.ai`, auditor, made for the end-to-end test.
 
 Production: only Staging exists in the AIAB project. A production environment is a
@@ -71,11 +73,10 @@ service points at the Staging application for now.
    to the values above (done 2026-11-03). `UI_BOOTSTRAP_ACCOUNTS` holds the demo
    accounts `lab@lab.com` (lab) and `auditor@auditor.com` (auditor). `OIDC_GROUP` and `OIDC_SCOPES` stay unset: WorkOS has no groups
    claim, and the defaults fit it.
-2. Say who is which party in `ui/parties.json`, which is committed with the code and
-   shipped in the image: `make party EMAIL=teddy@lucid.example PARTY=lab` for each
-   person, then commit. The email is the one WorkOS puts in the ID token, case does not
-   matter. A person signed in to WorkOS but not in the file is refused with the exact
-   command to run. Changing the file means a commit and a deploy.
+2. Say who is the lab in `ui/admins.json`, which is committed with the code and shipped
+   in the image: `make admin EMAIL=teddy@lucid.example` for each person, then commit.
+   Everyone else WorkOS signs in is the auditor. The email is the one WorkOS puts in the
+   ID token, case does not matter. Changing the file means a commit and a deploy.
 3. Deploy this change (the dev service is image-backed: merge to `dev`, the UI image
    workflow builds and deploys it; or trigger *Build agreement UI image* by hand).
 4. Check the start log says `login: OpenID Connect (https://….authkit.app) and local
@@ -119,12 +120,12 @@ the Clerk dashboard once this change is merged.
 
 - **WorkOS authenticates; the UI's cookie authorises.** The server completes one OpenID
   Connect login and then trusts its own 12-hour cookie. It does not call WorkOS on every
-  request. Consequence: removing a person from `parties.json`, or deleting them in
+  request. Consequence: taking a person off `admins.json`, or deleting them in
   WorkOS, locks them out when their cookie expires, within 12 hours. If that is ever too
   slow, shorten `SESSION_TTL_SECONDS` or re-check on the write routes.
-- **`parties.json` is the access list.** WorkOS says who a person is; the file says
-  whether they may use the UI and on which side. The UI's operator controls it without
-  touching WorkOS. A provider that puts groups in the ID token (Okta) can add a second
+- **`admins.json` is the party split.** WorkOS says who a person is; the file says
+  whether they are the lab (listed) or the auditor (everyone else). Anyone WorkOS signs
+  in gets in. The UI's operator controls the split without touching WorkOS. A provider that puts groups in the ID token (Okta) can add a second
   gate with `OIDC_GROUP`; WorkOS cannot, its JWT templates only reach access tokens.
 - **The flow.** Authorization code with PKCE. `/login/start` makes a state, a nonce and a
   PKCE verifier, seals them in a ten-minute signed cookie, and sends the browser to the
@@ -161,4 +162,4 @@ integration (redirect `<ui>/login/callback`, sign-out `<ui>/login`, assigned to 
 group, *Sign On › Groups claim filter*: `groups` equals `aiab`); the org URL is the
 issuer. On the UI: `OIDC_ISSUER=https://<org>.okta.com`, the client ID and secret,
 `OIDC_GROUP=aiab` and `OIDC_SCOPES="openid profile email groups"`. Then only members of
-the group pass, before `parties.json` is consulted.
+the group pass, before `admins.json` is consulted.

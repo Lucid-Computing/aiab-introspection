@@ -6,8 +6,8 @@ sends the browser to the provider's authorization endpoint (authorization code f
 PKCE, state and nonce kept in a short-lived signed cookie). ``GET /login/callback``
 exchanges the code, checks the ID token against the provider's key set, and the app
 issues the same ``SessionSigner`` cookie as before, carrying the party. Which party they
-are is the UI's own business: ``parties.json`` maps emails to ``lab`` or ``auditor``, and
-``python -m server.auth party EMAIL PARTY`` edits it. Not in the file, cannot log in. A
+are is the UI's own business: the emails in ``admins.json`` are the lab, everyone else the
+provider signs in is the auditor; ``python -m server.auth admin EMAIL`` edits the list. A
 provider group can gate access as well (``group=``, read from the ID token's groups claim;
 Okta puts one there, WorkOS does not).
 
@@ -184,29 +184,21 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def load_parties(path: Path) -> dict[str, str]:
-    """parties.json: {"lab": [emails], "auditor": [emails]} as email -> party, lower-cased."""
+def load_admins(path: Path) -> set[str]:
+    """admins.json: {"admin": [emails]}, lower-cased. Admins are the lab; anyone else the
+    provider signs in is the auditor."""
     if not path.is_file():
-        return {}
+        return set()
     data = json.loads(path.read_text(encoding="utf-8"))
-    return {
-        email.strip().lower(): party
-        for party in PARTIES
-        for email in data.get(party, [])
-        if email.strip()
-    }
+    return {email.strip().lower() for email in data.get("admin", []) if email.strip()}
 
 
-def save_party(path: Path, email: str, party: str | None) -> None:
-    """Put this email in one party's list (and no other), or in none when party is None."""
-    if party is not None and party not in PARTIES:
-        raise ValueError(f"party must be one of {PARTIES}")
+def save_admin(path: Path, email: str, admin: bool) -> None:
+    """Add this email to the admin list, or remove it."""
     email = email.strip().lower()
-    current = load_parties(path)
-    current.pop(email, None)
-    if party:
-        current[email] = party
-    payload = {p: sorted(e for e, q in current.items() if q == p) for p in PARTIES}
+    current = load_admins(path)
+    (current.add if admin else current.discard)(email)
+    payload = {"admin": sorted(current)}
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -215,8 +207,8 @@ def save_party(path: Path, email: str, party: str | None) -> None:
 
 class OidcLogin:
     """The authorization code flow against one OpenID Connect provider. ``group`` is the
-    provider group that may use the UI (empty: anyone the provider signs in); the party
-    comes from ``parties_file``. ``transport`` is for tests."""
+    provider group that may use the UI (empty: anyone the provider signs in); emails in
+    ``admins_file`` are the lab, everyone else the auditor. ``transport`` is for tests."""
 
     def __init__(
         self,
@@ -224,7 +216,7 @@ class OidcLogin:
         client_id: str,
         client_secret: str,
         *,
-        parties_file: Path,
+        admins_file: Path,
         group: str | None = None,
         groups_claim: str = "groups",
         scopes: str = "openid profile email",
@@ -234,7 +226,7 @@ class OidcLogin:
         self.issuer = issuer.rstrip("/")
         self.client_id = client_id
         self._secret = client_secret
-        self.parties_file = parties_file
+        self.admins_file = admins_file
         self.group = group or None
         self.groups_claim = groups_claim
         self.scopes = scopes
@@ -357,8 +349,8 @@ class OidcLogin:
         return claims
 
     def account(self, claims: dict[str, Any]) -> Account:
-        """The ID token's holder as an Account: in the group (when one is set), with a party
-        in parties.json under their email; the username is the login's local part."""
+        """The ID token's holder as an Account: in the group (when one is set); lab when the
+        email is in admins.json, auditor otherwise; the username is the login's local part."""
         login = claims.get("preferred_username") or claims.get("email") or claims["sub"]
         email = (claims.get("email") or login).strip().lower()
         if self.group:
@@ -370,12 +362,7 @@ class OidcLogin:
                     f"{login} is signed in but not in the {self.group} group. Ask the"
                     " identity provider's administrator to add you."
                 )
-        party = load_parties(self.parties_file).get(email)
-        if party is None:
-            raise LoginError(
-                f"{login} is signed in but has no party yet. Ask the operator to run"
-                f" `python -m server.auth party {email} lab|auditor`."
-            )
+        party = "lab" if email in load_admins(self.admins_file) else "auditor"
         username = login.split("@", 1)[0] if "@" in login else login
         name = claims.get("name") or " ".join(
             filter(None, [claims.get("given_name"), claims.get("family_name")])
@@ -425,21 +412,20 @@ def main(argv: list[str] | None = None) -> int:
         help='accounts from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..." not yet in the file',
     )
     boot.add_argument("--file", type=Path, default=None)
-    who = sub.add_parser(
-        "party", help="OpenID Connect login: which party this email is (writes parties.json)"
-    )
+    who = sub.add_parser("admin", help="make this email an admin (the lab); writes admins.json")
     who.add_argument("email")
-    who.add_argument("party", choices=(*PARTIES, "none"), help="none removes the email")
-    who.add_argument("--file", type=Path, default=None, help="parties file")
+    who.add_argument("--remove", action="store_true", help="take the email off the list")
+    who.add_argument("--file", type=Path, default=None, help="admins file")
     args = parser.parse_args(argv)
 
     from server.config import load_settings  # local import keeps the CLI free of FastAPI
 
     settings = load_settings()
-    if args.command == "party":
-        path = args.file or settings.parties_file
-        save_party(path, args.email, None if args.party == "none" else args.party)
-        print(f"{args.email.strip().lower()}: {args.party} ({path})")
+    if args.command == "admin":
+        path = args.file or settings.admins_file
+        save_admin(path, args.email, not args.remove)
+        role = "auditor" if args.remove else "admin (lab)"
+        print(f"{args.email.strip().lower()}: {role} ({path})")
         return 0
     path = args.file or settings.accounts_file
     if args.command == "bootstrap":
