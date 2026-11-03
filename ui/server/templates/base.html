@@ -84,7 +84,8 @@
     var busy = document.getElementById("busy"), text = document.getElementById("busy-text");
     if (!busy || !text) return;
     var party = {{ key_wait.party | tojson }}, waiting = true;
-    text.textContent = "Public key of the " + party + " · waiting for the pull request";
+    var note = " · this usually takes about 3 minutes";
+    text.textContent = "Public key of the " + party + " · waiting for the pull request" + note;
     busy.hidden = false;
     document.querySelectorAll("nav, main").forEach(function (el) { el.setAttribute("inert", ""); });
     window.addEventListener("pageshow", function () { if (waiting) busy.hidden = false; });
@@ -93,7 +94,7 @@
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (!d.waiting) { waiting = false; window.location.reload(); return; }
-          if (d.label) text.textContent = "Public key of the " + party + " · " + d.label;
+          if (d.label) text.textContent = "Public key of the " + party + " · " + d.label + note;
           setTimeout(poll, 4000);
         })
         .catch(function () { setTimeout(poll, 4000); });
