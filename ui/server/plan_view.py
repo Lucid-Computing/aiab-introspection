@@ -7,6 +7,7 @@ box's loader on the candidate first, so nothing the box would refuse is ever wri
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shutil
@@ -14,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from aiab.audit.protocol import AuditError, canonical, decode, verify_signature
+from aiab.audit.protocol import AuditError, canonical, decode, sign_bytes, verify_signature
 from aiab.baked.bundle import PLAN_FILE, bundle_files, file_digest, load_bundle, restrictions
 from aiab.baked.plan_ir import PLAN_VERSION, PlanError, output_port
 
@@ -178,7 +179,13 @@ def load_plan_view(settings: Settings) -> PlanView:
                 "detail": "does not verify for the current digest (stale edit or wrong key)",
             }
         signatures[role] = {"present": True, "signature": text, **entry}
-    frozen = any(s["status"] == "ok" for s in signatures.values())
+    # With a lab key on the server, the lab signature is the server's own and never
+    # freezes the plan: the server signs the next version again. Only the auditor's does.
+    auto = lab_auto_key(settings) is not None
+    signatures["lab"]["auto"] = auto and signatures["lab"]["status"] == "ok"
+    frozen = any(
+        s["status"] == "ok" and not (auto and role == "lab") for role, s in signatures.items()
+    )
     stale = [r for r, s in signatures.items() if s["status"] == "invalid"]
     state, badge = agreement_state(signatures, frozen, issue)
     where = ISSUE_WHERE.get(issue, issue) if issue else None
@@ -330,10 +337,10 @@ def save_plan(
         return None, issues
     path = settings.plan_dir / PLAN_FILE
     before = path.read_bytes() if path.is_file() else b""
-    if before == raw:
-        return file_digest({PLAN_FILE: raw}), []
-    path.write_bytes(raw)
-    record_change(settings, actor, "plan", "plan", _short_diff(pretty(before), pretty(raw)))
+    if before != raw:
+        path.write_bytes(raw)
+        record_change(settings, actor, "plan", "plan", _short_diff(pretty(before), pretty(raw)))
+    ensure_lab_signature(settings, actor)
     return file_digest({PLAN_FILE: raw}), []
 
 
@@ -385,6 +392,81 @@ def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -
             settings, actor, "signature", "signatures", f"removed {removed} signature file(s)"
         )
     return removed
+
+
+AUTO_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for auto-signing
+
+
+def lab_auto_key(settings: Settings) -> Any | None:
+    """The private key the server signs with as the lab, or None when AIAB_LAB_KEY is unset
+    or not a key."""
+    if not settings.lab_signing_key:
+        return None
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    try:
+        return Ed25519PrivateKey.from_private_bytes(
+            base64.b64decode(settings.lab_signing_key, validate=True)
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def lab_auto_public_key(settings: Settings) -> str | None:
+    key = lab_auto_key(settings)
+    if key is None:
+        return None
+    return base64.b64encode(key.public_key().public_bytes_raw()).decode()
+
+
+def lab_auto_problem(settings: Settings) -> str | None:
+    """Why the server cannot sign as the lab right now: no key, a malformed key, or a key
+    production does not trust. None when it can."""
+    if not settings.lab_signing_key:
+        return None
+    public = lab_auto_public_key(settings)
+    if public is None:
+        return "AIAB_LAB_KEY is not a base64 Ed25519 private key"
+    trusted = load_trust(settings).get("lab_key")
+    if public != trusted:
+        return f"the server's lab key ({public}) is not the lab key production trusts"
+    return None
+
+
+def ensure_lab_signature(settings: Settings, actor: dict[str, str] | None = None) -> bool:
+    """Sign the current version as the lab with the server's key, unless there is no key, it
+    is not the trusted one, or a valid lab signature is already there. True when it signed."""
+    key = lab_auto_key(settings)
+    if key is None or lab_auto_problem(settings) is not None:
+        return False
+    plan_digest = file_digest(bundle_files(settings.plan_dir))
+    trust = load_trust(settings)
+    target = settings.plan_dir / "signatures" / "lab.sig"
+    if target.is_file():
+        try:
+            verify_signature(
+                trust["lab_key"],
+                target.read_text(encoding="utf-8").strip(),
+                "plan-bundle",
+                {"plan_digest": plan_digest},
+            )
+            return False
+        except (AuditError, ValueError, KeyError):
+            pass
+    signature = base64.b64encode(
+        key.sign(sign_bytes("plan-bundle", {"plan_digest": plan_digest}))
+    ).decode()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(signature + "\n", encoding="utf-8")
+    who = f" after a change by {actor['username']}" if actor and actor.get("username") else ""
+    record_change(
+        settings,
+        AUTO_SIGNER,
+        "signature",
+        "signature: lab",
+        f"signed version {plan_digest[7:19]} automatically with the server's lab key{who}",
+    )
+    return True
 
 
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"  # no leading _ or .: those folders are ours
@@ -574,13 +656,9 @@ def new_agreement(
     history = target / HISTORY_FILE
     if history.is_file():
         history.unlink()  # a new agreement starts its own trail
-    record_change(
-        for_agreement(settings, plan_id) or settings,
-        actor,
-        "created",
-        "agreement",
-        "created from the template",
-    )
+    created = for_agreement(settings, plan_id) or settings
+    record_change(created, actor, "created", "agreement", "created from the template")
+    ensure_lab_signature(created, actor)
     return [], plan_id
 
 
