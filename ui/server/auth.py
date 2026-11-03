@@ -12,7 +12,7 @@ provider group can gate access as well (``group=``, read from the ID token's gro
 Okta puts one there, WorkOS does not).
 
 Any OpenID Connect provider with a discovery document works; WorkOS AuthKit is the one this
-runs against, and Okta was tested the same way. Local accounts
+runs against; the test suite also covers the Okta shape (a groups claim). Local accounts
 with hashed passwords in ``accounts.json`` (``python -m server.auth add USERNAME PARTY``)
 work next to it, and alone without the provider settings: demo users the operator makes on
 this side, laptops, and a way in when the provider is down. See docs/OIDC_AUTH_MIGRATION.md.

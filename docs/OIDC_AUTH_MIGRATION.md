@@ -17,7 +17,7 @@ What changes: real people's passwords are checked by WorkOS, their party is stor
 `/login/callback`, `/logout`), `ui/server/templates/login.html`.
 
 The UI speaks plain OpenID Connect. Nothing in it is WorkOS-specific: any provider with a
-discovery document works (Okta was tested the same way, see the appendix), and a second
+discovery document works (the code was written for Okta first; see the appendix), and a second
 company's provider can replace or front WorkOS later with a settings change. The party
 split is the UI's own, so it does not depend on how any provider models groups.
 
@@ -103,8 +103,8 @@ not cover, so keep the list short and known.
 
 Laptops work without WorkOS settings: `make account` and the password form are the local
 default. A developer who wants the real login locally puts the three settings in `ui/.env`
-and runs the UI on port 8097, whose redirect URI is registered (`make serve` uses 8090;
-`uv run uvicorn server.app:app --port 8097`). Tested that way on 2026-11-03: sign-in with
+and runs the UI on port 8097, whose redirect URI is registered (`make serve PORT=8097`;
+the Makefile's default is 8090). Tested that way on 2026-11-03: sign-in with
 the demo user, code exchange with PKCE and `client_secret_basic`, ID token check, cookie,
 Log out.
 
@@ -154,7 +154,8 @@ the Clerk dashboard once this change is merged.
 
 ## Appendix: the same thing on Okta
 
-The code was first written and tested against Okta, and still works there with four
+The code was written for Okta first, and the test suite's simulated provider still has the
+Okta shape (a groups claim); it was never run against a real Okta tenant. It works there with four
 settings instead of three. An Okta admin makes one group (`aiab`) and one OIDC web app
 integration (redirect `<ui>/login/callback`, sign-out `<ui>/login`, assigned to the
 group, *Sign On › Groups claim filter*: `groups` equals `aiab`); the org URL is the
