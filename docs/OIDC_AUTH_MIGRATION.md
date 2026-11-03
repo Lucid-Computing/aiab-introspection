@@ -12,7 +12,7 @@ is left is the parties file, three settings on Render (set), and a deploy.
 What stays the same: the party model (`lab` / `auditor`), the `aiab_ui` session cookie and
 every route behind it, the change-log attribution by username, the Sign and key screens.
 What changes: real people's passwords are checked by WorkOS, their party is stored in
-`parties.json` on the UI's disk, and the login page shows both ways in. Code:
+`ui/parties.json` in the repository, and the login page shows both ways in. Code:
 `ui/server/auth.py` (`OidcLogin`, `Stamp`), `ui/server/app.py` (`/login`, `/login/start`,
 `/login/callback`, `/logout`), `ui/server/templates/login.html`.
 
