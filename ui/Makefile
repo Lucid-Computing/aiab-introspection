@@ -7,8 +7,9 @@ PORT ?= 8090
 sync:
 	uv sync
 
+# With dev keys made, the server signs as the lab by itself (AIAB_LAB_KEY from $(KEYS)/lab.key).
 dev:
-	uv run uvicorn server.app:app --reload --port $(PORT)
+	$(if $(wildcard $(KEYS)/lab.key),AIAB_LAB_KEY=$$(cat $(KEYS)/lab.key),) uv run uvicorn server.app:app --reload --port $(PORT)
 
 # WorkOS login: admins are the lab, everyone else the auditor.   make admin EMAIL=teddy@lucid.example
 # (REMOVE=1 takes them off; writes ui/admins.json, which is committed: commit and deploy)

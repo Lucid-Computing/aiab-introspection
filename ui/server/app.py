@@ -1066,8 +1066,11 @@ async def start_editing(request: Request, aid: str) -> Response:
     if other:
         return back(f"/a/{aid}/plan", err=editing.describe(other) + ". Try again later.")
     removed = pv.delete_signatures(target, user_of(request))
+    # The version is unchanged, so the server's lab signature comes straight back.
+    if pv.ensure_lab_signature(target, user_of(request)):
+        removed -= 1
     saved(user_of(request))
-    note = f" {removed} signature file(s) removed." if removed else ""
+    note = f" {removed} signature file(s) removed." if removed > 0 else ""
     form = await request.form()
     where = str(form.get("next", ""))
     if not where.startswith(f"/a/{aid}/plan"):
@@ -1155,6 +1158,8 @@ async def sign(request: Request, aid: str) -> Response:
         aid=aid,
         keys=keys,
         copy=copy,
+        auto_sign=bool(settings.lab_signing_key),
+        auto_problem=pv.lab_auto_problem(settings),
     )
 
 

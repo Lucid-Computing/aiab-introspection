@@ -39,6 +39,8 @@ services:
         sync: false
       - key: UI_BOOTSTRAP_ACCOUNTS   # local password accounts, "lab@lab.com:lab:<password>,..."; new names added on every start, existing ones untouched
         sync: false
+      - key: AIAB_LAB_KEY       # optional: the lab's private key (base64 raw Ed25519); set, the server signs every plan version as the lab
+        sync: false
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false
       - key: LOGGER_KEY         # optional, for the Runs screen: the demo logger's private key (base64)

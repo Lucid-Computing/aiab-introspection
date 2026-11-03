@@ -8,7 +8,8 @@
 {% if copy and (copy.behind or copy.last_pull.error or copy.error) %}<div class="form-message error"><p style="margin:0">This server's copy of <span class="mono">{{ copy.branch }}</span> is at {{ copy.head }}{% if copy.behind %}, {{ copy.behind }} commit{{ "s" if copy.behind != 1 }} behind GitHub{% endif %}.{% if copy.last_pull.error %} Last catch-up failed: <span class="mono">{{ copy.last_pull.error }}</span>.{% elif copy.error %} <span class="mono">{{ copy.error }}</span>.{% endif %}</p>
 {% if copy.changes %}<p style="margin: var(--space-2) 0 0">Local changes in the copy:{% for line in copy.changes %} <span class="mono">{{ line }}</span>{% endfor %}{% if copy.dirty > copy.changes | length %} …{% endif %}</p>{% endif %}
 <p style="margin: var(--space-3) 0 0"><form method="post" action="/copy/pull" class="inline"><button class="btn btn--ghost btn--sm">Catch up now</button></form>{% if copy.dirty %} <form method="post" action="/copy/reset" class="inline" data-confirm="This moves the copy's local changes into a git stash (nothing is deleted; git stash list shows them) and then catches up with GitHub. Continue?"><button class="btn btn--ghost btn--sm">Set local changes aside and catch up</button></form>{% endif %}</p></div>{% endif %}
-<p class="lead">The digest below is the fingerprint of this version's files. Each party signs that fingerprint with its own private key; the box checks the signature with the public key it holds for that party. The private key is made and kept in your browser and never reaches this server; a key you keep elsewhere works too, with the commands under Other ways to sign.</p>
+<p class="lead">The digest below is the fingerprint of this version's files. Each party signs that fingerprint with its own private key; the box checks the signature with the public key it holds for that party. The auditor's private key is made and kept in the auditor's browser and never reaches this server; a key kept elsewhere works too, with the commands under Other ways to sign.{% if auto_sign %} The lab's key is on this server: it signs every version as the lab by itself, and whoever controls this server can sign as the lab.{% endif %}</p>
+{% if auto_problem %}<p class="form-message error">The server cannot sign as the lab: {{ auto_problem }}. Until that is fixed the lab signs by hand below.</p>{% endif %}
 {% if view %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
 
@@ -39,7 +40,7 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
   {% for party in parties %}{% set s = view.signatures[party] %}
   <div class="card">
     <div class="card-header">{{ party }}
-      <span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{% if s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span>
+      <span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{% if s.auto %}signed this version automatically by the server{% elif s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span>
     </div>
     <div class="card-body">
       <p class="explain keyline"><span class="text-muted">Trusted key for the {{ party }}, on production</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span></p>
@@ -51,7 +52,9 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
       {% endif %}
       {% if s.status == 'invalid' %}<p class="explain">The stored signature was made for a different version of the plan, or with a different key, so it no longer counts. The {{ party }} needs to sign this version.</p>{% endif %}
       {% if s.signature and s.status == 'ok' %}<p class="explain keyline"><span class="text-muted">{{ "Your signature" if user.party == party else "Signature of the " ~ party }}</span> <span class="mono" style="word-break: break-all">{{ s.signature }}</span></p>{% endif %}
-      {% if user.party == party %}
+      {% if s.auto %}
+      <p class="explain">The server holds the lab key and signs each version as soon as it is saved. Nothing to do here.</p>
+      {% elif user.party == party %}
       {% if s.status == 'ok' %}
       <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?">
         <input type="hidden" name="party" value="{{ party }}">
