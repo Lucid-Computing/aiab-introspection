@@ -28,9 +28,16 @@ services:
         value: dev       # a key submission opens its pull request against this branch
       - key: UI_SESSION_SECRET
         generateValue: true
+      - key: OIDC_ISSUER            # WorkOS login: the environment's AuthKit domain, e.g. https://genuine-breeze-65-staging.authkit.app; none of the three = local accounts only
+        sync: false
+      - key: OIDC_CLIENT_ID         # the WorkOS Connect application's client ID
+        sync: false
+      - key: OIDC_CLIENT_SECRET     # ... and its client secret
+        sync: false
+        sync: false
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
         sync: false
-      - key: UI_BOOTSTRAP_ACCOUNTS   # first boot only, e.g. "teddy:lab:<password>,caleb:auditor:<password>"
+      - key: UI_BOOTSTRAP_ACCOUNTS   # local password accounts, "lab@lab.com:lab:<password>,..."; new names added on every start, existing ones untouched
         sync: false
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false

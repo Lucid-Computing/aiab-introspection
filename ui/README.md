@@ -7,18 +7,33 @@ Where the lab and the auditor edit, dry-run, sign and track the plan, and watch 
 ```sh
 cd ui
 uv sync                                   # creates ui/.venv; installs ../static editable
-make account NAME=teddy PARTY=lab         # prompts for a password; writes ui/accounts.json (git-ignored)
+make account NAME=teddy PARTY=lab         # local login; prompts for a password; writes ui/accounts.json (git-ignored)
 make account NAME=caleb PARTY=auditor
 make dev-keys                             # dev keys for lab/auditor/logger in ~/.aiab-dev + trust.json
 AIAB_TRUST_FILE=$HOME/.aiab-dev/trust.json make dev
 # fish shell:  env AIAB_TRUST_FILE=$HOME/.aiab-dev/trust.json make dev
 ```
 
-Open http://127.0.0.1:8090 and log in. The UI reads and edits agreement folders in the checkout directly. Without `AIAB_TRUST_FILE` the UI pins the keys in `static/aiab/baked/trust.json`, which is right for reading the committed plan but means you cannot sign (those private keys are not yours). Optional: `AIAB_BOX_URL=https://…` shows what the box is running (`/aiab/manifest`).
+Open http://127.0.0.1:8090 and log in. To log in through WorkOS as well as local accounts, see [Login](#login). The UI reads and edits agreement folders in the checkout directly. Without `AIAB_TRUST_FILE` the UI pins the keys in `static/aiab/baked/trust.json`, which is right for reading the committed plan but means you cannot sign (those private keys are not yours). Optional: `AIAB_BOX_URL=https://…` shows what the box is running (`/aiab/manifest`).
 
 To sign: the Sign screen shows one `openssl` command (OpenSSL 3; on a Mac `brew install openssl`) that signs the version digest with your private key and prints the signature; paste it and press Verify and store. Making a key pair is two more `openssl` lines, and the public key is submitted on the same screen. The UI never edits the trust file: the keys it verifies against are the checkout's `static/aiab/baked/trust.json`, the same file on the deploy branch that the release bakes into the box. Submitting a key opens a pull request (`keys/<party>-…`) that changes that file; `approve-keys.yml` checks and merges it and starts the release that puts it into the box, and the Sign screen follows the pull request, the check and the release per party. Signatures made with a key production does not trust are refused everywhere, including here.
 
 Nothing is deployed for an agreement: a signed agreement is run from the Runs screen, which sends the folder to the box with the records. Agreement drafts stay on the UI server (`agreements/` is git-ignored). Key pull requests use the deploy base (`AIAB_DEPLOY_BASE`, normally `production`) and the GitHub CLI when it is logged in (`gh auth login`). Several people may edit the same agreement: a save made from a page that showed an older version is refused, so nobody overwrites a change they never saw. (`AIAB_PUSH_DRAFTS=1` still exists to push drafts to the checkout's branch, off by default.) The branch model is in [docs/BRANCHES_AND_RELEASE.md](../docs/BRANCHES_AND_RELEASE.md).
+
+## Login
+
+Who may use the UI, and which party they are, is decided outside the agreement: one account per person, each bound to `lab` or `auditor`. Only a user's own party's signature and key submissions are accepted from them.
+
+With `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` set (in `ui/.env` locally, in the service environment on Render), people sign in through WorkOS AuthKit, or any OpenID Connect provider: *Sign in with WorkOS* sends the browser to the provider (authorization code with PKCE); the provider sends it back to `/login/callback` with a code; the server exchanges the code, checks the ID token's signature against the provider's published keys, its issuer, audience, expiry and nonce, and sets the same signed `aiab_ui` cookie as before (12 hours). Two checks decide who gets in:
+
+- **The provider** says who the person is: their email, checked by WorkOS. An optional provider group (`OIDC_GROUP`, off by default) can also be required in the ID token's groups claim; Okta can put one there (with `OIDC_SCOPES="openid profile email groups"`), WorkOS cannot.
+- **The parties file.** [`parties.json`](parties.json) (`UI_PARTIES_FILE` overrides the path) lists the emails of the lab and of the auditor. It is committed with the code, so who may use the UI is decided in the repository: edit it with `make party EMAIL=… PARTY=lab|auditor|none`, commit, deploy. A signed-in person not in the file is told so and cannot get in.
+
+The change log records the part of the email before the `@`. Removing a person from the file takes effect when their cookie expires. Log out ends the UI session; WorkOS keeps its own, so the next sign-in picks the same person unless you use a private window (Okta, which has an end-session endpoint, gets a full sign-out).
+
+The WorkOS side is one Connect application (OAuth, first-party, confidential, redirect URI `<ui>/login/callback`) with a credential; the issuer is the environment's AuthKit domain. The one for the AIAB › Staging environment exists already; its IDs and the exact clicks are in [docs/OIDC_AUTH_MIGRATION.md](../docs/OIDC_AUTH_MIGRATION.md), which is also the plan for moving a deployment from local accounts.
+
+Local accounts in `UI_ACCOUNTS_FILE` (hashed passwords, `make account`) work next to WorkOS: the login page shows the WorkOS button and the password form. They are for demo users the operator makes on this side, and a way in when WorkOS is down. Without the three settings they are the only login, which is the laptop default.
 
 ## Logs: what the logging proxy recorded
 
@@ -41,7 +56,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | `../agreements/<name>/` | An agreement: `plan.json` (the graph), tests, signatures, `history.jsonl`. Git-ignored. |
 | [`server/config.py`](server/config.py) | Environment variables → settings. |
 | [`playground/`](playground/) | The plan builder: the graph-and-YAML editor embedded in the plan page, built once into `playground/dist`. |
-| [`server/auth.py`](server/auth.py) | Local accounts with hashed passwords, signed session cookie, `python -m server.auth add`. |
+| [`server/auth.py`](server/auth.py) | Login: OpenID Connect against WorkOS or any provider (authorization code with PKCE, ID token checked, `parties.json` says who may use the UI and on which side: `python -m server.auth party`) turned into the UI's signed session cookie; and, next to it or alone, local accounts with hashed passwords (`python -m server.auth add`). |
 | [`server/plan_view.py`](server/plan_view.py) | Turns the plan folder into what the screens show; saves the plan through the box's loader, stores signatures, archives old-format agreements. |
 | [`server/box.py`](server/box.py) | Reads the box's manifest and health. Never writes. |
 | [`server/publish.py`](server/publish.py) | The git side: a key change as a branch and pull request with `gh`, draft backups, the checkout following its branch. |
@@ -136,11 +151,12 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
 1. Push the branch named in `render.yaml` (`branch:`) to GitHub.
 2. On render.com, sign in with GitHub, choose **New → Blueprint**, pick this repository. Render reads `render.yaml` and asks for the values marked `sync: false`:
    - `GITHUB_TOKEN`: a GitHub token that can push branches and open pull requests on this repository (fine-grained token with Contents and Pull requests read/write, or a bot account's token). Key submissions push with it.
-   - `UI_BOOTSTRAP_ACCOUNTS`: the UI logins to create on first boot, `teddy:lab:<password>,caleb:auditor:<password>`. Remove the variable afterwards.
+   - `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`: the AuthKit domain and the Connect application's client ID and secret; see [Login](#login) and the migration doc for the AIAB › Staging values. People must be in `ui/parties.json` (committed) before they log in.
+   - `UI_BOOTSTRAP_ACCOUNTS`: optional; local password accounts, `lab@lab.com:lab:<password>,...` (6 characters or more). Checked on every start: names not yet in the accounts file are added, existing ones are left alone. They work next to WorkOS; `make account` in the service's shell adds more.
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
    - `AIAB_LOG_KEY`: optional, only for the Logs screen; production's log reader key from 1Password.
    - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Ignored when `AIAB_LOG_KEY` is set.
-3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo`, creates the accounts, and copies the box's trust file to `/data/trust.json`.
+3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo` (and adds the local accounts from `UI_BOOTSTRAP_ACCOUNTS`, if set).
 4. Open the service URL, log in, and submit each party's public key on a Sign screen, as locally.
 
 What lives where: the image holds the UI code and the static part it imports; the disk holds the checkout the UI edits (`/data/repo`), the accounts, the trust file and the runs. Redeploys replace the image and keep the disk. `AIAB_CHECKOUT_BRANCH` is the branch whose release pins and trust file the UI works with. Agreement drafts live on that disk and never reach GitHub.
@@ -154,7 +170,7 @@ docker run --rm -p 8090:8090 -v /path/to/origin.git:/origin.git -v aiab-data:/da
   -e AIAB_CHECKOUT_BRANCH=ui-design -e UI_BOOTSTRAP_ACCOUNTS=teddy:lab:lab-pass-123 aiab-ui
 ```
 
-Environment, for any host: `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository key submissions push from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for key PRs, default `production`), `AIAB_TRUST_FILE` (default the checkout's `static/aiab/baked/trust.json`; set it to a dev trust file for local signing with dev keys), `AIAB_BOX_URL` (default the host in the release pins), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `AIAB_AUTO_PULL` (fast-forward the checkout to its remote branch every minute when clean; on by default on Render), `UI_ACCOUNTS_FILE` (default `ui/accounts.json`), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
+Environment, for any host: `AIAB_AGREEMENTS_DIR` (default `../agreements`), `AIAB_GIT_DIR` (the repository key submissions push from, default the checkout), `AIAB_DEPLOY_BASE` (base branch for key PRs, default `production`), `AIAB_TRUST_FILE` (default the checkout's `static/aiab/baked/trust.json`; set it to a dev trust file for local signing with dev keys), `AIAB_BOX_URL` (default the host in the release pins), `AIAB_RUNS_DIR`, `AIAB_DEMO_KEYS`, `AIAB_RELEASE_FILE`, `AIAB_PUSH_DRAFTS`, `AIAB_AUTO_PULL` (fast-forward the checkout to its remote branch every minute when clean; on by default on Render), `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` (WorkOS or other OpenID Connect login; `OIDC_PROVIDER_NAME`, default `WorkOS`, names it on the login page; `OIDC_GROUP`, off by default; `OIDC_SCOPES`, default `openid profile email`; `UI_PARTIES_FILE`, default `ui/parties.json`; `UI_ACCOUNTS_FILE`, default `ui/accounts.json`, holds local password accounts, which work with or without the provider), `UI_SESSION_SECRET` (random per start if unset). The container's entrypoint sets the path variables from `AIAB_DATA` (default `/data`). No private signing key is ever configured on the server.
 
 ## Integration contract with the box (from master, Jon)
 

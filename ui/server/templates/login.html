@@ -3,12 +3,18 @@
 {% block content %}
 <div class="panel panel--offset login">
     <h3>Log in</h3>
-  <p class="explain">Accounts are local to this server for now (one per person, each bound to a party: lab or auditor). GitHub login comes with the pull-request flow.</p>
+{% if settings.oidc_enabled %}
+  <p class="explain">Sign in with your {{ settings.oidc_provider_name }} account. Which party you are (lab or auditor) is set by the operator of this UI.</p>
+  <a class="btn btn--primary" href="/login/start?next={{ next | urlencode }}">Sign in with {{ settings.oidc_provider_name }}</a>
+  <p class="explain">Or use a local account made by the operator of this UI.</p>
+{% else %}
+  <p class="explain">Accounts are local to this server (one per person, each bound to a party: lab or auditor). Set OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET to also sign in through WorkOS (or another OpenID Connect provider).</p>
+{% endif %}
   <form method="post" action="/login" class="stack">
     <input type="hidden" name="next" value="{{ next }}">
     <div class="field"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required></div>
     <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
-    <button class="btn btn--primary">Log in</button>
+    <button class="btn {% if settings.oidc_enabled %}btn--ghost{% else %}btn--primary{% endif %}">Log in</button>
   </form>
 </div>
 {% endblock %}

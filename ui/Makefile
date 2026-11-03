@@ -1,5 +1,5 @@
 # Run every target from this directory (ui/).
-.PHONY: sync dev account dev-keys lint
+.PHONY: sync dev account party dev-keys lint
 
 KEYS ?= $(HOME)/.aiab-dev
 PORT ?= 8090
@@ -10,7 +10,13 @@ sync:
 dev:
 	uv run uvicorn server.app:app --reload --port $(PORT)
 
-# make account NAME=teddy PARTY=lab   (prompts for a password; writes ui/accounts.json)
+# WorkOS login: which party an email is.   make party EMAIL=teddy@lucid.example PARTY=lab
+# (PARTY=none removes them; writes ui/parties.json, which is committed: commit and deploy)
+party:
+	uv run python -m server.auth party $(EMAIL) $(PARTY)
+
+# Local accounts (with or without WorkOS): make account NAME=teddy PARTY=lab
+# (prompts for a password; writes ui/accounts.json)
 account:
 	uv run python -m server.auth add $(NAME) $(PARTY)
 
