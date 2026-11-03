@@ -99,19 +99,6 @@ function IoStrip({ plan, node }: { plan: Plan; node: PlanNode }) {
   const { inputs, output } = describeNode(plan, node);
   return (
     <div className="iostrip">
-      <span className="iostrip-k">Out</span>
-      <span className="iostrip-v">
-        {output ? (
-          <>
-            <TypeBadge type={output.type} />
-            <span className="mono">{output.name}</span>
-            {output.note && <span className="muted">· {output.note}</span>}
-            <span className="iostrip-shape big">{output.shape}</span>
-          </>
-        ) : (
-          <span className="muted">none</span>
-        )}
-      </span>
       <span className="iostrip-k">In</span>
       <span className="iostrip-v">
         {node.type === "input_logs" ? (
@@ -137,6 +124,19 @@ function IoStrip({ plan, node }: { plan: Plan; node: PlanNode }) {
               </span>
             );
           })
+        )}
+      </span>
+      <span className="iostrip-k">Out</span>
+      <span className="iostrip-v">
+        {output ? (
+          <>
+            <TypeBadge type={output.type} />
+            <span className="mono">{output.name}</span>
+            {output.note && <span className="muted">· {output.note}</span>}
+            <span className="iostrip-shape big">{output.shape}</span>
+          </>
+        ) : (
+          <span className="muted">none</span>
         )}
       </span>
     </div>

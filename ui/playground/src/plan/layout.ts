@@ -21,10 +21,10 @@ export function nodeHeight(n: PlanNode): number {
   return CARD_BASE + ROW_H * rows;
 }
 
-/** Left-to-right layered layout of the whole plan. */
+/** Top-to-bottom layered layout of the whole plan. */
 export function autoLayout(plan: Plan): Layout {
   const g = new Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 70, marginx: 20, marginy: 20 });
+  g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 90, marginx: 20, marginy: 20 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of plan.nodes) g.setNode(n.id, { width: NODE_W, height: nodeHeight(n) });
   for (const n of plan.nodes)

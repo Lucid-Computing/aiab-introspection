@@ -6,11 +6,13 @@ import type { PortType } from "../plan/types";
 import { NODE_META, summary } from "./nodeMeta";
 
 /**
- * One card per node. Below the title, an I/O footer: one row per input with its handle on
- * that row and the type it receives, then the output row with its handle, its type as the
- * most prominent element on the card, and the shape of one value. The type badges on the
- * two ends of an edge are what to compare: a red input badge is a type the node does not
- * accept. Row heights are fixed (styles.css), so layout.ts can predict the card's size.
+ * One card per node. The plan flows top to bottom: inputs arrive at the top edge (one
+ * handle per input, left to right in row order) and the output leaves at the bottom edge.
+ * Below the title, an I/O footer: one row per input with the type it receives, then the
+ * output row with its type as the most prominent element on the card, and the shape of one
+ * value. The type badges on the two ends of an edge are what to compare: a red input badge
+ * is a type the node does not accept. Row heights are fixed (styles.css), so layout.ts can
+ * predict the card's size.
  */
 function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
@@ -30,6 +32,21 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
       className={`pn pn--${n.type}${selected ? " is-selected" : ""}${errors ? " has-error" : todo ? " is-unfinished" : ""}`}
       title={data.issues.map((i) => i.message).join("\n") || undefined}
     >
+      {rule.kind !== "none" &&
+        [
+          ...inputs.map((i) => ({ id: i.name, fresh: false, title: `${i.name}: ${i.ref ? `reads ${i.ref}` : "not connected"}` })),
+          ...(rule.kind === "dynamic" ? [{ id: NEW_INPUT, fresh: true, title: "Drop a connection here to add an input" }] : []),
+        ].map((h, k, all) => (
+          <Handle
+            key={h.id}
+            type="target"
+            position={Position.Top}
+            id={h.id}
+            title={h.title}
+            className={`pn-handle${h.fresh ? " pn-handle--new" : ""}`}
+            style={{ left: `${((k + 1) / (all.length + 1)) * 100}%` }}
+          />
+        ))}
       <div className="pn-head">
         <span className="pn-kind">
           {meta.glyph} {meta.label}
@@ -60,7 +77,6 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
                     : `${i.name}: not connected`
                 }
               >
-                <Handle type="target" position={Position.Left} id={i.name} className="pn-handle" />
                 <span className="pn-port-name">{i.name}</span>
                 {i.ref ? (
                   <TypeBadge type={i.type} bad={bad} />
@@ -71,8 +87,7 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
             );
           })}
           {rule.kind === "dynamic" && (
-            <div className="pn-row pn-row--new" title="Drop a connection here to add an input">
-              <Handle type="target" position={Position.Left} id={NEW_INPUT} className="pn-handle pn-handle--new" />
+            <div className="pn-row pn-row--new" title="Drop a connection on the top edge to add an input">
               <span className="pn-port-type">{inputs.length ? "+ input" : "+ connect an input"}</span>
             </div>
           )}
@@ -82,15 +97,6 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
             <div className="pn-row pn-row--out">
               <span className="pn-port-name">{output.name}</span>
               <TypeBadge type={output.type} />
-              {output.type !== "Report" && (
-                <Handle
-                  type="source"
-                  position={Position.Right}
-                  id={output.name}
-                  className="pn-handle"
-                  title={`${output.name}: ${output.type}\n${output.shape}`}
-                />
-              )}
             </div>
             <div className="pn-shape" title={output.shape}>
               {output.shape}
@@ -98,6 +104,15 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
           </div>
         )}
       </div>
+      {output && output.type !== "Report" && (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          id={output.name}
+          className="pn-handle"
+          title={`${output.name}: ${output.type}\n${output.shape}`}
+        />
+      )}
     </div>
   );
 }
