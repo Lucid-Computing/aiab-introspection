@@ -64,7 +64,7 @@ Everything under `static/` runs from `static/`: `cd static && uv sync --locked &
 ```mermaid
 flowchart LR
     A[Both parties edit<br/>plan/ in UI or PR] --> B[Comment / review]
-    B --> C[Each party signs<br/>the plan digest offline]
+    B --> C[Each party signs<br/>the plan digest in its browser<br/>or offline]
     C --> D[PR carries plan/<br/>+ both signatures]
     D --> E[CI: verify signatures,<br/>check restrictions]
     E -->|fails| A
@@ -345,7 +345,7 @@ Numbers are proposals, not measured capacity. Strings are kept byte for byte. Ev
 How a plan becomes the running plan:
 
 1. **Digest.** `plan_digest` = sha256 over the sorted paths and contents of `plan/`, excluding `static/tests/` and `signatures/`.
-2. **Sign.** Each party runs `aiab plan sign` on its own machine with its own private key and gets `signatures/<party>.sig`. Private keys never touch the repo, CI or the box.
+2. **Sign.** Each party signs with its own private key and gets `signatures/<party>.sig`: in the agreement UI, the key is made and kept in that party's browser (WebCrypto, non-extractable, with a password-encrypted backup file) and signs there; a party may instead keep its key elsewhere and run `aiab plan sign` or `openssl` on its own machine. Private keys never touch the UI server, the repo, CI or the box.
 3. **Run.** The run submission carries the folder's files and both signature files. The box recomputes the digest, verifies both signatures against the public keys in its measured image, checks `plan.json` against the restrictions (2.7), runs the plan once and stores nothing of it.
 4. **Verify.** Anyone rebuilds the image from the released commit and compares it with the attestation; every signed report carries the plan digest, which the verifier checks against the plan they signed.
 
@@ -449,7 +449,7 @@ Lives in `ui/`, outside the image.
 
 ### 4.3 Signing
 
-- Trust comes from the two Ed25519 signatures over the plan digest (3.2), not from GitHub. The UI never holds a private key; it only collects signature files and opens the PR.
+- Trust comes from the two Ed25519 signatures over the plan digest (3.2), not from GitHub. The UI server never holds the auditor's private key; it only collects signatures and opens the PR. In the prototype it may hold the lab's key (`AIAB_LAB_KEY`) and sign every version as the lab itself, so that nobody waits for the lab; that signature is then only as strong as control of the server. The UI's page signs in the party's browser, so the server is trusted to serve honest JavaScript, an active attack a party can detect by comparing the served page with the repository and the shown digest with the plan zip; it is not trusted with the key.
 - Both parties can still comment in the PR, so the negotiation history lives in GitHub.
 - CI merges when both signatures verify and the restrictions check passes. Nobody clicks merge.
 - Public keys are pinned in the static part. Rotating a party key is a static-part change, built and attested like any other.

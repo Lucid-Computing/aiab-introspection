@@ -6,7 +6,7 @@
 
 <ol class="howto">
   <li>The lab and the auditor agree on a plan here: a graph of the steps the box runs in order, from the logs of a run through Python steps, model steps and a classifier to the final report. Every save goes through the box's own loader, so a plan the box would refuse is never saved.</li>
-  <li>Both sign the plan's digest with their own private keys, on their own machines. Any change after that voids both signatures.</li>
+  <li>Both sign the plan's digest with their own private keys. The auditor signs in its own browser or on its own machine; the server never holds that key. The lab's key may be on this server, in which case the server signs every version as the lab and whoever controls the server can sign as the lab. Any change after that voids both signatures.</li>
   <li>The box is a reproducible container image holding the box code and both parties' public keys, and no plan. Anyone can rebuild it and check that the published image matches.</li>
   <li>The image runs in a confidential VM on Tinfoil. The hardware encrypts its memory, so not even the server's operator can read what's inside.</li>
   <li>The chip signs a statement, checkable by anyone, of which image is running. Before each run the Runs screen compares it with the pinned release.</li>

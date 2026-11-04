@@ -39,6 +39,22 @@ class Settings:
     proxy_key: str | None  # the key for that API; None means the Logs page is read-only
 
     anthropic_api_key: str | None = field(default=None, repr=False)
+    # AIAB_LAB_KEY: the lab's private key (base64 raw Ed25519, the format of lab.key from
+    # make dev-keys). Set, the server signs every plan version as the lab itself, so nobody
+    # waits for the lab; whoever controls the server can then sign as the lab. Prototype only.
+    lab_signing_key: str | None = field(default=None, repr=False)
+    # OpenID Connect login (WorkOS AuthKit; any provider with a discovery document). Issuer,
+    # client id and secret set: Sign in goes through the provider; emails in admins_file are
+    # the lab, everyone else is the auditor. oidc_group set: the ID token's groups claim must
+    # name it too (Okta; needs the groups scope). Local accounts in accounts_file work either way.
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = field(default=None, repr=False)
+    oidc_provider_name: str = "WorkOS"  # what the Sign in button and error messages call it
+    oidc_group: str | None = None  # empty: no group check; anyone the provider signs in
+    oidc_groups_claim: str = "groups"
+    oidc_scopes: str = "openid profile email"
+    admins_file: Path = UI_ROOT / "admins.json"  # {"admin": [emails]}: the lab
     # Signatures are checked against production's trust file as GitHub serves it, the same
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
@@ -48,6 +64,10 @@ class Settings:
     @property
     def repo_url(self) -> str | None:
         return f"https://github.com/{self.repo}" if self.repo else None
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
 
 
 def _repo_from_git() -> str | None:
@@ -134,6 +154,15 @@ def load_settings() -> Settings:
         proxy_key=proxy_key,
         proxy_header=proxy_header,
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
+        lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
+        oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
+        oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,
+        oidc_client_secret=env.get("OIDC_CLIENT_SECRET", "").strip() or None,
+        oidc_provider_name=env.get("OIDC_PROVIDER_NAME", "WorkOS").strip() or "WorkOS",
+        oidc_group=env.get("OIDC_GROUP", "").strip() or None,
+        oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
+        oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
+        admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
     )
 
 
