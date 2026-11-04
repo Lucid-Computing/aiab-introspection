@@ -6,7 +6,7 @@
 {% from "_logmsgs.html" import block, message %}
 {% from "_logsource.html" import selector %}
 {% set src = "logs=" ~ source.id %}
-{% set filters = "&" ~ src ~ "&who=" ~ who ~ "&q=" ~ q %}
+{% set filters = "&" ~ src ~ "&who=" ~ (who | urlencode) ~ "&q=" ~ (q | urlencode) %}
 {% set keep = filters ~ "&page=" ~ page %}
 {% set chat = source.kind == "slack" %}{# messages people wrote, not calls a model answered #}
 {% set unit = "msg" if chat else "req" %}
@@ -32,7 +32,7 @@
 <div class="logs">
   <aside class="logs-list">
     {% for s in shown %}
-    <a class="logs-item {% if current and s.id == current.id %}on{% endif %}" href="/logs?session={{ s.id }}{{ keep }}">
+    <a class="logs-item {% if current and s.id == current.id %}on{% endif %}" href="/logs?session={{ s.id | urlencode }}{{ keep }}">
       <span class="logs-title">{{ s.title }}</span>
       <span class="logs-meta">{{ s.who }} · {{ s.started_short }} · {{ s.requests | length }} {{ unit }}{% if s.model %} · {{ s.model }}{% endif %}</span>
     </a>
@@ -57,7 +57,7 @@
       <summary>{% if chat %}Messages{% else %}Requests{% endif %} in this session ({{ current.requests | length }})</summary>
       <ol class="req-list">
         {% for r in current.requests %}
-        <li><a class="{% if r.id == req.id %}on{% endif %}" href="/logs?session={{ current.id }}&req={{ r.id }}{{ keep }}">{{ loop.index }} · {{ r.when_short }} · {{ r.model or "?" }} · <span class="{% if r.status and r.status < 300 %}ok{% else %}bad{% endif %}">{{ r.status or "?" }}</span>{% if r.duration_s %} · {{ "%.3f" | format(r.duration_s) }}s{% endif %} · {{ r.size_kb }}</a></li>
+        <li><a class="{% if r.id == req.id %}on{% endif %}" href="/logs?session={{ current.id | urlencode }}&req={{ r.id | urlencode }}{{ keep }}">{{ loop.index }} · {{ r.when_short }} · {{ r.model or "?" }} · <span class="{% if r.status and r.status < 300 %}ok{% else %}bad{% endif %}">{{ r.status or "?" }}</span>{% if r.duration_s %} · {{ "%.3f" | format(r.duration_s) }}s{% endif %} · {{ r.size_kb }}</a></li>
         {% endfor %}
       </ol>
     </details>
