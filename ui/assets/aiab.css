@@ -386,6 +386,10 @@ details.fold[open] > summary::before { content: "− "; }
 .msg-fold .msg-text { margin-top: var(--space-2); font-family: var(--font-mono); font-size: var(--text-xs); max-height: 360px; overflow: auto; }
 .msg-fold--tool_use > summary, .msg-fold--tool_result > summary { color: var(--ink-1); }
 .msg-empty { margin: 0; font-size: var(--text-sm); }
+.msg--chat.on { background: var(--paper-2); }
+.msg-time { color: inherit; text-decoration: none; }
+.msg-time:hover { text-decoration: underline; }
+.msg-text--chat { background: transparent; padding: 0; border-left: 0; }
 
 /* ---- run input picker ---- */
 .sources { display: grid; gap: var(--space-4); }

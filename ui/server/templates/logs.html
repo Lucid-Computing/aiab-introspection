@@ -8,7 +8,7 @@
 {% set src = "logs=" ~ source.id %}
 {% set filters = "&" ~ src ~ "&who=" ~ (who | urlencode) ~ "&q=" ~ (q | urlencode) %}
 {% set keep = filters ~ "&page=" ~ page %}
-{% set chat = source.kind == "slack" %}{# messages people wrote, not calls a model answered #}
+{% set chat = source.kind == "slack" %}{# messages people wrote (_logslack.html), not calls a model answered #}
 {% set unit = "msg" if chat else "req" %}
 <h1>Logs</h1>
 {{ selector(sources, source, "/logs?") }}
@@ -34,7 +34,7 @@
     {% for s in shown %}
     <a class="logs-item {% if current and s.id == current.id %}on{% endif %}" href="/logs?session={{ s.id | urlencode }}{{ keep }}">
       <span class="logs-title">{{ s.title }}</span>
-      <span class="logs-meta">{{ s.who }} · {{ s.started_short }} · {{ s.requests | length }} {{ unit }}{% if s.model %} · {{ s.model }}{% endif %}</span>
+      <span class="logs-meta">{{ s.who }} · {{ s.started_short }} · {{ s.records | length }} {{ unit }}{% if s.model %} · {{ s.model }}{% endif %}</span>
     </a>
     {% else %}
     <p class="text-muted" style="padding: var(--space-4)">{% if total_requests %}Nothing matches.{% else %}No records on disk yet for {{ source.label }}.{% endif %}</p>
@@ -49,20 +49,22 @@
   </aside>
 
   <section class="logs-detail">
-    {% if current and req %}
+    {% if current and req and chat %}
+    {% include "_logslack.html" %}
+    {% elif current and req %}
     <h2 class="logs-h">{{ current.title }}</h2>
     <p class="logs-sub">{{ current.who }} · started {{ current.started_short }} · session {{ current.id }}{% if req.raw._file %} · from {{ req.raw._file }}{% endif %}</p>
 
     <details class="fold fold--plain">
-      <summary>{% if chat %}Messages{% else %}Requests{% endif %} in this session ({{ current.requests | length }})</summary>
+      <summary>Requests in this session ({{ current.records | length }})</summary>
       <ol class="req-list">
-        {% for r in current.requests %}
+        {% for r in current.records %}
         <li><a class="{% if r.id == req.id %}on{% endif %}" href="/logs?session={{ current.id | urlencode }}&req={{ r.id | urlencode }}{{ keep }}">{{ loop.index }} · {{ r.when_short }} · {{ r.model or "?" }} · <span class="{% if r.status and r.status < 300 %}ok{% else %}bad{% endif %}">{{ r.status or "?" }}</span>{% if r.duration_s %} · {{ "%.3f" | format(r.duration_s) }}s{% endif %} · {{ r.size_kb }}</a></li>
         {% endfor %}
       </ol>
     </details>
 
-    <p class="req-meta">{% if req.id == current.requests[-1].id %}full {% if chat %}thread{% else %}transcript{% endif %}{% else %}{% if chat %}message{% else %}request{% endif %} {{ current.requests.index(req) + 1 }} of {{ current.requests | length }}{% endif %} · {{ req.when_short }}{% if not chat %} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · <a class="link" href="/logs/raw/{{ req.id }}?{{ src }}" target="_blank" rel="noopener">raw JSON</a>{% endif %}</p>
+    <p class="req-meta">{% if req.id == current.records[-1].id %}full transcript{% else %}request {{ current.records.index(req) + 1 }} of {{ current.records | length }}{% endif %} · {{ req.when_short }} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · <a class="link" href="/logs/raw/{{ req.id }}?{{ src }}" target="_blank" rel="noopener">raw JSON</a></p>
 
     {% if req.system_text %}
     <details class="fold"><summary>System prompt ({{ "{:,}".format(req.system_text | length) }} chars)</summary><pre class="fold-text">{{ req.system_text }}</pre></details>
@@ -89,7 +91,6 @@
       </script>
       {% endif %}
       {% for m in req.messages[-recent:] %}{{ message(m) }}{% endfor %}
-      {% if not chat %}
       <div class="msg msg--reply">
         <div class="msg-role">assistant<span class="msg-role-sub">this reply{% if req.stop_reason %} · {{ req.stop_reason }}{% endif %}</span></div>
         <div class="msg-body">
@@ -100,7 +101,6 @@
           {% endfor %}
         </div>
       </div>
-      {% endif %}
     </div>
     {% else %}
     <p class="text-muted" style="padding: var(--space-6)">Pick a session on the left.</p>

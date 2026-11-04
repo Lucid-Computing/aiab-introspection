@@ -472,11 +472,8 @@ async def logs_page(request: Request) -> Response:
     )
     req = None
     if current:
-        req = proxylogs.load_full(
-            settings,
-            source,
-            next((r for r in current.requests if r.id == wanted_req), None) or current.requests[-1],
-        )
+        picked = next((r for r in current.records if r.id == wanted_req), None)
+        req = proxylogs.load_full(settings, source, picked or current.records[-1])
     return render(
         request,
         "logs.html",
@@ -504,7 +501,7 @@ async def logs_earlier(request: Request, rid: str) -> Response:
         return Response("not signed in", status_code=401)
     source = _log_source(request)
     light = next((r for r in proxylogs.load_index(settings, source) if r.id == rid), None)
-    if light is None:
+    if not isinstance(light, proxylogs.Request):  # none, or a Slack message: shown whole
         return Response("no such request", status_code=404)
     full = proxylogs.load_full(settings, source, light)
     return render(request, "logs_earlier.html", messages=full.messages[:-LOGS_RECENT])
@@ -792,14 +789,14 @@ async def runs_index(request: Request) -> Response:
     whos = sorted({s.who for s in all_sessions})
     sessions = []
     for s in all_sessions:
-        times = [r.time for r in s.requests]
+        times = [r.time for r in s.records]
         if (
             (win["who"] and s.who != win["who"])
             or (lo and max(times) < lo)
             or (hi and min(times) > hi)
         ):
             continue
-        recs = proxylogs.to_box_records(s.requests)
+        recs = proxylogs.to_box_records(s.records)
         sessions.append(
             {
                 "session": s,
@@ -867,7 +864,7 @@ async def runs_start(request: Request) -> Response:
         ]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
-        records = proxylogs.to_box_records([r for s in picked for r in s.requests])
+        records = proxylogs.to_box_records([r for s in picked for r in s.records])
         if not records:
             return back(here, err="The chosen sessions hold no text to audit.")
         label = (

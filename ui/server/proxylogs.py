@@ -17,13 +17,11 @@ background thread per configured source syncs every five minutes once the server
 Every function below that reads or fetches takes the source; the sync state, the index and
 their locks are kept per source, so a slow production download never holds up the test one.
 
-Slack Logs is a source of another kind: the public-channel export under AIAB_SLACK_EXPORT,
-one JSON lines file per channel, a static copy that this server never updates.
-Nothing is fetched; ``load_index`` reads the files in place (``_slack_index``), one
-``Request`` per message so a run's records carry each message's author and time, grouped
-into a session per thread (or per channel and day for messages outside threads). Each
-request carries the messages before it in its group, the way a proxied call carries the
-conversation so far, so the Logs page shows a thread whole.
+Slack Logs is a source of another kind: the public-channel export, a static copy that this
+server never updates. Nothing is fetched; ``load_index`` hands its files to
+``server.slacklogs``, which reads one ``SlackMessage`` per message, grouped into a session
+per thread (or per channel and day for messages outside threads). The session layer below
+(``Session``, ``sessions``, ``to_box_records``) takes either kind of record.
 
 The pages work from a light index (``load_index``): one ``Request`` per call with the
 listing fields, the message count, the first user text, the parts a run sends to the box,
@@ -48,7 +46,9 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from server import slacklogs
 from server.config import LogSource, Settings
+from server.slacklogs import SlackMessage
 
 SESSION_GAP_SECONDS = 30 * 60  # records from one person this close together form one session
 PREFETCH_SECONDS = 300  # how often the background thread asks the proxy for new segments;
@@ -296,6 +296,10 @@ class Request:
         return datetime.fromtimestamp(self.time, UTC).strftime("%b %d, %I:%M %p")
 
     @property
+    def title_text(self) -> str:
+        return self.first_user_text
+
+    @property
     def last_user_text(self) -> str:
         for m in reversed(self.messages):
             if m["role"] == "user" and m["text"]:
@@ -311,33 +315,40 @@ class Request:
         return f"{self.size / 1024:.1f} KB"
 
 
+Record = Request | SlackMessage  # what a session holds: proxied calls, or Slack messages
+
+
 @dataclass
 class Session:
     id: str
     who: str
-    requests: list[Request]
+    records: list[Record]  # oldest first
 
     @property
     def title(self) -> str:
-        """The first thing the person said, taken from the fullest request: side requests
-        (a quota check, a title request) share the session id but are not the conversation."""
-        fullest = max(self.requests, key=lambda r: (r.message_count, r.time))
-        for r in [fullest, *self.requests]:
-            if r.first_user_text:
-                return _one_line(r.first_user_text, 80)
+        """The first thing the person said. For proxied calls that is taken from the fullest
+        request first: side requests (a quota check, a title request) share the session id
+        but are not the conversation. A Slack session is titled by its first message."""
+        ordered = list(self.records)
+        if isinstance(ordered[0], Request):
+            calls = [r for r in ordered if isinstance(r, Request)]
+            ordered = [max(calls, key=lambda r: (r.message_count, r.time)), *ordered]
+        for r in ordered:
+            if r.title_text:
+                return _one_line(r.title_text, 80)
         return "(no user text)"
 
     @property
     def started(self) -> str:
-        return self.requests[0].when
+        return self.records[0].when
 
     @property
     def started_short(self) -> str:
-        return self.requests[0].when_short
+        return self.records[0].when_short
 
     @property
     def model(self) -> str:
-        return next((r.model for r in self.requests if r.model), "") or ""
+        return next((r.model for r in self.records if isinstance(r, Request) and r.model), "")
 
 
 def _paths(settings: Settings, source: LogSource) -> list[Path]:
@@ -374,10 +385,11 @@ def _read_line(settings: Settings, source: LogSource, file: str, offset: int) ->
     return b""
 
 
-def load_index(settings: Settings, source: LogSource) -> list[Request]:
+def load_index(settings: Settings, source: LogSource) -> list[Record]:
     """Every recorded call of one source on disk as a light Request, oldest first,
     de-duplicated by id (a later file wins). Rebuilt when a file changes; a line already
-    indexed is not parsed again, since the live part is re-downloaded whole on every sync."""
+    indexed is not parsed again, since the live part is re-downloaded whole on every sync.
+    A Slack source gives its messages instead (``slacklogs.load_index``)."""
     state = _state(source)
     with state["index_lock"]:
         index = state["index"]
@@ -386,9 +398,9 @@ def load_index(settings: Settings, source: LogSource) -> list[Request]:
         if index["stamp"] == stamp:
             return index["requests"]
         if source.kind == "slack":
-            requests = _slack_index(paths)
-            index.update(stamp=stamp, requests=requests, by_line={})
-            return requests
+            messages = slacklogs.load_index(paths)
+            index.update(stamp=stamp, requests=messages, by_line={})
+            return messages
         known, by_line = index["by_line"], {}
         seen: dict[str, Request] = {}
         for path in paths:
@@ -424,9 +436,10 @@ def _light(r: Request) -> Request:
     )
 
 
-def load_full(settings: Settings, source: LogSource, light: Request) -> Request:
-    """The call with its whole conversation, parsed from its line on disk."""
-    if light.offset < 0:
+def load_full(settings: Settings, source: LogSource, light: Record) -> Record:
+    """The call with its whole conversation, parsed from its line on disk. A Slack message
+    is whole already."""
+    if not isinstance(light, Request) or light.offset < 0:
         return light
     entry = raw_entry(settings, source, light)
     if entry is None:
@@ -436,93 +449,17 @@ def load_full(settings: Settings, source: LogSource, light: Request) -> Request:
     return full
 
 
-def raw_entry(settings: Settings, source: LogSource, light: Request) -> dict | None:
-    """The call as the proxy recorded it, with ``_file`` naming its file."""
+def raw_entry(settings: Settings, source: LogSource, light: Record) -> dict | None:
+    """The call as the proxy recorded it, with ``_file`` naming its file; None for a Slack
+    message, which has no recorded form beyond its fields."""
+    if not isinstance(light, Request):
+        return None
     try:
         entry = json.loads(_read_line(settings, source, light.file, light.offset))
     except (OSError, ValueError):
         return None
     entry["_file"] = light.file
     return entry
-
-
-# ---- the Slack export ------------------------------------------------------------------
-
-SLACK_AUTHOR = re.compile(r"^(.*?)\s*<[^>]*>\s*(\([A-Z0-9]+\))?\s*$")
-
-
-def _slack_who(author: str) -> str:
-    """ "Kristian Rönn <kristian@lucidcomputing.ai> (U08GWHCA0E6)" -> "Kristian Rönn"."""
-    m = SLACK_AUTHOR.match(author or "")
-    return (m.group(1) if m else author).strip() or "unknown"
-
-
-def _slack_index(paths: list[Path]) -> list[Request]:
-    """Every message of the export as a Request, oldest first. A message's session is its
-    thread when it starts or answers one, otherwise its channel and day (UTC); its
-    ``messages`` are the group's messages up to and including itself, each under its
-    author's name, and its single part is its own text."""
-    by_group: dict[str, list[dict]] = {}
-    for path in paths:
-        rows = []
-        with path.open("rb") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        rows.append(json.loads(line))
-                    except ValueError:
-                        continue
-        threads = {r.get("thread_ts") for r in rows if r.get("thread_ts")}
-        for r in rows:
-            channel, ts = r.get("channel") or path.stem, str(r.get("ts") or "")
-            root = r.get("thread_ts") or (ts if ts in threads else None)
-            if root:
-                group = f"#{channel} · {root}"
-            else:
-                day = datetime.fromtimestamp(_slack_time(ts), UTC).strftime("%Y-%m-%d")
-                group = f"#{channel} · {day}"
-            by_group.setdefault(group, []).append(r)
-    out: list[Request] = []
-    for group, rows in by_group.items():
-        rows.sort(key=lambda r: _slack_time(str(r.get("ts") or "")))
-        history: list[dict] = []
-        for r in rows:
-            who, text = _slack_who(r.get("author") or ""), (r.get("text") or "").strip()
-            ts = str(r.get("ts") or "")
-            blocks = [{"kind": "text", "label": "", "text": text}] if text else []
-            for note in r.get("meta") or []:
-                blocks.append({"kind": "meta", "label": note, "text": note})
-            history.append({"role": who, "text": text, "blocks": blocks})
-            out.append(
-                Request(
-                    id=f"{r.get('channel') or ''}:{ts}",
-                    time=_slack_time(ts),
-                    who=who,
-                    status=200,
-                    duration_s=None,
-                    session_id=group,
-                    model=None,
-                    system_text="",
-                    tool_names=[],
-                    messages=list(history),
-                    response_blocks=[],
-                    stop_reason=None,
-                    size=len(text.encode("utf-8")),
-                    raw={},
-                    message_count=len(history),
-                    first_user_text=rows[0].get("text", "")[:500] if rows[0].get("text") else "",
-                    parts=[("request", _cut(text, CONTENT_LIMITS["request"]))] if text else [],
-                )
-            )
-    out.sort(key=lambda r: r.time)
-    return out
-
-
-def _slack_time(ts: str) -> float:
-    try:
-        return float(ts)
-    except ValueError:
-        return 0.0
 
 
 def parse_request(entry: dict) -> Request:
@@ -573,13 +510,14 @@ def parse_request(entry: dict) -> Request:
     )
 
 
-def sessions(requests: list[Request]) -> list[Session]:
-    """Group requests into sessions: by the Claude Code session id when present, otherwise
-    by who sent them and a 30-minute gap. Newest session first. The requests are copied, not
-    changed, so the shared index keeps the session ids as recorded."""
-    groups: dict[str, list[Request]] = {}
+def sessions(records: list[Record]) -> list[Session]:
+    """Group records into sessions: by the session id when present (the Claude Code session,
+    a Slack thread or channel day), otherwise by who sent them and a 30-minute gap. Newest
+    session first. The records are copied, not changed, so the shared index keeps the
+    session ids as recorded."""
+    groups: dict[str, list[Record]] = {}
     last_by_who: dict[str, tuple[str, float]] = {}
-    for r in sorted(requests, key=lambda x: x.time):
+    for r in sorted(records, key=lambda x: x.time):
         key = r.session_id
         if not key:
             prev = last_by_who.get(r.who)
@@ -589,8 +527,8 @@ def sessions(requests: list[Request]) -> list[Session]:
                 key = f"{r.who}-{int(r.time)}"
             last_by_who[r.who] = (key, r.time)
         groups.setdefault(key, []).append(replace(r, session_id=key))
-    result = [Session(id=k, who=v[0].who, requests=v) for k, v in groups.items()]
-    result.sort(key=lambda s: s.requests[-1].time, reverse=True)
+    result = [Session(id=k, who=v[0].who, records=v) for k, v in groups.items()]
+    result.sort(key=lambda s: s.records[-1].time, reverse=True)
     return result
 
 
@@ -639,16 +577,20 @@ def call_parts(r: Request) -> list[tuple[str, str]]:
     return [(kind, _cut(body, CONTENT_LIMITS[kind])) for kind, body in parts if body.strip()]
 
 
-def to_box_records(requests: list[Request]) -> list[dict]:
-    """The box's record format, one record per part of each call (see ``call_parts``).
+def to_box_records(records: list[Record]) -> list[dict]:
+    """The box's record format, one record per part of each call (see ``call_parts``), or
+    one per Slack message (its text, as a request).
 
-    agent_id is who sent it (the proxy's "who"), session_id the grouping above, content
-    what the model saw and said. The box checks these against the plan's input scope.
+    agent_id is who sent it (the proxy's "who", the message's author), session_id the
+    grouping above, content what the model saw and said, or what the person wrote. The box
+    checks these against the plan's input scope.
     """
     out = []
-    for r in sorted(requests, key=lambda x: x.time):
+    for r in sorted(records, key=lambda x: x.time):
         ts = datetime.fromtimestamp(r.time, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        for kind, content in call_parts(r):
+        parts = call_parts(r) if isinstance(r, Request) else r.parts
+        for kind, content in parts:
+            content = _cut(content, CONTENT_LIMITS[kind])
             out.append(
                 {
                     "stream": "proxy",
