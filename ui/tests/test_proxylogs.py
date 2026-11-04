@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from server import proxylogs as P
 
 
@@ -370,3 +372,94 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
     detail = slack.text.split('class="logs-detail"')[1]
     assert "deploy is red" in detail and "looking" in detail and "lunch?" not in detail
     assert 'name="logs" value="slack"><button class="btn btn--ghost" disabled' in slack.text
+
+
+# ---- the Slack export bundle ------------------------------------------------------------
+
+
+def _bundle_settings(tmp_path, key, folder=None):
+    from dataclasses import replace
+
+    from server.config import load_settings, log_sources_from_env
+
+    env = {"AIAB_PROXY_KEY": "k", "AIAB_SLACK_EXPORT_KEY": key}
+    if folder is not None:
+        env["AIAB_SLACK_EXPORT"] = str(folder)
+    return replace(
+        load_settings(),
+        logs_dir=tmp_path / "logs",
+        log_sources=log_sources_from_env(env),
+        slack_bundle=tmp_path / "bundle" / "slack-export.enc",
+    )
+
+
+def test_slack_bundle_round_trips_only_the_channel_files(tmp_path):
+    from server import slackexport as S
+
+    scrape = tmp_path / "scrape"
+    _slack_export(scrape)
+    (scrape / "eng.md").write_text("rendered, not data")
+    (scrape / "sub").mkdir()
+    (scrape / "sub" / "nested.jsonl").write_text("{}\n")
+    key = S.new_key()
+    out = tmp_path / "out" / "slack-export.enc"
+    assert S.pack(scrape, key, out) == ["eng.jsonl"]
+    data = out.read_bytes()
+    assert data.startswith(S.MAGIC) and b"deploy is red" not in data
+
+    dest = tmp_path / "opened"
+    dest.mkdir()
+    (dest / "stale.jsonl").write_text("from an earlier bundle\n")
+    assert S.unpack(out, key, dest) == ["eng.jsonl"]
+    assert sorted(p.name for p in dest.iterdir()) == ["eng.jsonl"]  # replaced whole
+    assert (dest / "eng.jsonl").read_bytes() == (scrape / "eng.jsonl").read_bytes()
+    assert not list(dest.parent.glob(".slack-*")) and not dest.with_name("opened.old").exists()
+
+    with pytest.raises(S.BundleError, match="does not open"):
+        S.unpack(out, S.new_key(), dest)
+    assert (dest / "eng.jsonl").exists()  # a wrong key leaves the opened copy alone
+    with pytest.raises(S.BundleError, match="base64"):
+        S.unpack(out, "not a key!", dest)
+    with pytest.raises(S.BundleError, match="32 bytes"):
+        S.unpack(out, "c2hvcnQ=", dest)
+    with pytest.raises(S.BundleError, match="not a Slack export bundle"):
+        S.unpack(scrape / "eng.jsonl", key, dest)
+
+
+def test_slack_source_opens_the_bundle_at_start_when_it_holds_the_key(tmp_path, monkeypatch):
+    from server import slackexport as S
+    from server.config import log_sources_from_env
+
+    scrape = tmp_path / "scrape"
+    _slack_export(scrape)
+    key = S.new_key()
+    settings = _bundle_settings(tmp_path, key)
+    S.pack(scrape, key, settings.slack_bundle)
+
+    slack = settings.log_source("slack")
+    assert slack.configured and not slack.fetches and slack.key_env == "AIAB_SLACK_EXPORT_KEY"
+    assert slack.path(settings) == tmp_path / "logs" / "slack"
+    assert S.unpack_at_start(settings) == ["eng.jsonl"]
+    monkeypatch.setattr(P, "_states", {})
+    assert [r.who for r in P.load_index(settings, slack)] == ["Ada", "Bob", "Ada", "Cy"]
+    page = _client(monkeypatch, settings).get("/logs?logs=slack").text
+    assert "Slack Logs · 4 messages on disk" in page and str(slack.path(settings)) in page
+
+    # A named folder wins over the key: read in place, nothing opened.
+    named = _bundle_settings(tmp_path, key, folder=scrape)
+    assert named.log_source("slack").path(named) == scrape
+    assert named.log_source("slack").key_env == "AIAB_SLACK_EXPORT"
+    assert S.unpack_at_start(named) is None
+
+    # No key and no folder: nothing to do, the source is offered disabled.
+    plain = _bundle_settings(tmp_path, "")
+    assert not plain.log_source("slack").configured and S.unpack_at_start(plain) is None
+    off = _client(monkeypatch, plain).get("/logs?logs=slack").text
+    assert "no export configured" in off and "AIAB_SLACK_EXPORT_KEY" in off
+
+    # The wrong key, or no bundle: a warning, the server still starts, Slack Logs is empty.
+    wrong = _bundle_settings(tmp_path, S.new_key())
+    assert S.unpack_at_start(wrong) == []
+    missing = _bundle_settings(tmp_path / "elsewhere", key)
+    assert S.unpack_at_start(missing) == []
+    assert log_sources_from_env({"AIAB_SLACK_EXPORT_KEY": key})[2].configured

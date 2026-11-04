@@ -22,7 +22,7 @@
   <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><input type="hidden" name="logs" value="{{ source.id }}"><button class="btn btn--ghost" {% if not source.fetches %}disabled{% endif %}>Refresh</button></form>
 </div>
 <p class="logs-status">{{ source.label }} · {{ total_requests }} {% if source.kind == "slack" %}messages{% else %}requests{% endif %} on disk ·
-    {% if source.kind == "slack" %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export folder configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
+    {% if source.kind == "slack" %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
     {% elif not source.configured %}no proxy key configured (<span class="mono">{{ source.key_env }}</span>), nothing is fetched
     {% elif fetch.running %}fetching now
     {% elif fetch.error %}last fetch failed: {{ fetch.error }}
