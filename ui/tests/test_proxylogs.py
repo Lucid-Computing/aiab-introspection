@@ -185,7 +185,8 @@ def test_box_records_from_the_index_match_the_full_parse(tmp_path):
 # ---- several sources: each its own folder, index and state ---------------------------------
 
 
-def test_each_source_has_its_own_index_and_sync_state(tmp_path):
+def test_each_source_has_its_own_index_and_sync_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(P, "_states", {})  # the module keeps one state per source id
     settings = _settings(tmp_path, prod_key="p")
     prod, dev = settings.log_source("prod"), settings.log_source("dev")
     assert prod.path(settings) == tmp_path / "prod" and dev.path(settings) == tmp_path / "dev"

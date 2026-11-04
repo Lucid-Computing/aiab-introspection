@@ -11,6 +11,7 @@
     <div class="card-body">
       {% if choices %}
       <form method="get" action="/runs" class="row" style="gap: var(--space-3); align-items: center">
+        <input type="hidden" name="logs" value="{{ log_source.id }}">
         <label for="agreement">Signed by both parties:</label>
         <select id="agreement" name="agreement">{% for c in choices %}<option value="{{ c.id }}" {% if c.id == chosen %}selected{% endif %}>{{ c.plan_id }} · {{ c.digest[7:19] }}…</option>{% endfor %}</select>
         <button class="btn btn--ghost btn--sm">Choose</button>
