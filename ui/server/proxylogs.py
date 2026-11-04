@@ -18,7 +18,7 @@ Every function below that reads or fetches takes the source; the sync state, the
 their locks are kept per source, so a slow production download never holds up the test one.
 
 Slack Logs is a source of another kind: the public-channel export under AIAB_SLACK_EXPORT,
-one JSON lines file per channel, written and refreshed by a cron job outside this server.
+one JSON lines file per channel, a static copy that this server never updates.
 Nothing is fetched; ``load_index`` reads the files in place (``_slack_index``), one
 ``Request`` per message so a run's records carry each message's author and time, grouped
 into a session per thread (or per channel and day for messages outside threads). Each

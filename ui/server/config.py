@@ -34,7 +34,7 @@ class LogSource:
     key_env: str  # the environment variable the key or folder comes from, for messages
     folder: str  # under settings.logs_dir, unless ``root`` names the folder outright
     kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack": the Slack export
-    root: Path | None = None  # a folder kept elsewhere (the Slack export, written by cron)
+    root: Path | None = None  # a folder kept elsewhere (the Slack export, a static copy)
 
     def path(self, settings: Settings) -> Path:
         return self.root if self.root is not None else settings.logs_dir / self.folder
@@ -195,8 +195,8 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
     """The log sources this server reads, all at once when all are set. Production takes
     its reader key as x-log-key (AIAB_LOG_KEY); the test proxy takes its shared key as
     x-proxy-key (AIAB_PROXY_KEY); each has its own folder under AIAB_LOGS_DIR. Slack Logs
-    is the public-channel export (AIAB_SLACK_EXPORT names its folder; a cron job keeps it
-    current), read in place."""
+    is the public-channel export (AIAB_SLACK_EXPORT names its folder), a static copy read
+    in place."""
     slack = env.get("AIAB_SLACK_EXPORT", "").strip()
     return (
         LogSource(

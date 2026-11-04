@@ -366,10 +366,7 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
     slack = _client(monkeypatch, settings).get(
         "/logs?logs=slack&session=%23eng+%C2%B7+1700000000.1"
     )
-    assert (
-        "Slack Logs · 4 messages on disk" in slack.text
-        and "refreshed by the daily export" in slack.text
-    )
+    assert "Slack Logs · 4 messages on disk" in slack.text and "a static copy" in slack.text
     detail = slack.text.split('class="logs-detail"')[1]
     assert "deploy is red" in detail and "looking" in detail and "lunch?" not in detail
     assert 'name="logs" value="slack"><button class="btn btn--ghost" disabled' in slack.text
