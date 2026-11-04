@@ -23,7 +23,7 @@ from server import deploystatus, editing, plan_chat, proxylogs, publish, runs
 from server import plan_view as pv
 from server.auth import LoginError, OidcLogin, SessionSigner, Stamp, authenticate, pkce_pair
 from server.box import box_status
-from server.config import UI_ROOT, Settings, load_settings
+from server.config import UI_ROOT, LogSource, Settings, load_settings
 from server.plan_view import PARTIES
 
 settings = load_settings()
@@ -56,7 +56,13 @@ async def lifespan(_: FastAPI):
         print(f"warning: could not archive old agreements: {exc}")
     if oidc is None:
         print("warning: OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET unset; password login only")
-    proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of the proxy fresh
+    try:
+        moved = proxylogs.adopt_legacy_layout(settings)  # test segments now live in dev/
+        if moved:
+            print(f"moved {len(moved)} test proxy file(s) into the Dev Agent Logs folder")
+    except OSError as exc:
+        print(f"warning: could not move the test proxy's segments into dev/: {exc}")
+    proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of every proxy fresh
     asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
     refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
     if settings.auto_pull:
@@ -429,15 +435,23 @@ async def playground(request: Request, path: str = "") -> Response:
     return FileResponse(target)
 
 
+def _log_source(request: Request, form: Any = None) -> LogSource:
+    """The log source a page works on, from its ``logs`` query parameter (or form field):
+    ``prod`` for Prod Agent Logs, ``dev`` for Dev Agent Logs, the default."""
+    wanted = (form or request.query_params).get("logs")
+    return settings.log_source(str(wanted) if wanted else None)
+
+
 @app.get("/logs")
 async def logs_page(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
+    source = _log_source(request)
     q = request.query_params.get("q", "").strip()
     who = request.query_params.get("who", "").strip()
     wanted = request.query_params.get("session", "")
     wanted_req = request.query_params.get("req", "")
-    records = proxylogs.load_index(settings)
+    records = proxylogs.load_index(settings, source)
     all_sessions = proxylogs.sessions(records)
     whos = sorted({s.who for s in all_sessions})
     matched = [s for s in all_sessions if not who or s.who == who]
@@ -457,11 +471,14 @@ async def logs_page(request: Request) -> Response:
     if current:
         req = proxylogs.load_full(
             settings,
+            source,
             next((r for r in current.requests if r.id == wanted_req), None) or current.requests[-1],
         )
     return render(
         request,
         "logs.html",
+        source=source,
+        sources=settings.log_sources,
         shown=shown,
         current=current,
         req=req,
@@ -473,7 +490,7 @@ async def logs_page(request: Request) -> Response:
         recent=LOGS_RECENT,
         matched=len(matched),
         total_requests=len(records),
-        fetch=proxylogs.status(),
+        fetch=proxylogs.status(source),
     )
 
 
@@ -482,10 +499,11 @@ async def logs_earlier(request: Request, rid: str) -> Response:
     """The messages the Logs page folds away for one call, rendered when it unfolds them."""
     if user_of(request) is None:
         return Response("not signed in", status_code=401)
-    light = next((r for r in proxylogs.load_index(settings) if r.id == rid), None)
+    source = _log_source(request)
+    light = next((r for r in proxylogs.load_index(settings, source) if r.id == rid), None)
     if light is None:
         return Response("no such request", status_code=404)
-    full = proxylogs.load_full(settings, light)
+    full = proxylogs.load_full(settings, source, light)
     return render(request, "logs_earlier.html", messages=full.messages[:-LOGS_RECENT])
 
 
@@ -494,8 +512,9 @@ async def logs_raw(request: Request, rid: str) -> Response:
     """The recorded request as the proxy stored it, with the JSON bodies unpacked."""
     if user_of(request) is None:
         return to_login(request)
-    light = next((r for r in proxylogs.load_index(settings) if r.id == rid), None)
-    entry = proxylogs.raw_entry(settings, light) if light else None
+    source = _log_source(request)
+    light = next((r for r in proxylogs.load_index(settings, source) if r.id == rid), None)
+    entry = proxylogs.raw_entry(settings, source, light) if light else None
     if entry is None:
         return Response("no such request", status_code=404)
     shown = dict(entry)
@@ -512,14 +531,16 @@ async def logs_raw(request: Request, rid: str) -> Response:
 async def logs_sync(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
+    source = _log_source(request, await request.form())
+    here = f"/logs?logs={source.id}"
     try:
-        result = proxylogs.sync_now(settings)
+        result = proxylogs.sync_now(settings, source)
     except proxylogs.ProxyError as exc:
-        return back("/logs", err=str(exc))
+        return back(here, err=str(exc))
     return back(
-        "/logs",
-        msg=f"Fetched {result['new']} new segment(s); {result['segments']} on disk, "
-        f"{result['live_entries']} live request(s) not sealed yet.",
+        here,
+        msg=f"{source.label}: fetched {result['new']} new segment(s); {result['segments']} on "
+        f"disk, {result['live_entries']} live request(s) not sealed yet.",
     )
 
 
@@ -761,7 +782,8 @@ async def runs_index(request: Request) -> Response:
         pre["ok"] = False
     win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
     lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
-    all_sessions = proxylogs.sessions(proxylogs.load_index(settings))
+    source = _log_source(request)
+    all_sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
     whos = sorted({s.who for s in all_sessions})
     sessions = []
     for s in all_sessions:
@@ -792,6 +814,8 @@ async def runs_index(request: Request) -> Response:
         pre=pre,
         choices=choices,
         chosen=chosen,
+        log_source=source,
+        log_sources=settings.log_sources,
         sessions=sessions,
         all_count=len(all_sessions),
         whos=whos,
@@ -827,17 +851,24 @@ async def runs_start(request: Request) -> Response:
     pre = await _run_preflight(target.plan_dir)
     if not pre["ok"]:
         return back(here, err="Cannot start: " + "; ".join(pre["missing"]))
+    source = _log_source(request, form)  # session ids are only unique within one source
+    here += f"&logs={source.id}"
     try:
         chosen_sessions = set(form.getlist("session"))
         picked = [
-            s for s in proxylogs.sessions(proxylogs.load_index(settings)) if s.id in chosen_sessions
+            s
+            for s in proxylogs.sessions(proxylogs.load_index(settings, source))
+            if s.id in chosen_sessions
         ]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
         records = proxylogs.to_box_records([r for s in picked for r in s.requests])
         if not records:
             return back(here, err="The chosen sessions hold no text to audit.")
-        label = f"{chosen} · {len(picked)} recorded session(s), {len(records)} records"
+        label = (
+            f"{chosen} · {len(picked)} recorded session(s) from {source.label}, "
+            f"{len(records)} records"
+        )
         run_id = runs.start_run(settings, user, chosen, target.plan_dir, records, label=label)
     except (ValueError, OSError) as exc:
         return back(here, err=str(exc))

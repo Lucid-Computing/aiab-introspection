@@ -1,18 +1,21 @@
 """The logging proxy's recorded traffic, for the Logs page and the run input picker.
 
 The proxy (Alex's, in a confidential VM) keeps every request and reply that went through
-it and offers a small download API. The test proxy takes its shared "tester" key as
-x-proxy-key; production takes its reader key as x-log-key and refuses x-proxy-key:
+it and offers a small download API. There are several proxies, one ``LogSource`` each
+(``settings.log_sources``): the test proxy takes its shared "tester" key as x-proxy-key;
+production takes its reader key as x-log-key and refuses x-proxy-key:
 
     GET /_logs            listing: sealed segments (name, sha256, first, last, bytes) + live
     GET /_logs/<name>     one sealed segment: zstd-compressed JSON lines, one request each
     GET /_logs/live       the requests not sealed yet, plain JSON lines
 
-Segments are saved under ``settings.logs_dir`` byte for byte and checked against the
-sha256 the proxy lists; the live part is replaced on every sync. Downloads stream to disk:
-production's live part alone is hundreds of megabytes. A background thread syncs every five
-minutes once the server is up (``start_prefetch``) and re-indexes after each sync, so the
-page never waits for the proxy.
+Segments are saved under the source's folder (``source.path(settings)``) byte for byte
+and checked against the sha256 the proxy lists; the live part is replaced on every sync.
+Downloads stream to disk: production's live part alone is hundreds of megabytes. A
+background thread per configured source syncs every five minutes once the server is up
+(``start_prefetch``) and re-indexes after each sync, so the page never waits for the proxy.
+Every function below that reads or fetches takes the source; the sync state, the index and
+their locks are kept per source, so a slow production download never holds up the test one.
 
 The pages work from a light index (``load_index``): one ``Request`` per call with the
 listing fields, the message count, the first user text, the parts a run sends to the box,
@@ -37,7 +40,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from server.config import Settings
+from server.config import LogSource, Settings
 
 SESSION_GAP_SECONDS = 30 * 60  # records from one person this close together form one session
 PREFETCH_SECONDS = 300  # how often the background thread asks the proxy for new segments;
@@ -52,12 +55,14 @@ class ProxyError(RuntimeError):
 # ---- download ---------------------------------------------------------------------------
 
 
-def _get(settings: Settings, path: str) -> tuple[bytes, dict[str, str]]:
-    if not settings.proxy_key:
-        raise ProxyError("no proxy key configured (AIAB_LOG_KEY or AIAB_PROXY_KEY)")
-    request = urllib.request.Request(
-        settings.proxy_url + path, headers={settings.proxy_header: settings.proxy_key}
-    )
+def _request(source: LogSource, path: str) -> urllib.request.Request:
+    if not source.key:
+        raise ProxyError(f"no proxy key configured ({source.key_env})")
+    return urllib.request.Request(source.url + path, headers={source.header: source.key})
+
+
+def _get(source: LogSource, path: str) -> tuple[bytes, dict[str, str]]:
+    request = _request(source, path)
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             return response.read(), {k.lower(): v for k, v in response.headers.items()}
@@ -67,14 +72,10 @@ def _get(settings: Settings, path: str) -> tuple[bytes, dict[str, str]]:
         raise ProxyError(f"the proxy is not answering: {error}") from None
 
 
-def _download(settings: Settings, path: str, target: Path) -> tuple[str, int, dict[str, str]]:
+def _download(source: LogSource, path: str, target: Path) -> tuple[str, int, dict[str, str]]:
     """Stream one download to ``target`` (through a .part file, renamed when complete).
     Returns (sha256, newline count, headers)."""
-    if not settings.proxy_key:
-        raise ProxyError("no proxy key configured (AIAB_LOG_KEY or AIAB_PROXY_KEY)")
-    request = urllib.request.Request(
-        settings.proxy_url + path, headers={settings.proxy_header: settings.proxy_key}
-    )
+    request = _request(source, path)
     part = target.with_name(target.name + ".part")
     digest, lines = hashlib.sha256(), 0
     try:
@@ -100,14 +101,14 @@ def _http_error(error: urllib.error.HTTPError, path: str) -> ProxyError:
     return ProxyError(f"the proxy answered HTTP {error.code} for {path}")
 
 
-def sync(settings: Settings) -> dict:
+def sync(settings: Settings, source: LogSource) -> dict:
     """Fetch the listing, download missing segments, refresh the live part.
 
     Returns {"new": n, "segments": total, "live_entries": m}.
     """
-    out = settings.logs_dir
+    out = source.path(settings)
     out.mkdir(parents=True, exist_ok=True)
-    body, _ = _get(settings, "/_logs")
+    body, _ = _get(source, "/_logs")
     listing = json.loads(body)
     new = 0
     for seg in listing.get("segments", []):
@@ -117,12 +118,12 @@ def sync(settings: Settings) -> dict:
         target = out / name
         if target.exists() and _sha256(target) == seg["sha256"]:
             continue
-        sha, _, _ = _download(settings, f"/_logs/{name}", target)
+        sha, _, _ = _download(source, f"/_logs/{name}", target)
         if sha != seg["sha256"]:
             target.unlink()
             raise ProxyError(f"{name}: downloaded bytes do not match the listed sha256")
         new += 1
-    _, live_entries, headers = _download(settings, "/_logs/live", out / "live.jsonl")
+    _, live_entries, headers = _download(source, "/_logs/live", out / "live.jsonl")
     (out / "listing.json").write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
     return {
         "new": new,
@@ -159,45 +160,93 @@ def _open_log(path: Path):
         return io.BufferedReader(reader)
 
 
+# ---- the old layout --------------------------------------------------------------------
+
+LEGACY_FILES = ("*.jsonl.zst", "live.jsonl", "listing.json")
+
+
+def adopt_legacy_layout(settings: Settings) -> list[str]:
+    """Until 2026-11 the test proxy's segments sat at the root of ``logs_dir`` (production's
+    already in ``prod/``). Move them into the Dev Agent Logs folder, once, unless that
+    folder already holds segments; ``prod/`` is never touched. Returns the names moved."""
+    root = settings.logs_dir
+    dev = settings.log_source("dev").path(settings)
+    if not root.is_dir() or dev == root:
+        return []
+    stray = [p for pattern in LEGACY_FILES for p in root.glob(pattern) if p.is_file()]
+    settled = [p for pattern in LEGACY_FILES for p in dev.glob(pattern)]
+    if not stray or settled:
+        return []
+    dev.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for path in stray:
+        os.replace(path, dev / path.name)
+        moved.append(path.name)
+    return moved
+
+
 # ---- background prefetch -------------------------------------------------------------------
 
-_sync_lock = threading.Lock()
-_state: dict = {"at": None, "error": None, "result": None, "running": False, "started": False}
+_states_lock = threading.Lock()  # creating a source's state and locks, once each
+_states: dict[str, dict] = {}
 
 
-def sync_now(settings: Settings) -> dict:
-    """One sync at a time, whoever asks (the Refresh button or the background thread)."""
-    with _sync_lock:
-        _state["running"] = True
+def _state(source: LogSource) -> dict:
+    """This source's sync state and locks: one sync at a time per source, one index."""
+    with _states_lock:
+        return _states.setdefault(
+            source.id,
+            {
+                "at": None,
+                "error": None,
+                "result": None,
+                "running": False,
+                "started": False,
+                "sync_lock": threading.Lock(),
+                "index_lock": threading.Lock(),
+                "index": {"stamp": None, "requests": [], "by_line": {}},
+            },
+        )
+
+
+def sync_now(settings: Settings, source: LogSource) -> dict:
+    """One sync at a time per source, whoever asks (Refresh or the background thread)."""
+    state = _state(source)
+    with state["sync_lock"]:
+        state["running"] = True
         try:
-            result = sync(settings)
+            result = sync(settings, source)
         except ProxyError as exc:
-            _state.update(error=str(exc), running=False)
+            state.update(error=str(exc), running=False)
             raise
-        _state.update(at=time.time(), error=None, result=result, running=False)
-    load_index(settings)  # re-index now, so the next page load finds it ready
+        state.update(at=time.time(), error=None, result=result, running=False)
+    load_index(settings, source)  # re-index now, so the next page load finds it ready
     return result
 
 
 def start_prefetch(settings: Settings, every: int = PREFETCH_SECONDS) -> None:
-    """Keep the local copy fresh: sync at start, then every ``every`` seconds, forever."""
-    if _state["started"] or not settings.proxy_key:
-        return
-    _state["started"] = True
+    """Keep every configured source's local copy fresh: one thread each, syncing at start
+    and then every ``every`` seconds, forever. A source without a key is left alone."""
+    for source in settings.log_sources:
+        state = _state(source)
+        if state["started"] or not source.configured:
+            continue
+        state["started"] = True
 
-    def loop() -> None:
-        while True:
-            try:
-                sync_now(settings)
-            except Exception as exc:  # the thread must survive anything the proxy does
-                _state.update(error=str(exc), running=False)
-            time.sleep(every)
+        def loop(source: LogSource = source, state: dict = state) -> None:
+            while True:
+                try:
+                    sync_now(settings, source)
+                except Exception as exc:  # the thread must survive anything the proxy does
+                    state.update(error=str(exc), running=False)
+                time.sleep(every)
 
-    threading.Thread(target=loop, daemon=True, name="proxy-prefetch").start()
+        threading.Thread(target=loop, daemon=True, name=f"proxy-prefetch-{source.id}").start()
 
 
-def status() -> dict:
-    s = dict(_state)
+def status(source: LogSource) -> dict:
+    state = _state(source)
+    s = {k: v for k, v in state.items() if k in ("at", "error", "result", "running", "started")}
     s["ago"] = int(time.time() - s["at"]) if s["at"] else None
     s["every"] = PREFETCH_SECONDS
     return s
@@ -227,7 +276,7 @@ class Request:
     message_count: int = 0
     first_user_text: str = ""  # the first user message with text, for the session title
     parts: list[tuple[str, str]] | None = None  # call_parts, kept by the light index
-    source: str = ""  # the file the line is in, and where: set by the light index
+    file: str = ""  # the file the line is in, and where: set by the light index
     offset: int = -1
 
     @property
@@ -283,12 +332,8 @@ class Session:
         return next((r.model for r in self.requests if r.model), "") or ""
 
 
-_index_lock = threading.Lock()
-_index: dict = {"stamp": None, "requests": [], "by_line": {}}
-
-
-def _paths(settings: Settings) -> list[Path]:
-    out = settings.logs_dir
+def _paths(settings: Settings, source: LogSource) -> list[Path]:
+    out = source.path(settings)
     if not out.is_dir():
         return []
     return [p for p in sorted(out.glob("*.jsonl.zst")) + [out / "live.jsonl"] if p.is_file()]
@@ -307,8 +352,8 @@ def _lines(path: Path):
             offset += len(line)
 
 
-def _read_line(settings: Settings, source: str, offset: int) -> bytes:
-    path = settings.logs_dir / source
+def _read_line(settings: Settings, source: LogSource, file: str, offset: int) -> bytes:
+    path = source.path(settings) / file
     if path.suffix != ".zst":
         with path.open("rb") as f:
             f.seek(offset)
@@ -319,16 +364,18 @@ def _read_line(settings: Settings, source: str, offset: int) -> bytes:
     return b""
 
 
-def load_index(settings: Settings) -> list[Request]:
-    """Every recorded call on disk as a light Request, oldest first, de-duplicated by id
-    (a later file wins). Rebuilt when a file changes; a line already indexed is not parsed
-    again, since the live part is re-downloaded whole on every sync."""
-    with _index_lock:
-        paths = _paths(settings)
+def load_index(settings: Settings, source: LogSource) -> list[Request]:
+    """Every recorded call of one source on disk as a light Request, oldest first,
+    de-duplicated by id (a later file wins). Rebuilt when a file changes; a line already
+    indexed is not parsed again, since the live part is re-downloaded whole on every sync."""
+    state = _state(source)
+    with state["index_lock"]:
+        index = state["index"]
+        paths = _paths(settings, source)
         stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
-        if _index["stamp"] == stamp:
-            return _index["requests"]
-        known, by_line = _index["by_line"], {}
+        if index["stamp"] == stamp:
+            return index["requests"]
+        known, by_line = index["by_line"], {}
         seen: dict[str, Request] = {}
         for path in paths:
             for offset, line in _lines(path):
@@ -343,10 +390,10 @@ def load_index(settings: Settings) -> list[Request]:
                         continue
                     light = _light(parse_request(entry))
                 by_line[key] = light
-                light = replace(light, source=path.name, offset=offset)
+                light = replace(light, file=path.name, offset=offset)
                 seen[light.id or f"{path.name}:{offset}"] = light
         requests = sorted(seen.values(), key=lambda r: r.time)
-        _index.update(stamp=stamp, requests=requests, by_line=by_line)
+        index.update(stamp=stamp, requests=requests, by_line=by_line)
         return requests
 
 
@@ -363,11 +410,11 @@ def _light(r: Request) -> Request:
     )
 
 
-def load_full(settings: Settings, light: Request) -> Request:
+def load_full(settings: Settings, source: LogSource, light: Request) -> Request:
     """The call with its whole conversation, parsed from its line on disk."""
     if light.offset < 0:
         return light
-    entry = raw_entry(settings, light)
+    entry = raw_entry(settings, source, light)
     if entry is None:
         return light
     full = parse_request(entry)
@@ -375,13 +422,13 @@ def load_full(settings: Settings, light: Request) -> Request:
     return full
 
 
-def raw_entry(settings: Settings, light: Request) -> dict | None:
-    """The call as the proxy recorded it, with ``_source`` naming its file."""
+def raw_entry(settings: Settings, source: LogSource, light: Request) -> dict | None:
+    """The call as the proxy recorded it, with ``_file`` naming its file."""
     try:
-        entry = json.loads(_read_line(settings, light.source, light.offset))
+        entry = json.loads(_read_line(settings, source, light.file, light.offset))
     except (OSError, ValueError):
         return None
-    entry["_source"] = light.source
+    entry["_file"] = light.file
     return entry
 
 

@@ -497,3 +497,14 @@ ul.plain { list-style: none; margin: 0; padding: 0; } ul.plain li { padding: 2px
 .howto { list-style: none; padding: 0; margin: 0 0 var(--space-12); counter-reset: howto; border-top: var(--border-strong); max-width: 760px; }
 .howto li { display: grid; grid-template-columns: 40px 1fr; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: var(--border-hairline); font-size: var(--text-base); color: var(--ink-1); }
 .howto li::before { counter-increment: howto; content: counter(howto); font-family: var(--font-mono); color: var(--ink-3); }
+
+/* Log source selector (Logs and Runs): one button per proxy, the chosen one in ink. */
+.srcsel { display: flex; width: max-content; max-width: 100%; flex-wrap: wrap; border: var(--border-strong); margin-bottom: var(--space-4); }
+.srcsel-item { display: inline-flex; align-items: center; gap: var(--space-2); height: 40px; padding: 0 var(--space-4); font-family: var(--font-mono); font-size: var(--text-xs); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--ink-2); background: var(--paper-1); text-decoration: none; border-right: var(--border-hairline); }
+.srcsel-item:last-child { border-right: none; }
+.srcsel-item:hover { background: var(--paper-2); color: var(--ink-1); }
+.srcsel-item.on { background: var(--ink-1); color: var(--paper-1); }
+.srcsel-item--off { color: var(--ink-3); cursor: not-allowed; }
+.srcsel-item--off:hover { background: var(--paper-1); color: var(--ink-3); }
+.srcsel-icon { flex: none; }
+.srcsel-note { font-size: 10px; opacity: 0.7; text-transform: none; letter-spacing: 0; }

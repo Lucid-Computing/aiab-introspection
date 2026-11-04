@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from server import app as ui
 from server import deploystatus
-from server.config import REPO_ROOT, load_settings
+from server.config import REPO_ROOT, load_settings, log_sources_from_env
 
 LAB = {"username": "lab", "party": "lab", "display_name": "Lab"}
 FIXTURE = REPO_ROOT / "static/tests/fixtures/graph-plan"
@@ -26,6 +26,7 @@ def client(tmp_path, monkeypatch):
         box_url=None,
         runs_dir=tmp_path / "runs",
         logs_dir=tmp_path / "logs",
+        log_sources=log_sources_from_env({"AIAB_LOG_KEY": "p", "AIAB_PROXY_KEY": "t"}),
         release_file=REPO_ROOT / "static/deploy/tinfoil/audit/release.json",
         demo_keys_dir=tmp_path / "keys",
     )
@@ -72,6 +73,70 @@ def test_legacy_routes_go_to_agreements(client):
 def test_run_refuses_without_an_agreement(client):
     response = client.post("/runs/start", data={"session": "x"})
     assert response.status_code == 303 and "Pick%20an%20agreement" in response.headers["location"]
+
+
+def _record(who, text, session="shared"):
+    import json
+
+    return (
+        json.dumps(
+            {
+                "id": f"{who}-1",
+                "time": 1_700_000_000.0,
+                "who": who,
+                "path": "/v1/messages",
+                "request_headers": {"x-claude-code-session-id": session},
+                "request_raw": {
+                    "text": json.dumps(
+                        {"model": "m", "messages": [{"role": "user", "content": text}]}
+                    )
+                },
+                "response_raw": {"text": "{}"},
+            }
+        )
+        + "\n"
+    )
+
+
+def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, monkeypatch):
+    """Prod and dev can hold a session with the same id: the Runs page lists the chosen
+    source's sessions and a run started from it sends that source's records."""
+    logs = tmp_path / "logs"
+    for who in ("prod", "dev"):
+        (logs / who).mkdir(parents=True)
+        (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
+
+    page = client.get("/runs?agreement=bio").text  # default: Dev Agent Logs
+    assert "dev-user" in page and "prod-user" not in page
+    assert 'name="logs" value="dev"' in page
+    assert (
+        'href="/runs?agreement=bio&amp;logs=prod"' in page
+        or 'href="/runs?agreement=bio&logs=prod"' in page
+    )
+    page = client.get("/runs?agreement=bio&logs=prod").text
+    assert "prod-user" in page and "dev-user" not in page
+
+    started = {}
+
+    async def ready(_folder):
+        return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
+
+    def fake_start(settings, user, agreement, folder, records, label=None):
+        started.update(records=records, label=label)
+        return "run-1"
+
+    monkeypatch.setattr(ui, "_run_preflight", ready)
+    monkeypatch.setattr(ui.runs, "start_run", fake_start)
+    monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
+    response = client.post(
+        "/runs/start", data={"agreement": "bio", "logs": "prod", "session": "shared"}
+    )
+    assert response.status_code == 303 and response.headers["location"] == "/runs/run-1"
+    assert [r["content"] for r in started["records"]] == ["prod prompt"]
+    assert "from Prod Agent Logs" in started["label"]
+    response = client.post("/runs/start", data={"agreement": "bio", "session": "shared"})
+    assert [r["content"] for r in started["records"]] == ["dev prompt"]
+    assert "from Dev Agent Logs" in started["label"]
 
 
 def test_sign_page_signs_in_the_browser_and_keeps_the_manual_route(client, tmp_path):
