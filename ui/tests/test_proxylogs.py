@@ -162,7 +162,7 @@ def test_session_title_comes_from_the_fullest_call_not_the_side_request(tmp_path
     _write_logs(_dev(settings).path(settings))
     (session,) = P.sessions(P.load_index(settings, _dev(settings)))
     assert session.title == FIRST
-    assert [r.session_id for r in session.requests] == ["s1", "s1", "s1"]
+    assert [r.session_id for r in session.records] == ["s1", "s1", "s1"]
 
 
 def test_load_full_reads_the_call_back_from_its_file(tmp_path):
@@ -266,26 +266,36 @@ def _slack_settings(tmp_path):
 
 
 def test_slack_export_is_a_source_of_messages_grouped_by_thread_and_day(tmp_path):
+    from server.slacklogs import SlackMessage
+
     settings = _slack_settings(tmp_path)
     slack = settings.log_source("slack")
     assert slack.configured and not slack.fetches and slack.path(settings).name == "slack-export"
     _slack_export(slack.path(settings))
     index = P.load_index(settings, slack)
-    assert [r.who for r in index] == ["Ada", "Bob", "Ada", "Cy"]
+    assert all(isinstance(m, SlackMessage) for m in index)
+    assert [m.who for m in index] == ["Ada", "Bob", "Ada", "Cy"]
+    first = index[0]
+    assert (first.email, first.uid, first.channel, first.ts) == (
+        "ada@x.ai",
+        "U1",
+        "eng",
+        "1700000000.1",
+    )
+    assert first.replies == 1 and first.notes == [] and first.thread_ts is None
+    assert index[1].thread_ts == "1700000000.1" and index[1].replies is None
+    assert not hasattr(first, "status") and not hasattr(first, "model")  # nothing proxy-shaped
     sessions = {s.id: s for s in P.sessions(index)}
     assert set(sessions) == {"#eng · 1700000000.1", "#eng · 2023-11-14", "#eng · 2023-11-15"}
     thread = sessions["#eng · 1700000000.1"]
-    assert thread.title == "deploy is red" and [r.who for r in thread.requests] == ["Ada", "Bob"]
-    last = P.load_full(settings, slack, thread.requests[-1])  # the full thread, in place
-    assert [(m["role"], m["text"]) for m in last.messages] == [
-        ("Ada", "deploy is red"),
-        ("Bob", "looking"),
-    ]
-    assert last.messages[0]["blocks"][1]["label"] == "Thread: 1 replies"
-    records = P.to_box_records(thread.requests)
-    assert [(r["agent_id"], r["content"]) for r in records] == [
-        ("Ada", "deploy is red"),
-        ("Bob", "looking"),
+    assert thread.title == "deploy is red" and [m.who for m in thread.records] == ["Ada", "Bob"]
+    assert thread.model == "" and thread.started_short == "Nov 14, 10:13 PM"
+    assert P.load_full(settings, slack, thread.records[-1]) is thread.records[-1]  # whole already
+    assert P.raw_entry(settings, slack, thread.records[-1]) is None
+    records = P.to_box_records(thread.records)
+    assert [(r["agent_id"], r["kind"], r["content"]) for r in records] == [
+        ("Ada", "request", "deploy is red"),
+        ("Bob", "request", "looking"),
     ]
     assert records[1]["ts"] == "2023-11-14T22:15:00Z" and records[1]["session_id"] == thread.id
     assert not _settings(tmp_path).log_source("slack").configured  # no folder named
@@ -374,7 +384,23 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
     assert "/logs?session=#" not in slack.text
     detail = slack.text.split('class="logs-detail"')[1]
     assert "deploy is red" in detail and "looking" in detail and "lunch?" not in detail
+    assert "#eng · 2 messages" in detail and "1 reply" in detail
+    assert 'class="msg-role">Ada' in detail and 'class="msg-role">Bob' in detail
+    for proxy_only in ("· ? ·", "· 200", "raw JSON", "System prompt", "this reply", "KB"):
+        assert proxy_only not in detail, proxy_only
     assert 'name="logs" value="slack"><button class="btn btn--ghost" disabled' in slack.text
+    assert "2 msg" in slack.text.split('class="logs-detail"')[0]  # the session list counts messages
+    client = _client(monkeypatch, settings)
+    assert client.get("/logs/raw/eng:1700000000.1?logs=slack").status_code == 404
+    assert client.get("/logs/earlier/eng:1700000000.1?logs=slack").status_code == 404
+
+
+def test_runs_page_lists_slack_sessions_as_messages(tmp_path, monkeypatch):
+    settings = _slack_settings(tmp_path)
+    _slack_export(settings.log_source("slack").path(settings))
+    page = _client(monkeypatch, settings).get("/runs?logs=slack").text
+    assert "deploy is red" in page and "2 msg · 2 records" in page and " req · " not in page
+    assert "from Slack Logs" in page and 'name="logs" value="slack"' in page
 
 
 # ---- the Slack export bundle ------------------------------------------------------------
