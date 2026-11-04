@@ -339,6 +339,7 @@ button[disabled], .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .logs-filters { display: flex; gap: var(--space-2); align-items: center; }
 .logs-filters select, .logs-filters input { height: 40px; padding: 0 var(--space-3); border: var(--border-strong); background: var(--paper-1); font-family: var(--font-sans); font-size: var(--text-sm); color: var(--ink-1); border-radius: 0; }
 .logs-filters input { width: 260px; }
+.logs-filters select { max-width: 240px; }
 .logs-status { margin: 0 0 var(--space-4); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); }
 /* the page is one viewport high: header on top, the two panes take the rest and scroll on their own */
 .page--logs { height: calc(100vh - var(--nav-height)); box-sizing: border-box; display: flex; flex-direction: column; padding-bottom: var(--space-6); }

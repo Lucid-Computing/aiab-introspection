@@ -533,6 +533,8 @@ async def logs_sync(request: Request) -> Response:
         return to_login(request)
     source = _log_source(request, await request.form())
     here = f"/logs?logs={source.id}"
+    if not source.fetches:
+        return back(here, err=f"{source.label} are not fetched by this server.")
     try:
         result = proxylogs.sync_now(settings, source)
     except proxylogs.ProxyError as exc:

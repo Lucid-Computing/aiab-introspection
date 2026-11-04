@@ -28,18 +28,27 @@ class LogSource:
 
     id: str  # in URLs: /logs?logs=prod
     label: str  # on the selector button
-    url: str  # the proxy's address (its /_logs download API)
+    url: str  # the proxy's address (its /_logs download API); "" for a local copy
     header: str  # the header the key is sent in
-    key: str | None  # None: nothing is fetched; the pages show the source disabled
-    key_env: str  # the environment variable the key comes from, for the message when unset
-    folder: str  # under settings.logs_dir
+    key: str | None  # None: nothing is fetched; a proxy source is then shown disabled
+    key_env: str  # the environment variable the key or folder comes from, for messages
+    folder: str  # under settings.logs_dir, unless ``root`` names the folder outright
+    kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack": the Slack export
+    root: Path | None = None  # a folder kept elsewhere (the Slack export, written by cron)
 
     def path(self, settings: Settings) -> Path:
-        return settings.logs_dir / self.folder
+        return self.root if self.root is not None else settings.logs_dir / self.folder
 
     @property
     def configured(self) -> bool:
-        return bool(self.key)
+        """Whether the pages can offer this source: a proxy needs its key; a local copy
+        needs its folder named."""
+        return bool(self.key) if self.kind == "proxy" else self.root is not None
+
+    @property
+    def fetches(self) -> bool:
+        """Whether this server downloads the source itself (Refresh, the prefetch thread)."""
+        return self.kind == "proxy" and bool(self.key)
 
 
 @dataclass(frozen=True)
@@ -183,9 +192,12 @@ def load_settings() -> Settings:
 
 
 def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
-    """The log sources this server reads, both at once when both keys are set. Production
-    takes its reader key as x-log-key (AIAB_LOG_KEY); the test proxy takes its shared key
-    as x-proxy-key (AIAB_PROXY_KEY). Each has its own folder under AIAB_LOGS_DIR."""
+    """The log sources this server reads, all at once when all are set. Production takes
+    its reader key as x-log-key (AIAB_LOG_KEY); the test proxy takes its shared key as
+    x-proxy-key (AIAB_PROXY_KEY); each has its own folder under AIAB_LOGS_DIR. Slack Logs
+    is the public-channel export (AIAB_SLACK_EXPORT names its folder; a cron job keeps it
+    current), read in place."""
+    slack = env.get("AIAB_SLACK_EXPORT", "").strip()
     return (
         LogSource(
             id="prod",
@@ -204,6 +216,17 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
             key=_proxy_key(env.get("AIAB_PROXY_KEY", "")),
             key_env="AIAB_PROXY_KEY",
             folder="dev",
+        ),
+        LogSource(
+            id="slack",
+            label="Slack Logs",
+            url="",
+            header="",
+            key=None,
+            key_env="AIAB_SLACK_EXPORT",
+            folder="slack",
+            kind="slack",
+            root=Path(slack).resolve() if slack else None,
         ),
     )
 

@@ -17,6 +17,14 @@ background thread per configured source syncs every five minutes once the server
 Every function below that reads or fetches takes the source; the sync state, the index and
 their locks are kept per source, so a slow production download never holds up the test one.
 
+Slack Logs is a source of another kind: the public-channel export under AIAB_SLACK_EXPORT,
+one JSON lines file per channel, written and refreshed by a cron job outside this server.
+Nothing is fetched; ``load_index`` reads the files in place (``_slack_index``), one
+``Request`` per message so a run's records carry each message's author and time, grouped
+into a session per thread (or per channel and day for messages outside threads). Each
+request carries the messages before it in its group, the way a proxied call carries the
+conversation so far, so the Logs page shows a thread whole.
+
 The pages work from a light index (``load_index``): one ``Request`` per call with the
 listing fields, the message count, the first user text, the parts a run sends to the box,
 and where the line sits on disk, but no conversation. A call's full conversation is parsed
@@ -229,7 +237,7 @@ def start_prefetch(settings: Settings, every: int = PREFETCH_SECONDS) -> None:
     and then every ``every`` seconds, forever. A source without a key is left alone."""
     for source in settings.log_sources:
         state = _state(source)
-        if state["started"] or not source.configured:
+        if state["started"] or not source.fetches:
             continue
         state["started"] = True
 
@@ -336,6 +344,8 @@ def _paths(settings: Settings, source: LogSource) -> list[Path]:
     out = source.path(settings)
     if not out.is_dir():
         return []
+    if source.kind == "slack":
+        return sorted(p for p in out.glob("*.jsonl") if p.is_file())
     return [p for p in sorted(out.glob("*.jsonl.zst")) + [out / "live.jsonl"] if p.is_file()]
 
 
@@ -375,6 +385,10 @@ def load_index(settings: Settings, source: LogSource) -> list[Request]:
         stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
         if index["stamp"] == stamp:
             return index["requests"]
+        if source.kind == "slack":
+            requests = _slack_index(paths)
+            index.update(stamp=stamp, requests=requests, by_line={})
+            return requests
         known, by_line = index["by_line"], {}
         seen: dict[str, Request] = {}
         for path in paths:
@@ -430,6 +444,85 @@ def raw_entry(settings: Settings, source: LogSource, light: Request) -> dict | N
         return None
     entry["_file"] = light.file
     return entry
+
+
+# ---- the Slack export ------------------------------------------------------------------
+
+SLACK_AUTHOR = re.compile(r"^(.*?)\s*<[^>]*>\s*(\([A-Z0-9]+\))?\s*$")
+
+
+def _slack_who(author: str) -> str:
+    """ "Kristian Rönn <kristian@lucidcomputing.ai> (U08GWHCA0E6)" -> "Kristian Rönn"."""
+    m = SLACK_AUTHOR.match(author or "")
+    return (m.group(1) if m else author).strip() or "unknown"
+
+
+def _slack_index(paths: list[Path]) -> list[Request]:
+    """Every message of the export as a Request, oldest first. A message's session is its
+    thread when it starts or answers one, otherwise its channel and day (UTC); its
+    ``messages`` are the group's messages up to and including itself, each under its
+    author's name, and its single part is its own text."""
+    by_group: dict[str, list[dict]] = {}
+    for path in paths:
+        rows = []
+        with path.open("rb") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        rows.append(json.loads(line))
+                    except ValueError:
+                        continue
+        threads = {r.get("thread_ts") for r in rows if r.get("thread_ts")}
+        for r in rows:
+            channel, ts = r.get("channel") or path.stem, str(r.get("ts") or "")
+            root = r.get("thread_ts") or (ts if ts in threads else None)
+            if root:
+                group = f"#{channel} · {root}"
+            else:
+                day = datetime.fromtimestamp(_slack_time(ts), UTC).strftime("%Y-%m-%d")
+                group = f"#{channel} · {day}"
+            by_group.setdefault(group, []).append(r)
+    out: list[Request] = []
+    for group, rows in by_group.items():
+        rows.sort(key=lambda r: _slack_time(str(r.get("ts") or "")))
+        history: list[dict] = []
+        for r in rows:
+            who, text = _slack_who(r.get("author") or ""), (r.get("text") or "").strip()
+            ts = str(r.get("ts") or "")
+            blocks = [{"kind": "text", "label": "", "text": text}] if text else []
+            for note in r.get("meta") or []:
+                blocks.append({"kind": "meta", "label": note, "text": note})
+            history.append({"role": who, "text": text, "blocks": blocks})
+            out.append(
+                Request(
+                    id=f"{r.get('channel') or ''}:{ts}",
+                    time=_slack_time(ts),
+                    who=who,
+                    status=200,
+                    duration_s=None,
+                    session_id=group,
+                    model=None,
+                    system_text="",
+                    tool_names=[],
+                    messages=list(history),
+                    response_blocks=[],
+                    stop_reason=None,
+                    size=len(text.encode("utf-8")),
+                    raw={},
+                    message_count=len(history),
+                    first_user_text=rows[0].get("text", "")[:500] if rows[0].get("text") else "",
+                    parts=[("request", _cut(text, CONTENT_LIMITS["request"]))] if text else [],
+                )
+            )
+    out.sort(key=lambda r: r.time)
+    return out
+
+
+def _slack_time(ts: str) -> float:
+    try:
+        return float(ts)
+    except ValueError:
+        return 0.0
 
 
 def parse_request(entry: dict) -> Request:

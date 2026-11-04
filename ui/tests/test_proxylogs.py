@@ -201,11 +201,11 @@ def test_each_source_has_its_own_index_and_sync_state(tmp_path, monkeypatch):
 
 def test_settings_default_to_dev_and_both_sources_can_be_configured(tmp_path):
     settings = _settings(tmp_path, prod_key="p", dev_key="tester:t,other:o")
-    assert [s.id for s in settings.log_sources] == ["prod", "dev"]
+    assert [s.id for s in settings.log_sources] == ["prod", "dev", "slack"]
     assert settings.log_source(None).id == "dev" and settings.log_source("nope").id == "dev"
     assert settings.log_source("prod").key == "p" and settings.log_source("dev").key == "t"
     assert settings.log_source("prod").header == "x-log-key"
-    assert all(s.configured for s in settings.log_sources)
+    assert all(s.configured for s in settings.log_sources if s.kind == "proxy")
     assert not _settings(tmp_path, dev_key=None).log_source("dev").configured
 
 
@@ -222,6 +222,71 @@ def test_legacy_root_segments_move_into_dev_once_and_prod_stays(tmp_path):
     (tmp_path / "live.jsonl").write_text("")  # a stray file later: dev/ is not overwritten
     assert P.adopt_legacy_layout(settings) == []
     assert (tmp_path / "live.jsonl").exists()
+
+
+# ---- the Slack export ------------------------------------------------------------------
+
+
+def _slack_export(folder):
+    """One channel: a thread of two, a message the same day outside it, one the next day."""
+    folder.mkdir(parents=True, exist_ok=True)
+
+    def row(ts, author, text, thread_ts=None, meta=()):
+        return json.dumps(
+            {
+                "channel": "eng",
+                "channel_id": "C1",
+                "ts": ts,
+                "author": author,
+                "time": "x",
+                "text": text,
+                "meta": list(meta),
+                "thread_ts": thread_ts,
+            }
+        )
+
+    rows = [
+        row("1700000000.1", "Ada <ada@x.ai> (U1)", "deploy is red", meta=["Thread: 1 replies"]),
+        row("1700000100.2", "Bob <bob@x.ai> (U2)", "looking", thread_ts="1700000000.1"),
+        row("1700000200.3", "Ada <ada@x.ai> (U1)", "lunch?"),
+        row("1700090000.4", "Cy <cy@x.ai> (U3)", "next day"),
+    ]
+    (folder / "eng.jsonl").write_text("\n".join(rows) + "\n")
+
+
+def _slack_settings(tmp_path):
+    from dataclasses import replace
+
+    from server.config import load_settings, log_sources_from_env
+
+    env = {"AIAB_PROXY_KEY": "k", "AIAB_SLACK_EXPORT": str(tmp_path / "slack-export")}
+    return replace(load_settings(), logs_dir=tmp_path, log_sources=log_sources_from_env(env))
+
+
+def test_slack_export_is_a_source_of_messages_grouped_by_thread_and_day(tmp_path):
+    settings = _slack_settings(tmp_path)
+    slack = settings.log_source("slack")
+    assert slack.configured and not slack.fetches and slack.path(settings).name == "slack-export"
+    _slack_export(slack.path(settings))
+    index = P.load_index(settings, slack)
+    assert [r.who for r in index] == ["Ada", "Bob", "Ada", "Cy"]
+    sessions = {s.id: s for s in P.sessions(index)}
+    assert set(sessions) == {"#eng · 1700000000.1", "#eng · 2023-11-14", "#eng · 2023-11-15"}
+    thread = sessions["#eng · 1700000000.1"]
+    assert thread.title == "deploy is red" and [r.who for r in thread.requests] == ["Ada", "Bob"]
+    last = P.load_full(settings, slack, thread.requests[-1])  # the full thread, in place
+    assert [(m["role"], m["text"]) for m in last.messages] == [
+        ("Ada", "deploy is red"),
+        ("Bob", "looking"),
+    ]
+    assert last.messages[0]["blocks"][1]["label"] == "Thread: 1 replies"
+    records = P.to_box_records(thread.requests)
+    assert [(r["agent_id"], r["content"]) for r in records] == [
+        ("Ada", "deploy is red"),
+        ("Bob", "looking"),
+    ]
+    assert records[1]["ts"] == "2023-11-14T22:15:00Z" and records[1]["session_id"] == thread.id
+    assert not _settings(tmp_path).log_source("slack").configured  # no folder named
 
 
 # ---- the pages ---------------------------------------------------------------------------
@@ -294,3 +359,17 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
     unconfigured = _client(monkeypatch, _settings(tmp_path, prod_key=None)).get("/logs?logs=prod")
     assert "srcsel-item--off" in unconfigured.text and "AIAB_LOG_KEY" in unconfigured.text
     assert 'href="/logs?logs=prod"' not in unconfigured.text
+    assert "AIAB_SLACK_EXPORT" in unconfigured.text  # Slack Logs offered, disabled
+
+    settings = _slack_settings(tmp_path)
+    _slack_export(settings.log_source("slack").path(settings))
+    slack = _client(monkeypatch, settings).get(
+        "/logs?logs=slack&session=%23eng+%C2%B7+1700000000.1"
+    )
+    assert (
+        "Slack Logs · 4 messages on disk" in slack.text
+        and "refreshed by the daily export" in slack.text
+    )
+    detail = slack.text.split('class="logs-detail"')[1]
+    assert "deploy is red" in detail and "looking" in detail and "lunch?" not in detail
+    assert 'name="logs" value="slack"><button class="btn btn--ghost" disabled' in slack.text
