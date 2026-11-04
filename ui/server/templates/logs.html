@@ -4,19 +4,26 @@
 {% block main_class %}page--logs{% endblock %}
 {% block content %}
 {% from "_logmsgs.html" import block, message %}
-{% set filters = "&who=" ~ who ~ "&q=" ~ q %}
+{% from "_logsource.html" import selector %}
+{% set src = "logs=" ~ source.id %}
+{% set filters = "&" ~ src ~ "&who=" ~ who ~ "&q=" ~ q %}
 {% set keep = filters ~ "&page=" ~ page %}
+{% set chat = source.kind == "slack" %}{# messages people wrote, not calls a model answered #}
+{% set unit = "msg" if chat else "req" %}
 <h1>Logs</h1>
+{{ selector(sources, source, "/logs?") }}
 <div class="logs-tools">
   <form method="get" action="/logs" class="logs-filters">
+    <input type="hidden" name="logs" value="{{ source.id }}">
     <select name="who" onchange="this.form.submit()"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>
     <input name="q" value="{{ q }}" placeholder="Search titles">
     <button class="btn btn--ghost">Search</button>
   </form>
-  <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><button class="btn btn--ghost" {% if not settings.proxy_key %}disabled{% endif %}>Refresh</button></form>
+  <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><input type="hidden" name="logs" value="{{ source.id }}"><button class="btn btn--ghost" {% if not source.fetches %}disabled{% endif %}>Refresh</button></form>
 </div>
-<p class="logs-status">{{ total_requests }} requests on disk ·
-    {% if not settings.proxy_key %}no proxy key configured (<span class="mono">AIAB_LOG_KEY</span> or <span class="mono">AIAB_PROXY_KEY</span>), nothing is fetched
+<p class="logs-status">{{ source.label }} · {{ total_requests }} {% if source.kind == "slack" %}messages{% else %}requests{% endif %} on disk ·
+    {% if source.kind == "slack" %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export folder configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
+    {% elif not source.configured %}no proxy key configured (<span class="mono">{{ source.key_env }}</span>), nothing is fetched
     {% elif fetch.running %}fetching now
     {% elif fetch.error %}last fetch failed: {{ fetch.error }}
     {% elif fetch.ago is not none %}fetched {% if fetch.ago < 5 %}just now{% else %}{{ fetch.ago }} s ago{% endif %}, again every {{ fetch.every }} s in the background
@@ -27,10 +34,10 @@
     {% for s in shown %}
     <a class="logs-item {% if current and s.id == current.id %}on{% endif %}" href="/logs?session={{ s.id }}{{ keep }}">
       <span class="logs-title">{{ s.title }}</span>
-      <span class="logs-meta">{{ s.who }} · {{ s.started_short }} · {{ s.requests | length }} req{% if s.model %} · {{ s.model }}{% endif %}</span>
+      <span class="logs-meta">{{ s.who }} · {{ s.started_short }} · {{ s.requests | length }} {{ unit }}{% if s.model %} · {{ s.model }}{% endif %}</span>
     </a>
     {% else %}
-    <p class="text-muted" style="padding: var(--space-4)">{% if total_requests %}Nothing matches.{% else %}No records on disk yet.{% endif %}</p>
+    <p class="text-muted" style="padding: var(--space-4)">{% if total_requests %}Nothing matches.{% else %}No records on disk yet for {{ source.label }}.{% endif %}</p>
     {% endfor %}
     {% if pages > 1 %}
     <nav class="logs-pager">
@@ -44,10 +51,10 @@
   <section class="logs-detail">
     {% if current and req %}
     <h2 class="logs-h">{{ current.title }}</h2>
-    <p class="logs-sub">{{ current.who }} · started {{ current.started_short }} · session {{ current.id }}{% if req.raw._source %} · from {{ req.raw._source }}{% endif %}</p>
+    <p class="logs-sub">{{ current.who }} · started {{ current.started_short }} · session {{ current.id }}{% if req.raw._file %} · from {{ req.raw._file }}{% endif %}</p>
 
     <details class="fold fold--plain">
-      <summary>Requests in this session ({{ current.requests | length }})</summary>
+      <summary>{% if chat %}Messages{% else %}Requests{% endif %} in this session ({{ current.requests | length }})</summary>
       <ol class="req-list">
         {% for r in current.requests %}
         <li><a class="{% if r.id == req.id %}on{% endif %}" href="/logs?session={{ current.id }}&req={{ r.id }}{{ keep }}">{{ loop.index }} · {{ r.when_short }} · {{ r.model or "?" }} · <span class="{% if r.status and r.status < 300 %}ok{% else %}bad{% endif %}">{{ r.status or "?" }}</span>{% if r.duration_s %} · {{ "%.3f" | format(r.duration_s) }}s{% endif %} · {{ r.size_kb }}</a></li>
@@ -55,7 +62,7 @@
       </ol>
     </details>
 
-    <p class="req-meta">{% if req.id == current.requests[-1].id %}full transcript{% else %}request {{ current.requests.index(req) + 1 }} of {{ current.requests | length }}{% endif %} · {{ req.when_short }} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · <a class="link" href="/logs/raw/{{ req.id }}" target="_blank" rel="noopener">raw JSON</a></p>
+    <p class="req-meta">{% if req.id == current.requests[-1].id %}full {% if chat %}thread{% else %}transcript{% endif %}{% else %}{% if chat %}message{% else %}request{% endif %} {{ current.requests.index(req) + 1 }} of {{ current.requests | length }}{% endif %} · {{ req.when_short }}{% if not chat %} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · <a class="link" href="/logs/raw/{{ req.id }}?{{ src }}" target="_blank" rel="noopener">raw JSON</a>{% endif %}</p>
 
     {% if req.system_text %}
     <details class="fold"><summary>System prompt ({{ "{:,}".format(req.system_text | length) }} chars)</summary><pre class="fold-text">{{ req.system_text }}</pre></details>
@@ -68,7 +75,7 @@
     <div class="msgs">
       {% if req.messages | length > recent %}
       {# fetched when opened: a long conversation's history can run to megabytes #}
-      <details class="fold fold--plain earlier" data-src="/logs/earlier/{{ req.id }}">
+      <details class="fold fold--plain earlier" data-src="/logs/earlier/{{ req.id }}?{{ src }}">
         <summary>Earlier in this conversation ({{ req.messages | length - recent }} messages)</summary>
         <p class="text-muted earlier-wait">Loading…</p>
       </details>
@@ -82,6 +89,7 @@
       </script>
       {% endif %}
       {% for m in req.messages[-recent:] %}{{ message(m) }}{% endfor %}
+      {% if not chat %}
       <div class="msg msg--reply">
         <div class="msg-role">assistant<span class="msg-role-sub">this reply{% if req.stop_reason %} · {{ req.stop_reason }}{% endif %}</span></div>
         <div class="msg-body">
@@ -92,6 +100,7 @@
           {% endfor %}
         </div>
       </div>
+      {% endif %}
     </div>
     {% else %}
     <p class="text-muted" style="padding: var(--space-6)">Pick a session on the left.</p>

@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,6 +17,38 @@ TEST_PROXY_URL = (
     "https://47b9b017832cbbf8ca2572b480584460df142e04-8080.dstack-pha-prod9.phala.network"
 )
 PROD_PROXY_URL = "https://llm-proxy.lucidcompute.com"
+DEFAULT_LOG_SOURCE = "dev"
+
+
+@dataclass(frozen=True)
+class LogSource:
+    """One logging proxy the Logs and Runs pages can read: production's, the test one, and
+    whatever comes later. Each keeps its own folder of segments, index and prefetch loop.
+    Adding a variety is adding one entry in ``log_sources``; no page changes."""
+
+    id: str  # in URLs: /logs?logs=prod
+    label: str  # on the selector button
+    url: str  # the proxy's address (its /_logs download API); "" for a local copy
+    header: str  # the header the key is sent in
+    key: str | None  # None: nothing is fetched; a proxy source is then shown disabled
+    key_env: str  # the environment variable the key or folder comes from, for messages
+    folder: str  # under settings.logs_dir, unless ``root`` names the folder outright
+    kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack": the Slack export
+    root: Path | None = None  # a folder kept elsewhere (the Slack export, a static copy)
+
+    def path(self, settings: Settings) -> Path:
+        return self.root if self.root is not None else settings.logs_dir / self.folder
+
+    @property
+    def configured(self) -> bool:
+        """Whether the pages can offer this source: a proxy needs its key; a local copy
+        needs its folder named."""
+        return bool(self.key) if self.kind == "proxy" else self.root is not None
+
+    @property
+    def fetches(self) -> bool:
+        """Whether this server downloads the source itself (Refresh, the prefetch thread)."""
+        return self.kind == "proxy" and bool(self.key)
 
 
 @dataclass(frozen=True)
@@ -34,9 +67,8 @@ class Settings:
     release_file: Path  # the release pins the live box must match
     push_drafts: bool  # push agreement folders to the checkout's branch after each save
     auto_pull: bool  # fast-forward the checkout to its remote branch every minute when clean
-    logs_dir: Path  # downloaded proxy log segments, one folder
-    proxy_url: str  # the logging proxy's address (its /_logs download API)
-    proxy_key: str | None  # the key for that API; None means the Logs page is read-only
+    logs_dir: Path  # downloaded proxy log segments, one subfolder per log source
+    log_sources: tuple[LogSource, ...]  # Prod Agent Logs, Dev Agent Logs, in selector order
 
     anthropic_api_key: str | None = field(default=None, repr=False)
     # AIAB_LAB_KEY: the lab's private key (base64 raw Ed25519, the format of lab.key from
@@ -59,11 +91,16 @@ class Settings:
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
     trust_follows_production: bool = False
-    proxy_header: str = "x-proxy-key"  # production takes its reader key as x-log-key instead
 
     @property
     def repo_url(self) -> str | None:
         return f"https://github.com/{self.repo}" if self.repo else None
+
+    def log_source(self, wanted: str | None) -> LogSource:
+        """The log source a page asked for by id, or the default (Dev Agent Logs) when the
+        id is missing or unknown."""
+        by_id = {s.id: s for s in self.log_sources}
+        return by_id.get(wanted or "") or by_id.get(DEFAULT_LOG_SOURCE) or self.log_sources[0]
 
     @property
     def oidc_enabled(self) -> bool:
@@ -114,16 +151,6 @@ def load_settings() -> Settings:
     if not box_url and release_file.is_file():
         box_url = "https://" + json.loads(release_file.read_text())["host"]
     repo = env.get("AIAB_REPO") or _repo_from_git()
-    # Production's reader key (AIAB_LOG_KEY) wins over the test proxy's shared key. Its
-    # segments go in a subfolder so they never mix with test segments already on disk.
-    logs_dir = Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve()
-    log_key = env.get("AIAB_LOG_KEY", "").strip()
-    if log_key:
-        proxy_key, proxy_header, default_url = log_key, "x-log-key", PROD_PROXY_URL
-        logs_dir = logs_dir / "prod"
-    else:
-        proxy_key = _proxy_key(env.get("AIAB_PROXY_KEY", ""))
-        proxy_header, default_url = "x-proxy-key", TEST_PROXY_URL
     return Settings(
         # The folder a PlanView reads; for_agreement() points it at one agreement.
         plan_dir=Path(env.get("AIAB_PLAN_DIR", REPO_ROOT / "plan")).resolve(),
@@ -149,10 +176,8 @@ def load_settings() -> Settings:
         release_file=release_file,
         push_drafts=env.get("AIAB_PUSH_DRAFTS", "").lower() in {"1", "true", "yes"},
         auto_pull=env.get("AIAB_AUTO_PULL", "").lower() in {"1", "true", "yes"},
-        logs_dir=logs_dir,
-        proxy_url=env.get("AIAB_PROXY_URL", default_url).rstrip("/"),
-        proxy_key=proxy_key,
-        proxy_header=proxy_header,
+        logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
+        log_sources=log_sources_from_env(env),
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
         lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
@@ -163,6 +188,46 @@ def load_settings() -> Settings:
         oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
         admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
+    )
+
+
+def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
+    """The log sources this server reads, all at once when all are set. Production takes
+    its reader key as x-log-key (AIAB_LOG_KEY); the test proxy takes its shared key as
+    x-proxy-key (AIAB_PROXY_KEY); each has its own folder under AIAB_LOGS_DIR. Slack Logs
+    is the public-channel export (AIAB_SLACK_EXPORT names its folder), a static copy read
+    in place."""
+    slack = env.get("AIAB_SLACK_EXPORT", "").strip()
+    return (
+        LogSource(
+            id="prod",
+            label="Prod Agent Logs",
+            url=env.get("AIAB_LOG_URL", PROD_PROXY_URL).rstrip("/"),
+            header="x-log-key",
+            key=env.get("AIAB_LOG_KEY", "").strip() or None,
+            key_env="AIAB_LOG_KEY",
+            folder="prod",
+        ),
+        LogSource(
+            id="dev",
+            label="Dev Agent Logs",
+            url=env.get("AIAB_PROXY_URL", TEST_PROXY_URL).rstrip("/"),
+            header="x-proxy-key",
+            key=_proxy_key(env.get("AIAB_PROXY_KEY", "")),
+            key_env="AIAB_PROXY_KEY",
+            folder="dev",
+        ),
+        LogSource(
+            id="slack",
+            label="Slack Logs",
+            url="",
+            header="",
+            key=None,
+            key_env="AIAB_SLACK_EXPORT",
+            folder="slack",
+            kind="slack",
+            root=Path(slack).resolve() if slack else None,
+        ),
     )
 
 
