@@ -5,6 +5,11 @@
 > required afterward. See [BAKED_PLAN_OPERATIONS.md](BAKED_PLAN_OPERATIONS.md) for
 > implemented contracts, commands, evidence and remaining dependencies.
 >
+> 1 Nov 2026: plans are no longer baked into the image. Each run submission carries the
+> jointly signed plan folder; the box verifies it against the keys in its measured image,
+> runs it once and stores nothing. Steps 3 to 6 of 3.2 and every "baked plan" below are
+> history; [BAKED_PLAN_OPERATIONS.md](BAKED_PLAN_OPERATIONS.md) has the current contract.
+>
 > Implementation clarifications: folder bundles use `aiab-baked-plan/v1`, and
 > expanded reports use `aiab-report/v3`, to avoid reusing deployed incompatible
 > schemas. CPU hardware is the existing AMD SEV-SNP Tinfoil CVM. Signed exact-byte
@@ -39,27 +44,27 @@ Merits of the split:
 - **Small diffs per agreement.** A new agreement touches only `plan/`. The static code, its tests and its threat model stay fixed and are reviewed once.
 - **One attestation.** Static part and plan are built into one image and attested together, so a change to either gives a new image digest (S-3). The split is a development method, not a security boundary.
 - **Clear ownership.** The static part fixes every contract; the plan only fills in function bodies and settings. Negotiation is about plan content, never about the box.
-- **UI is optional.** It is a front end over the repo and the box's read-only endpoints. The demo works without it. The box's own chat-demo front end, `static/webchat/`, ships with the box and is separate from it.
+- **UI is optional.** It is a front end over the repo and the box's read-only endpoints. The demo works without it.
 
 Repository layout:
 
 ```
 aiab-introspection/
-├── static/        the box: aiab/ auditor/ classifiers/ deploy/ tests/ traffic/ demo/ webchat/; Python project root (pyproject.toml, uv.lock, Makefile)
+├── static/        the box: aiab/ auditor/ deploy/ tests/ demo/; Python project root (pyproject.toml, uv.lock, Makefile)
 ├── plan/          the plan (3.2)
 ├── ui/            the agreement UI (4)
 ├── docs/          specs
 └── .dockerignore  image build allowlist; the build context is this directory so the image can copy static/ and plan/
 ```
 
-Everything under `static/` runs from `static/`: `cd static && uv sync --locked && make check`. The image is built from the repository root: `static/deploy/Dockerfile` copies `static/aiab/` and `static/classifiers/` into `/app/` and, once the first plan exists, `plan/` into `/app/plan/`. `ui/` and `static/webchat/` never enter the image.
+Everything under `static/` runs from `static/`: `cd static && uv sync --locked && make check`. The image is built from the repository root: `static/deploy/Dockerfile` copies `static/aiab/` into `/app/`. `ui/` never enters the image.
 
 ### 1.1 How the parts meet
 
 ```mermaid
 flowchart LR
     A[Both parties edit<br/>plan/ in UI or PR] --> B[Comment / review]
-    B --> C[Each party signs<br/>the plan digest offline]
+    B --> C[Each party signs<br/>the plan digest in its browser<br/>or offline]
     C --> D[PR carries plan/<br/>+ both signatures]
     D --> E[CI: verify signatures,<br/>check restrictions]
     E -->|fails| A
@@ -127,7 +132,7 @@ flowchart LR
 
 Admission, in order, before any inference:
 
-1. `plan_digest` matches the baked plan, else `invalid_plan`.
+1. `plan_digest` matches the signed plan sent with the submission (verified first), else `invalid_plan`.
 2. `logger_evidence` verifies: logger signature, chain continuity, checkpoint, else `invalid_logger_evidence`. (JN)
 3. Every record is covered by the evidence and none is outside it; the commitment is over the exact bytes the plan consumes.
 4. `input_scope` lies inside the plan's `input_scope` (window, agents, logger key), else `scope_mismatch`. This is the F-4 / S-5 scope check.
@@ -149,7 +154,7 @@ JN TO DEFINE: ingress protocol
 
 ### 2.4 Scope (F-4, S-5)
 
-There is no ad-hoc query endpoint. The only query is the plan baked into the image, so an out-of-scope query cannot run; the per-run scope check is step 4 above. No appeal endpoint in the demo: a corrected input is a new run, a different prompt is a new plan.
+There is no ad-hoc query endpoint. The only queries are jointly signed plans, sent with the run and verified against the keys in the image, so an out-of-scope query cannot run; the per-run scope check is step 4 above. No appeal endpoint in the demo: a corrected input is a new run, a different prompt is a new plan.
 
 ### 2.5 Egress (F-7, S-2, S-4, C-6)
 
@@ -240,7 +245,7 @@ TODO(JN): real values. `artifact_digest` is a blocker: the current Tinfoil class
 ### 2.9 Build and attestation (C-3, F-11, A-4)
 
 - `static/deploy/Dockerfile` pins base images and dependencies; `static/deploy/reproducible-build.sh` gives the same image digest from the same commit. Add `COPY plan/ /app/plan/` with the first real plan.
-- The build context is the repository root and the root `.dockerignore` is an allowlist: only `static/pyproject.toml`, `static/uv.lock`, `static/aiab/*.py`, `static/classifiers/*.md` and, once added, `plan/` enter the build. A new source folder needs new allowlist lines or it is silently left out. BuildKit records each instruction's text in the image config, so any Dockerfile edit changes the image digest even when every layer is identical.
+- The build context is the repository root and the root `.dockerignore` is an allowlist: only `static/pyproject.toml`, `static/uv.lock` and the `*.py` files under `static/aiab/` (plus `trust.json`) enter the build. A new source folder needs new allowlist lines or it is silently left out. BuildKit records each instruction's text in the image config, so any Dockerfile edit changes the image digest even when every layer is identical.
 - CI before build: recompute `plan_digest`, verify both signatures against the pinned public keys, check `plan.json` against 2.7. The release publishes the image digest and the plan digest.
 - Digests, one meaning each: Tinfoil release/config digest (launches the image; checked by the attestation verifier), image digest (static + plan; attestation measurement vs. release), plan digest (`plan/` only; manifest, reports, the auditor's copy), policy digest (effective manifest; reports).
 - Both parties rebuild from the commit and compare against their own pin, not the box's claim (A-4).
@@ -252,7 +257,7 @@ TODO(JN): real values. `artifact_digest` is a blocker: the current Tinfoil class
 
 | Code | HTTP | Where | Meaning |
 | --- | --- | --- | --- |
-| `invalid_plan` | 400 | admission | `plan_digest` does not match the baked plan |
+| `invalid_plan` | 400 | admission | `plan_digest` does not match the submitted plan |
 | `unauthorized` | 401 | admission, retrieval | Not authenticated or not an agreed party |
 | `invalid_logger_evidence` | 400 | admission | Signature, chain, checkpoint or record binding failed |
 | `scope_mismatch` | 400 | admission | Outside the plan's `input_scope` |
@@ -268,6 +273,15 @@ Codes "in report" are returned in a signed `FAILED` envelope. They are also the 
 ---
 
 ## 3. Dynamic part: the plan (owner: Teddy)
+
+> **Implemented form (v0.6).** The plan is now the graph of 3.3, not the fixed functions of
+> 3.1 and 3.4: one `plan/plan.json` (format `aiab-plan-ir/v0`) of five block types (Input
+> Logs, Classifier, Run Python, Run LLM, Final Report), checked by `static/aiab/baked/plan_ir.py`,
+> run by `graph.py` in the sandboxed worker, with every model call built and made by the box
+> (S-8 holds: the box's framing comes first, the plan's instructions after it). The report's
+> fields are the output schema; only Classifications aggregates and declared Value fields can
+> be released. The plan is written in the agreement UI's builder, which applies the same checks.
+> The text below is the earlier design and remains the rationale.
 
 ### 3.1 How the static and dynamic parts connect
 
@@ -331,14 +345,11 @@ Numbers are proposals, not measured capacity. Strings are kept byte for byte. Ev
 How a plan becomes the running plan:
 
 1. **Digest.** `plan_digest` = sha256 over the sorted paths and contents of `plan/`, excluding `static/tests/` and `signatures/`.
-2. **Sign.** Each party runs `aiab plan sign` on its own machine with its own private key and gets `signatures/<party>.sig`. Private keys never touch the repo, CI or the box.
-3. **PR.** The UI or CLI opens the pull request carrying `plan/` and both signature files. GitHub approvals are not the trust mechanism; the PR is transport and history.
-4. **CI.** Recomputes the digest, verifies both signatures against the public keys pinned in the static part, checks `plan.json` against the restrictions (2.7), merges automatically.
-5. **Bake.** The build copies `plan/` into the image. The release publishes the image digest and the plan digest.
-6. **Boot.** The box re-verifies both signatures and refuses to start otherwise (2.8).
-7. **Verify.** Anyone clones the released commit, recomputes the digest, checks the signatures, rebuilds the image and compares it with the attestation. Every report carries the plan digest.
+2. **Sign.** Each party signs with its own private key and gets `signatures/<party>.sig`: in the agreement UI, the key is made and kept in that party's browser (WebCrypto, non-extractable, with a password-encrypted backup file) and signs there; a party may instead keep its key elsewhere and run `aiab plan sign` or `openssl` on its own machine. Private keys never touch the UI server, the repo, CI or the box.
+3. **Run.** The run submission carries the folder's files and both signature files. The box recomputes the digest, verifies both signatures against the public keys in its measured image, checks `plan.json` against the restrictions (2.7), runs the plan once and stores nothing of it.
+4. **Verify.** Anyone rebuilds the image from the released commit and compares it with the attestation; every signed report carries the plan digest, which the verifier checks against the plan they signed.
 
-A new agreement repeats 1 to 6. A plan is never edited in place. The plan never names the image digest, so there is no circularity: the image digest covers the plan.
+(Until 1 Nov 2026 steps 3 to 6 were: PR carrying `plan/`, CI check and merge, bake into the image, re-verify at boot.) A new agreement repeats 1 to 3. A plan is never edited in place. The plan never names the image digest, so there is no circularity.
 
 ### 3.3 The plan as a graph
 
@@ -420,7 +431,7 @@ def appeal(flag_id: str, *, kind: Literal["data_correction", "secondary_query"])
 
 ## 4. UI (owner: Teddy)
 
-Lives in `ui/`, outside the image. The box's chat-demo front end in `static/webchat/` visualizes the `/v1` proxy path and is not part of this UI.
+Lives in `ui/`, outside the image.
 
 ### 4.1 Style
 
@@ -438,7 +449,7 @@ Lives in `ui/`, outside the image. The box's chat-demo front end in `static/webc
 
 ### 4.3 Signing
 
-- Trust comes from the two Ed25519 signatures over the plan digest (3.2), not from GitHub. The UI never holds a private key; it only collects signature files and opens the PR.
+- Trust comes from the two Ed25519 signatures over the plan digest (3.2), not from GitHub. The UI server never holds the auditor's private key; it only collects signatures and opens the PR. In the prototype it may hold the lab's key (`AIAB_LAB_KEY`) and sign every version as the lab itself, so that nobody waits for the lab; that signature is then only as strong as control of the server. The UI's page signs in the party's browser, so the server is trusted to serve honest JavaScript, an active attack a party can detect by comparing the served page with the repository and the shown digest with the plan zip; it is not trusted with the key.
 - Both parties can still comment in the PR, so the negotiation history lives in GitHub.
 - CI merges when both signatures verify and the restrictions check passes. Nobody clicks merge.
 - Public keys are pinned in the static part. Rotating a party key is a static-part change, built and attested like any other.

@@ -38,8 +38,23 @@ class Settings:
     proxy_url: str  # the logging proxy's address (its /_logs download API)
     proxy_key: str | None  # the key for that API; None means the Logs page is read-only
 
-    run_plan_dir: Path | None = None
     anthropic_api_key: str | None = field(default=None, repr=False)
+    # AIAB_LAB_KEY: the lab's private key (base64 raw Ed25519, the format of lab.key from
+    # make dev-keys). Set, the server signs every plan version as the lab itself, so nobody
+    # waits for the lab; whoever controls the server can then sign as the lab. Prototype only.
+    lab_signing_key: str | None = field(default=None, repr=False)
+    # OpenID Connect login (WorkOS AuthKit; any provider with a discovery document). Issuer,
+    # client id and secret set: Sign in goes through the provider; emails in admins_file are
+    # the lab, everyone else is the auditor. oidc_group set: the ID token's groups claim must
+    # name it too (Okta; needs the groups scope). Local accounts in accounts_file work either way.
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = field(default=None, repr=False)
+    oidc_provider_name: str = "WorkOS"  # what the Sign in button and error messages call it
+    oidc_group: str | None = None  # empty: no group check; anyone the provider signs in
+    oidc_groups_claim: str = "groups"
+    oidc_scopes: str = "openid profile email"
+    admins_file: Path = UI_ROOT / "admins.json"  # {"admin": [emails]}: the lab
     # Signatures are checked against production's trust file as GitHub serves it, the same
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
@@ -47,20 +62,12 @@ class Settings:
     proxy_header: str = "x-proxy-key"  # production takes its reader key as x-log-key instead
 
     @property
-    def deployed_plan_dir(self) -> Path:
-        return self.run_plan_dir or self.plan_dir
-
-    @property
-    def run_trust_file(self) -> Path:
-        if self.run_plan_dir:
-            candidate = self.run_plan_dir.parent / "static/aiab/baked/trust.json"
-            if candidate.is_file():
-                return candidate
-        return self.trust_file
-
-    @property
     def repo_url(self) -> str | None:
         return f"https://github.com/{self.repo}" if self.repo else None
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
 
 
 def _repo_from_git() -> str | None:
@@ -118,15 +125,13 @@ def load_settings() -> Settings:
         proxy_key = _proxy_key(env.get("AIAB_PROXY_KEY", ""))
         proxy_header, default_url = "x-proxy-key", TEST_PROXY_URL
     return Settings(
-        run_plan_dir=Path(env["AIAB_RUN_PLAN_DIR"]).resolve()
-        if env.get("AIAB_RUN_PLAN_DIR")
-        else None,
+        # The folder a PlanView reads; for_agreement() points it at one agreement.
         plan_dir=Path(env.get("AIAB_PLAN_DIR", REPO_ROOT / "plan")).resolve(),
         agreements_dir=Path(env.get("AIAB_AGREEMENTS_DIR", REPO_ROOT / "agreements")).resolve(),
         git_dir=Path(env.get("AIAB_GIT_DIR", REPO_ROOT)).resolve(),
         deploy_base=env.get("AIAB_DEPLOY_BASE") or "production",  # the branch the box is built from
         # The keys signatures are checked against: the checkout's trust.json, i.e. the one on
-        # the deploy branch, the same file the plan check and the release use. Never edited
+        # the deploy branch, the same file the release bakes into the box. Never edited
         # here; a key changes through a pull request. AIAB_TRUST_FILE overrides for dev keys.
         trust_file=Path(
             env.get("AIAB_TRUST_FILE")
@@ -149,6 +154,15 @@ def load_settings() -> Settings:
         proxy_key=proxy_key,
         proxy_header=proxy_header,
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
+        lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
+        oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
+        oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,
+        oidc_client_secret=env.get("OIDC_CLIENT_SECRET", "").strip() or None,
+        oidc_provider_name=env.get("OIDC_PROVIDER_NAME", "WorkOS").strip() or "WorkOS",
+        oidc_group=env.get("OIDC_GROUP", "").strip() or None,
+        oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
+        oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
+        admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
     )
 
 

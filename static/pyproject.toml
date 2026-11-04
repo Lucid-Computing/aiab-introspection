@@ -1,19 +1,19 @@
 [project]
 name = "aiab-introspection"
 version = "0.1.0"
-description = "Attestable, privacy-preserving introspection of inference received by a proxy"
+description = "The audit box (static part) and the auditor command-line tool"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    # Typed HTTP routes and request validation at the proxy boundary.
+    # The box's HTTP routes and request validation.
     "fastapi>=0.115,<1",
-    # ASGI serving, including the local TLS endpoint.
+    # ASGI serving.
     "uvicorn>=0.34,<1",
-    # Async requests to the governed inference server and local auditor transport.
+    # Async requests from the auditor tool and the model transport.
     "httpx>=0.28,<1",
-    # Ed25519 report signatures and ephemeral local TLS certificates.
+    # Ed25519 signatures: plan, record export, report.
     "cryptography>=44,<47",
-    # Verified classifier transport and attestation; never use direct inference REST.
+    # Attested transport to the box and to the model; never plain REST.
     "tinfoil==0.14.0",
     "jsonschema>=4.23,<5",
     "rfc8785==0.1.4",
@@ -21,17 +21,15 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    # Behavioral regression tests for privacy, accounting, and verification.
+    # Regression tests for the box, the plan checker and the auditor tool.
     "pytest>=8,<10",
-    # Async proxy and lifecycle tests.
+    # Async runtime tests.
     "pytest-asyncio>=0.25,<2",
     # Shared lint and formatting checks.
     "ruff>=0.9,<1",
 ]
 
 [project.scripts]
-aiab = "aiab.main:main"
-auditor = "auditor.cli:main"
 aiab-audit = "aiab.audit.main:main"
 aiab-plan = "auditor.audit:main"
 

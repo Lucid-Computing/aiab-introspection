@@ -1,1 +1,1 @@
-"""Verify observed AIAB identity, policy configuration, and signed report history."""
+"""The auditor tool: attest the box, submit a run, verify the report offline."""

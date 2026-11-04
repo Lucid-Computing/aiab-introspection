@@ -1,11 +1,7 @@
-"""Where things stand on GitHub and in the box, so the UI never claims more than it knows.
-
-Two questions, both answered from GitHub's API plus the box's manifest:
-
-* a plan version selected for deployment: its pull request, the signature check, the
-  release that follows the merge, and whether the box runs it (``status``);
-* a party's public key: the key this UI holds, the key production trusts, the key the box
-  trusts, and the pull request in between (``keys``).
+"""Where the parties' keys stand on GitHub and in the box, so the UI never claims more than
+it knows: per party, the key this UI holds, the key production trusts, the key the box
+trusts, and the pull request in between (``keys``). Answered from GitHub's API plus the
+box's manifest.
 
 Public repositories answer without a token, but only 60 times an hour per address, so
 answers are cached for a short while and a token is used when one is around
@@ -18,7 +14,6 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime
 from typing import Any
 
 import httpx
@@ -28,10 +23,6 @@ from server.config import Settings
 API = "https://api.github.com"
 RELEASE_WORKFLOW = "Release to the live box"
 TTL_SECONDS = 20
-# After a successful release the box restarts within minutes. Past this, a box that still
-# does not run the version is a failure to show, not something to wait for: nothing on
-# this page must stay locked on it.
-BOX_GRACE_SECONDS = 15 * 60
 _cache: dict[tuple, tuple[float, Any]] = {}
 
 # Every GitHub answer is kept and served at once; when it is older than TTL_SECONDS it is
@@ -174,15 +165,6 @@ def _run(run: dict) -> dict[str, Any]:
     }
 
 
-def _box_overdue(release: dict[str, Any]) -> bool:
-    """The release finished more than BOX_GRACE_SECONDS ago (unknown finish: not overdue)."""
-    try:
-        finished = datetime.fromisoformat(release["finished"]).timestamp()
-    except (KeyError, TypeError, ValueError):
-        return False
-    return time.time() - finished > BOX_GRACE_SECONDS
-
-
 async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) -> dict | None:
     """The newest pull request whose head branch satisfies ``matches``, with its check run
     (the pull_request or pull_request_target workflow on its head) and, once merged, the
@@ -209,16 +191,6 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
         },
         "check": None,
         "release": None,
-        "superseded": bool(
-            merged_at
-            and any(
-                p.get("merged_at")
-                and p["merged_at"] > merged_at
-                and p["base"]["ref"] == pr["base"]["ref"]
-                and p["head"]["ref"].startswith("plan/")
-                for p in prs
-            )
-        ),
     }
     runs = (
         await _get(
@@ -256,83 +228,12 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
     return out
 
 
-# ---- a plan version ----------------------------------------------------------------------
-
-
-async def status(settings: Settings, digest: str, box_matches: bool) -> dict[str, Any] | None:
-    """The deployment of one plan version, or None when no pull request exists for it."""
-    if not digest or not settings.repo:
-        return None
-    suffix = "-" + digest[7:15]  # Deploy names its branch plan/<name>-<digest8>
-    out: dict[str, Any] | None = None
-    try:
-        async with _client() as client:
-            out = await _pull_request(
-                settings, client, lambda ref: ref.startswith("plan/") and ref.endswith(suffix)
-            )
-    except (httpx.HTTPError, ValueError, KeyError) as exc:
-        out = {"pr": None, "check": None, "release": None, "error": type(exc).__name__}
-    if out is None or out.get("pr") is None:
-        return None
-    out.setdefault("error", None)
-    out["box_matches"] = box_matches
-    out["busy"] = _busy(out)
-    out["label"], out["tone"] = _summary(out)
-    return out
-
-
-def _busy(out: dict[str, Any]) -> bool:
-    """True while something is still expected to change on its own."""
-    pr, check, release = out["pr"], out["check"], out["release"]
-    if out.get("superseded"):
-        return False
-    if pr is None or pr["state"] == "closed" or pr["base"] != "production":
-        return False
-    if pr["state"] == "open":
-        return check is None or check["status"] != "completed" or check["conclusion"] == "success"
-    if release is None or release["status"] != "completed":
-        return True
-    return (
-        release["conclusion"] == "success" and not out["box_matches"] and not _box_overdue(release)
-    )
-
-
-def _summary(out: dict[str, Any]) -> tuple[str, str]:
-    """One short line for the agreement row: what the deployment is doing, and a tone
-    (now = in progress, ok = done, bad = stopped)."""
-    pr, check, release = out["pr"], out["check"], out["release"]
-    if out.get("superseded"):
-        return "superseded · a newer agreement was merged", "ok"
-    if pr["base"] != "production":
-        return "deploy failed · pull request against the wrong branch", "bad"
-    if pr["state"] == "closed":
-        return "deploy cancelled · pull request closed", "bad"
-    if pr["state"] == "open":
-        if check is None or check["status"] != "completed":
-            return "deploying · checking the signatures", "now"
-        if check["conclusion"] == "success":
-            return "deploying · merging", "now"
-        return "deploy failed · the signature check rejected it", "bad"
-    if release is None or release["status"] != "completed":
-        return "deploying · release to the box running", "now"
-    if release["conclusion"] != "success":
-        return "deploy failed · the release stopped", "bad"
-    if out["box_matches"]:
-        return "deployed · running in the box", "ok"
-    if _box_overdue(release):
-        return "deploy failed · the release finished but the box does not run this version", "bad"
-    return "deploying · waiting for the box to come back", "now"
-
-
-NO_PR = {"label": "selected · no pull request found", "tone": "bad", "busy": False}
-
-
 # ---- the parties' keys --------------------------------------------------------------------
 
 
 async def production_trust(settings: Settings) -> dict[str, Any] | None:
-    """trust.json as it is on the deploy base branch: the keys the plan check verifies
-    signatures against, and the keys the next release puts into the box."""
+    """trust.json as it is on the deploy base branch: the keys this UI verifies signatures
+    against, and the keys the next release puts into the box."""
     text = None
     try:
         async with _client() as client:
@@ -383,7 +284,7 @@ async def keys(
     """Per party: the key production trusts (what this UI checks signatures against), the
     key in this server's copy of the repository, the key the box trusts, the pull request
     in between, and a one-line verdict. ``ready`` says whether every party's key is trusted
-    on production, i.e. a plan signed with these keys passes the check on its pull request.
+    on production, i.e. a plan signed with these keys is one the box accepts.
     When GitHub does not answer, the copy's keys stand in and the verdict says so."""
     trust = await production_trust(settings)
     out: dict[str, Any] = {
@@ -431,7 +332,7 @@ async def keys(
         )
         out["parties"][party] = info
     # When GitHub does not answer, the copy's keys stand in: that must not turn every
-    # Deploy button grey, the verdict line says what happened instead.
+    # Run button grey, the verdict line says what happened instead.
     out["ready"] = all(p["ui"] for p in out["parties"].values())
     out["busy"] = any(p["busy"] for p in out["parties"].values())
     return out
@@ -470,8 +371,4 @@ def _key_summary(
         return "trusted on production and by the box", "ok", False
     if release and release["status"] != "completed":
         return "trusted on production · release running, the box takes it soon", "now", True
-    return (
-        "trusted on production · the box takes it with the next plan deployed and signed with it",
-        "ok",
-        False,
-    )
+    return "trusted on production · the box takes it with the next release", "now", True

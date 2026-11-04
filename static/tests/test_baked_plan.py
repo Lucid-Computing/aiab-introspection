@@ -13,11 +13,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.api import create_app
 from aiab.audit.protocol import AuditError, canonical, clone, decode, sign_bytes
-from aiab.baked.bundle import load_bundle
+from aiab.baked.bundle import file_digest, load_bundle
 from aiab.baked.executor import execute
 from aiab.baked.output import capacity, check_schema
+from aiab.baked.plan_ir import check_plan
 from aiab.baked.records import export_statement, scope_of, verify
-from aiab.baked.runtime import Runtime, verify_report
+from aiab.baked.runtime import Run, Runtime, verify_report
 from aiab.dryrun import MockModel
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture
 def setup(tmp_path):
     folder = tmp_path / "plan"
-    fixture = Path(__file__).resolve().parent / "fixtures" / "demo-plan"  # frozen demo plan
+    fixture = Path(__file__).resolve().parent / "fixtures" / "graph-plan"  # frozen demo plan
     shutil.copytree(fixture, folder)
     (folder / "trust.json").unlink()  # the fixture's trust file is not part of a plan folder
     trust = decode((fixture / "trust.json").read_bytes())
@@ -35,6 +36,7 @@ def setup(tmp_path):
         trust[role + "_key"] = base64.b64encode(key.public_key().public_bytes_raw()).decode()
     trust["runtime_digest"] = "sha256:" + "a" * 64
     unsigned = load_bundle(folder, trust, signed=False)
+    (folder / "signatures").mkdir(exist_ok=True)  # the fixture ships demo signatures
     for role in ("lab", "auditor"):
         (folder / "signatures" / f"{role}.sig").write_text(
             base64.b64encode(
@@ -44,18 +46,33 @@ def setup(tmp_path):
     bundle = load_bundle(folder, trust)
     records = [
         decode(line)
-        for line in (folder / "tests/transcripts/benign_coding.jsonl").read_bytes().splitlines()
+        for line in (folder / "tests/transcripts/benign_feature.jsonl").read_bytes().splitlines()
     ]
     return folder, trust, keys, bundle, records
 
 
-def submission(setup, records=None):
+def carried(files, keys):
+    """A bundle as it travels with a run: its file as text, signed by both fixture keys."""
+    plan_digest = file_digest(files)
+    return {
+        "files": {name: raw.decode() for name, raw in files.items()},
+        "signatures": {
+            role: base64.b64encode(
+                keys[role].sign(sign_bytes("plan-bundle", {"plan_digest": plan_digest}))
+            ).decode()
+            for role in ("lab", "auditor")
+        },
+    }
+
+
+def submission(setup, records=None, submission_id="case-1"):
+    """A run on the fixture plan: the records, the logger's evidence and the signed plan."""
     _, _, keys, bundle, default = setup
     records = default if records is None else records
-    scope = bundle.config["input_scope"]
+    scope = bundle.config.get("input_scope") or scope_of(records)
     statement = export_statement(records, scope)
     return {
-        "submission_id": "case-1",
+        "submission_id": submission_id,
         "plan_digest": bundle.digest,
         "input_scope": scope,
         "records": records,
@@ -65,13 +82,38 @@ def submission(setup, records=None):
                 keys["logger"].sign(sign_bytes("record-export", statement))
             ).decode(),
         },
+        "plan": carried(bundle.files, keys),
     }
 
 
-@pytest.mark.parametrize("file", ["plan.py", "plan.json", "prompts/bio_research_v1.txt"])
-def test_every_executable_byte_requires_new_signatures(setup, file):
+async def executed(runtime, bundle, data, trust):
+    """Run ``bundle`` as the broker would after admission of ``data``: the two tests that
+    desynchronise the broker's view of the plan from the worker's cannot go through
+    submit, which re-verifies the plan sent."""
+    commitment = verify(data, bundle.config, trust["logger_key"])
+    run = Run("run-under-test", "fingerprint", bundle.digest)
+    await runtime._execute(run, bundle, data["records"], commitment)
+    return decode(run.envelope)
+
+
+def edited(bundle, change, check=True):
+    """The bundle with its plan changed in memory. With ``check`` the loader's analysis is
+    redone (order, limits, schema); without it the change bypasses the loader on purpose."""
+    plan = clone(bundle.plan)
+    change(plan)
+    if not check:
+        return replace(bundle, plan=plan)
+    analysis = check_plan(plan)
+    return replace(bundle, plan=plan, order=analysis.order, config=analysis.config)
+
+
+def node(plan, node_id):
+    return next(n for n in plan["nodes"] if n["id"] == node_id)
+
+
+def test_every_executable_byte_requires_new_signatures(setup):
     folder, trust, _, bundle, _ = setup
-    path = folder / file
+    path = folder / "plan.json"
     path.write_bytes(path.read_bytes() + b"\n")
     with pytest.raises(AuditError, match="invalid_signature"):
         load_bundle(folder, trust)
@@ -81,7 +123,19 @@ def test_every_executable_byte_requires_new_signatures(setup, file):
 def test_fixture_edits_do_not_change_executable_commitment(setup):
     folder, trust, _, bundle, _ = setup
     (folder / "tests/expected.json").write_text("{}")
+    (folder / "README.md").write_text("notes")
     assert load_bundle(folder, trust).digest == bundle.digest
+
+
+def test_loader_reports_why_a_plan_is_refused(setup):
+    folder, trust, _, _, _ = setup
+    plan = json.loads((folder / "plan.json").read_text())
+    node(plan, "report")["inputs"]["result"] = "logs.records"
+    (folder / "plan.json").write_bytes(canonical(plan))
+    with pytest.raises(AuditError, match="invalid_plan") as failure:
+        load_bundle(folder, trust, signed=False)
+    assert failure.value.issues[0]["node"] == "report"
+    assert "receives LogRecords" in failure.value.issues[0]["message"]
 
 
 @pytest.mark.parametrize("attack", ["text", "agent", "timestamp", "scope", "order"])
@@ -102,17 +156,27 @@ def test_record_proof_rejects_tampering_before_inference(setup, attack):
         verify(data, bundle.config, trust["logger_key"])
 
 
-def test_authentic_but_out_of_scope_rejected(setup):
-    _, trust, _, bundle, records = setup
-    records = clone(records)
-    records[0]["agent_id"] = "outside"
+def test_plan_pinning_agents_refuses_other_agents(setup):
+    folder, trust, _, bundle, records = setup
+    plan = json.loads((folder / "plan.json").read_text())
+    node(plan, "logs")["config"]["input_scope"] = {
+        "window_start": "2026-10-01T00:00:00Z",
+        "window_end": "2026-11-01T00:00:00Z",
+        "agents": ["dev-agent-9"],
+    }
+    (folder / "plan.json").write_bytes(canonical(plan))
+    pinned = load_bundle(folder, trust, signed=False)
+    assert pinned.config["input_scope"]["agents"] == ["dev-agent-9"]
+    data = submission(setup)
     with pytest.raises(AuditError, match="scope_mismatch"):
-        verify(submission(setup, records), bundle.config, trust["logger_key"])
+        verify(data, pinned.config, trust["logger_key"])
+    verify(data, bundle.config, trust["logger_key"])  # the fixture plan takes any agent
 
 
 async def test_real_worker_with_broker_and_api_report(setup):
     _, trust, _, bundle, _ = setup
-    runtime = Runtime(bundle, trust, MockModel())
+    runtime = Runtime(trust, MockModel())
+    assert "plan_digest" not in runtime.manifest  # the image holds no plan
     tokens = {role: role + "-" + "x" * 40 for role in ("lab", "auditor", "logger")}
     app = create_app(runtime, tokens)
     data = submission(setup)
@@ -136,8 +200,8 @@ async def test_real_worker_with_broker_and_api_report(setup):
             run_id=run_id,
             input_commitment=commitment,
         )
-        assert result["result"] == {"flagged": False}
-        assert result["egress_max_bits"] == 1
+        assert result["result"] == {"flagged": False, "destructive_sessions": 0, "sessions": 1}
+        assert result["egress_max_bits"] == 67
         assert (await client.post("/aiab/runs", json=data)).json()["run_id"] == run_id
         bad = clone(envelope)
         bad["report"]["image_digest"] = "sha256:" + "0" * 64
@@ -153,29 +217,78 @@ async def test_real_worker_with_broker_and_api_report(setup):
     await runtime.close()
 
 
-async def test_context_preflight_all_queries_before_any_inference(setup):
+async def test_destructive_session_is_flagged_through_the_worker(setup):
+    folder, _, _, bundle, _ = setup
+    records = [
+        decode(line)
+        for line in (folder / "tests/transcripts/mixed_sessions.jsonl").read_bytes().splitlines()
+    ]
+    result = await execute(bundle, records, MockModel())
+    assert result == {"flagged": True, "destructive_sessions": 1, "sessions": 2}
+
+
+async def test_broker_builds_prompts_and_preflights_each_node_before_inference(setup):
     _, _, _, bundle, records = setup
-    cfg = clone(bundle.config)
-    cfg["window"] = 1
-    bundle = replace(bundle, config=cfg)
+
+    class Spy(MockModel):
+        events = []
+
+        async def check_messages(self, content, max_output_tokens):
+            assert content[0]["role"] == "system" and content[1]["role"] == "user"
+            assert "untrusted evidence" in content[0]["content"]  # the box's framing, first
+            self.events.append(("check", max_output_tokens))
+
+        async def complete(self, content, schema, max_output_tokens):
+            self.events.append(("complete", max_output_tokens))
+            return await super().complete(content, schema, max_output_tokens)
+
+    model = Spy()
+    await execute(bundle, records, model)
+    # effects: one session, 400 tokens; destructive: one item, 256 tokens. Checks first.
+    assert model.events == [
+        ("check", 400),
+        ("complete", 400),
+        ("check", 256),
+        ("complete", 256),
+    ]
+
+
+async def test_context_preflight_all_items_before_any_inference(setup):
+    _, _, _, bundle, records = setup
+
+    # Classify every record on its own: several items in the one classifier batch.
+    def direct(p):
+        node(p, "destructive")["inputs"]["items"] = "logs.records"
+        node(p, "destructive")["config"]["group_by"] = "record"
+        p["nodes"] = [n for n in p["nodes"] if n["id"] not in ("commands", "effects")]
+
+    bundle = edited(bundle, direct)
 
     class Overflow(MockModel):
         checked = 0
         calls = 0
 
-        async def check_context(self, text, policy):
+        async def check_messages(self, content, max_output_tokens):
             self.checked += 1
             if self.checked == 2:
                 raise AuditError("input_too_large")
 
-        async def classify(self, *args):
+        async def complete(self, *args):
             self.calls += 1
-            return 0.1
+            return {"label": "safe", "score": 0.9}
 
     model = Overflow()
     with pytest.raises(AuditError, match="input_too_large"):
         await execute(bundle, records, model)
     assert model.checked == 2 and model.calls == 0
+
+
+async def test_model_call_budget_is_enforced_by_the_parent(setup):
+    _, _, _, bundle, records = setup
+    limits = {**bundle.config["limits"], "max_model_calls_per_run": 1}
+    bundle = replace(bundle, config={**bundle.config, "limits": limits})
+    with pytest.raises(AuditError, match="input_too_large"):
+        await execute(bundle, records, MockModel())
 
 
 @pytest.mark.parametrize(
@@ -188,155 +301,88 @@ async def test_context_preflight_all_queries_before_any_inference(setup):
 )
 async def test_os_boundary_even_if_source_checker_is_bypassed(setup, operation):
     _, _, _, bundle, records = setup
-    files = dict(bundle.files)
-    files["plan.py"] = files["plan.py"].replace(
-        b"    kept: list[LogRecord] = []",
-        ("    " + operation + "\n    kept: list[LogRecord] = []").encode(),
+    # Deliberately bypass the static check (the loader ran already) to test the syscall boundary.
+    bundle = edited(
+        bundle,
+        lambda p: node(p, "commands")["config"].__setitem__(
+            "code", f"def run(records):\n    {operation}\n    return []\n"
+        ),
+        check=False,
     )
-    # Deliberately bypass static checks to test the actual syscall boundary.
-    with pytest.raises(AuditError, match="plan_start_failed"):
-        await execute(replace(bundle, files=files), records, MockModel())
+    with pytest.raises(AuditError, match="plan_metric_failed"):
+        await execute(bundle, records, MockModel())
 
 
 async def test_timeout_kills_worker_and_signs_failure(setup):
     _, trust, _, bundle, _ = setup
-    files = dict(bundle.files)
-    files["plan.py"] = files["plan.py"].replace(
-        b"    kept: list[LogRecord] = []", b"    while True: pass\n    kept: list[LogRecord] = []"
+    bundle = edited(
+        bundle,
+        lambda p: node(p, "commands")["config"].__setitem__(
+            "code", "def run(records):\n    while True: pass\n"
+        ),
+        check=False,
     )
     cfg = clone(bundle.config)
     cfg["limits"]["max_runtime_seconds_per_run"] = 1
-    runtime = Runtime(replace(bundle, files=files, config=cfg), trust, MockModel())
-    run = runtime.submit(submission(setup), "lab")
-    await asyncio.wait_for(run.task, 4)
-    envelope = decode(run.envelope)
+    runtime = Runtime(trust, MockModel())
+    envelope = await asyncio.wait_for(
+        executed(runtime, replace(bundle, config=cfg), submission(setup), trust), 4
+    )
     assert envelope["report"]["error"] == "execution_timeout"
     await runtime.close()
 
 
 async def test_invalid_output_never_released(setup):
     _, trust, _, bundle, _ = setup
-    files = dict(bundle.files)
-    files["plan.py"] = files["plan.py"].replace(
-        b'return {"flagged": verdict.flagged}', b'return {"raw": "private"}'
-    )
-    runtime = Runtime(replace(bundle, files=files), trust, MockModel())
-    run = runtime.submit(submission(setup), "lab")
-    await run.task
-    assert decode(run.envelope)["report"]["error"] == "invalid_output"
-    assert b"private" not in run.envelope
+    # The broker checks the result against the egress schema independently of the worker.
+    cfg = clone(bundle.config)
+    cfg["output_schema"]["properties"].pop("sessions")
+    cfg["output_schema"]["required"].remove("sessions")
+    runtime = Runtime(trust, MockModel())
+    envelope = await executed(runtime, replace(bundle, config=cfg), submission(setup), trust)
+    assert envelope["report"]["error"] == "invalid_output"
+    raw = canonical(envelope)
+    assert b"tool call" not in raw and b"Bash" not in raw
     await runtime.close()
+
+
+async def test_worker_error_identifies_stage_without_private_exception_text(setup):
+    _, _, _, bundle, records = setup
+    bundle = edited(
+        bundle,
+        lambda p: node(p, "commands")["config"].__setitem__(
+            "code", "def run(records):\n    raise ValueError('PRIVATE INPUT MUST NOT ESCAPE')\n"
+        ),
+        check=False,
+    )
+    with pytest.raises(AuditError) as failure:
+        await execute(bundle, records, MockModel())
+    assert failure.value.code == "plan_metric_failed"
+    assert "PRIVATE" not in str(failure.value)
+
+
+async def test_model_answers_are_validated_against_the_dictated_schema(setup):
+    _, _, _, bundle, records = setup
+
+    class Loose(MockModel):
+        async def complete(self, content, schema, max_output_tokens):
+            return {"label": "whatever", "score": 0.5}  # not one of the plan's labels
+
+    with pytest.raises(AuditError, match="model_output_invalid"):
+        await execute(bundle, records, Loose())
 
 
 def test_bounded_strings_and_arrays_have_finite_schema_capacity():
     schema = {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 4}}
     assert check_schema(schema) > 0
     assert capacity({"output_schema": schema, "limits": {"max_result_bytes": 4}}) == 32
+    assert check_schema({"type": "number"}) == 64
     with pytest.raises(AuditError):
         check_schema({"type": "array", "items": {"type": "boolean"}})
 
 
-def test_ci_plan_check_uses_base_keys_and_rejects_mixed_changes(setup, tmp_path, monkeypatch):
-    import subprocess
-
-    from deploy.check_plan_pr import check
-
-    folder, trust, keys, _, _ = setup
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    shutil.copytree(folder, repo / "plan")
-    fixed = repo / "static/aiab/baked/trust.json"
-    fixed.parent.mkdir(parents=True)
-    fixed.write_bytes(canonical(trust))
-    monkeypatch.chdir(repo)
-
-    def git(*args):
-        return subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL).decode().strip()
-
-    git("init", "-q")
-    git("config", "user.email", "test@example.invalid")
-    git("config", "user.name", "test")
-    git("add", ".")
-    git("commit", "-qm", "base")
-    base = git("rev-parse", "HEAD")
-    prompt = repo / "plan/prompts/bio_research_v1.txt"
-    prompt.write_text(prompt.read_text() + "\nReviewed change.\n")
-    updated = load_bundle(repo / "plan", trust, signed=False)
-    for role in ("lab", "auditor"):
-        (repo / "plan/signatures" / f"{role}.sig").write_text(
-            base64.b64encode(
-                keys[role].sign(sign_bytes("plan-bundle", {"plan_digest": updated.digest}))
-            ).decode()
-        )
-    git("add", "plan")
-    git("commit", "-qm", "signed plan")
-    assert check(base, git("rev-parse", "HEAD")) == updated.digest
-    (repo / "plan/plan.py").write_text((repo / "plan/plan.py").read_text() + "\n")
-    git("add", "plan")
-    git("commit", "-qm", "tamper")
-    with pytest.raises(AuditError, match="invalid_signature"):
-        check(base, git("rev-parse", "HEAD"))
-    fixed.write_bytes(canonical({**trust, "lab_key": trust["auditor_key"]}))
-    git("add", "static")
-    git("commit", "-qm", "change verifier trust")
-    with pytest.raises(ValueError, match="plan-only"):
-        check(base, git("rev-parse", "HEAD"))
-
-
-@pytest.mark.parametrize(
-    "prefix",
-    [
-        "import dataclasses\n",
-        "from typing import sys\n",
-        "from dataclasses import inspect\n",
-        "from aiab.plan_api import install_run_llm\n",
-    ],
-)
-def test_only_named_plan_api_imports_are_admitted(setup, prefix):
-    from aiab.baked.bundle import check_source
-
-    source = setup[3].files["plan.py"].decode()
-    # Place after the future import, so rejection is not a syntax error.
-    source = source.replace("from typing import Literal", prefix + "from typing import Literal")
-    with pytest.raises(AuditError, match="invalid_plan_source"):
-        check_source(source)
-
-
 def test_plan_without_input_scope_accepts_any_agent(setup):
-    folder, trust, keys, _, records = setup
-    cfg_path = folder / "plan.json"
-    cfg = json.loads(cfg_path.read_text())
-    cfg.pop("input_scope")
-    cfg_path.write_text(json.dumps(cfg))
-    bundle = load_bundle(folder, trust, signed=False)
+    _, trust, keys, bundle, records = setup
     outsiders = [dict(r, agent_id="outsider") for r in records]
-    scope = scope_of(outsiders)
-    statement = export_statement(outsiders, scope)
-    data = {
-        "submission_id": "case-2",
-        "plan_digest": bundle.digest,
-        "input_scope": scope,
-        "records": outsiders,
-        "logger_evidence": {
-            "statement": statement,
-            "signature": base64.b64encode(
-                keys["logger"].sign(sign_bytes("record-export", statement))
-            ).decode(),
-        },
-    }
+    data = submission(setup, outsiders)
     verify(data, bundle.config, trust["logger_key"])  # no AuditError
-    # the same records are still refused by a plan that pins other agents
-    with pytest.raises(AuditError, match="scope_mismatch"):
-        verify(data, setup[3].config, trust["logger_key"])
-
-
-async def test_worker_error_identifies_stage_without_private_exception_text(setup):
-    _, _, _, bundle, records = setup
-    files = dict(bundle.files)
-    files["plan.py"] = files["plan.py"].replace(
-        b"    above = [score for score in scores if score > threshold]",
-        b"    raise ValueError('PRIVATE INPUT MUST NOT ESCAPE')",
-    )
-    with pytest.raises(AuditError) as failure:
-        await execute(replace(bundle, files=files), records, MockModel())
-    assert str(failure.value) == "plan_metric_failed"

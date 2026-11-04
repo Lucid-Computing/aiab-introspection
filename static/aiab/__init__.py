@@ -1,1 +1,1 @@
-"""AIAB appliance: bounded classification and signed aggregate reporting."""
+"""The box: runs a jointly signed plan over submitted records and signs the report."""

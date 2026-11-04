@@ -24,8 +24,8 @@ folder signing, dry runs and expanded signed reports. The candidate v0.2.0 passe
 real confidential inference on the synthetic fixtures (TP=2, TN=1, FP=0, FN=0).
 These changes address P9/B5 and the folder execution workflow; they do not implement
 an agent, appeals, multiple-model selection or verified wipe. See
-[operations](BAKED_PLAN_OPERATIONS.md) and `static/demo/audit/baked-evidence/` for
-current evidence. Native logger acceptance, portable hardware endorsement of the
+[operations](BAKED_PLAN_OPERATIONS.md) and `static/demo/audit/baked-evidence/` (in git history; removed 3 Nov 2026) for
+the recorded evidence. Native logger acceptance, portable hardware endorsement of the
 report key, public-source licensing and UI integration remain outstanding.
 
 ## Signed plan requirements (v0.1.3 snapshot)
@@ -137,7 +137,7 @@ P14, P16, B5 or B8. See [plan/README.md](../plan/README.md).
 `make check` on the reviewed implementation: **554 passed, 7 skipped**. This is
 baseline/regression coverage, not tests for the missing features. Existing v0.1.3
 live acceptance evidence is in
-[`static/demo/audit/tooling-evidence/release-v013-acceptance.json`](../static/demo/audit/tooling-evidence/release-v013-acceptance.json),
+`static/demo/audit/tooling-evidence/release-v013-acceptance.json` (in git history; removed 3 Nov 2026),
 with the release journal alongside it. Historical evidence is kept immutable;
 it must not be relabelled as coverage of the new mandatory extensions.
 

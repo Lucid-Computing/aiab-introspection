@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% set active = "agreements" %}
 {% block title %}Sign · AIAB agreement{% endblock %}
-{% block head %}{% if keys and keys.busy and not key_wait %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
+{% block head %}{% if keys and keys.busy and not key_wait %}<meta http-equiv="refresh" content="20">{% endif %}<script src="/assets/sign.js" defer></script>{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/agreements" class="link">← Agreements</a>{% if view %} · <a href="{{ base }}/plan" class="link">{{ view.plan_id }}</a>{% endif %}</p>
 <h1>Sign</h1>
 {% if copy and (copy.behind or copy.last_pull.error or copy.error) %}<div class="form-message error"><p style="margin:0">This server's copy of <span class="mono">{{ copy.branch }}</span> is at {{ copy.head }}{% if copy.behind %}, {{ copy.behind }} commit{{ "s" if copy.behind != 1 }} behind GitHub{% endif %}.{% if copy.last_pull.error %} Last catch-up failed: <span class="mono">{{ copy.last_pull.error }}</span>.{% elif copy.error %} <span class="mono">{{ copy.error }}</span>.{% endif %}</p>
 {% if copy.changes %}<p style="margin: var(--space-2) 0 0">Local changes in the copy:{% for line in copy.changes %} <span class="mono">{{ line }}</span>{% endfor %}{% if copy.dirty > copy.changes | length %} …{% endif %}</p>{% endif %}
 <p style="margin: var(--space-3) 0 0"><form method="post" action="/copy/pull" class="inline"><button class="btn btn--ghost btn--sm">Catch up now</button></form>{% if copy.dirty %} <form method="post" action="/copy/reset" class="inline" data-confirm="This moves the copy's local changes into a git stash (nothing is deleted; git stash list shows them) and then catches up with GitHub. Continue?"><button class="btn btn--ghost btn--sm">Set local changes aside and catch up</button></form>{% endif %}</p></div>{% endif %}
-<p class="lead">The digest below is the fingerprint of this version's files. Each party signs that fingerprint with its own private key; the box checks the signature with the public key it holds for that party. The private key never leaves your machine.</p>
+<p class="lead">The digest below is the fingerprint of this version's files. Each party signs that fingerprint with its own private key; the box checks the signature with the public key it holds for that party. The auditor's private key is made and kept in the auditor's browser and never reaches this server; a key kept elsewhere works too, with the commands under Other ways to sign.{% if auto_sign %} The lab's key is on this server: it signs every version as the lab by itself, and whoever controls this server can sign as the lab.{% endif %}</p>
+{% if auto_problem %}<p class="form-message error">The server cannot sign as the lab: {{ auto_problem }}. Until that is fixed the lab signs by hand below.</p>{% endif %}
 {% if view %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
 
@@ -17,14 +18,12 @@
     <div class="card-header">This version</div>
     <div class="card-body">
       <p class="digest" style="font-size: var(--text-lg)">{{ view.digest }}</p>
-      <ol class="steps">
-        <li>Sign it, one command on your own machine (needs OpenSSL 3; on a Mac, <span class="mono">brew install openssl</span>, the built-in one cannot do this):
-<pre class="cmd">printf 'AIAB/plan-bundle/v1\0{"plan_digest":"%s"}' {{ view.digest }} > /tmp/aiab-msg && openssl pkeyutl -sign -inkey ~/{{ user.party }}.pem -rawin -in /tmp/aiab-msg | base64</pre></li>
-        <li>Paste the line it prints into your card below and press Verify and store.</li>
-      </ol>
+      <p class="explain">Sign it in your own card below. To check the digest before signing, download <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>, the exact files it covers, and run <span class="mono">python3 sign_digest.py digest plan.zip</span> (<a class="link" href="/assets/sign_digest.py" download>sign_digest.py</a>); it must print the digest above.</p>
       <details class="info">
-        <summary>No key yet, or no OpenSSL 3?</summary>
+        <summary>Other ways to sign: a key you keep outside the browser</summary>
         <div class="info-body">
+          <p class="explain">One command on your own machine signs the digest with a private key file (needs OpenSSL 3; on a Mac, <span class="mono">brew install openssl</span>, the built-in one cannot do this). Paste the line it prints into your card below under Paste a signature and press Verify and store:</p>
+<pre class="cmd">printf 'AIAB/plan-bundle/v1\0{"plan_digest":"%s"}' {{ view.digest }} > /tmp/aiab-msg && openssl pkeyutl -sign -inkey ~/{{ user.party }}.pem -rawin -in /tmp/aiab-msg | base64</pre>
           <p class="explain">A key from 1Password works as it is: submit the <span class="mono">ssh-ed25519 …</span> line as the public key, and for signing export the private key in PKCS#8 form into <span class="mono">~/{{ user.party }}.pem</span> (click the private key field, choose PKCS#8, Download Unencrypted Key; delete the file after signing). Or make a key pair once, then submit the public key it prints in your card below:</p>
 <pre class="cmd">openssl genpkey -algorithm ed25519 -out ~/{{ user.party }}.pem
 openssl pkey -in ~/{{ user.party }}.pem -pubout -outform DER | tail -c 32 | base64</pre>
@@ -33,8 +32,6 @@ openssl pkey -in ~/{{ user.party }}.pem -pubout -outform DER | tail -c 32 | base
 <pre class="cmd">python3 sign_digest.py keygen --out ~/{{ user.party }}.key
 python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.key
 python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.key --party {{ user.party }} --user {{ user.username }} --submit {{ request.base_url }}a/{{ aid }}/sign/upload</pre>
-          <p class="explain">To check the digest before signing, download <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>, the exact files it covers, and run this; it must print the digest above:</p>
-<pre class="cmd">python3 sign_digest.py digest plan.zip</pre>
         </div>
       </details>
     </div>
@@ -43,7 +40,7 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
   {% for party in parties %}{% set s = view.signatures[party] %}
   <div class="card">
     <div class="card-header">{{ party }}
-      <span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{% if s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span>
+      <span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{% if s.auto %}signed this version automatically by the server{% elif s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span>
     </div>
     <div class="card-body">
       <p class="explain keyline"><span class="text-muted">Trusted key for the {{ party }}, on production</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span></p>
@@ -55,29 +52,69 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
       {% endif %}
       {% if s.status == 'invalid' %}<p class="explain">The stored signature was made for a different version of the plan, or with a different key, so it no longer counts. The {{ party }} needs to sign this version.</p>{% endif %}
       {% if s.signature and s.status == 'ok' %}<p class="explain keyline"><span class="text-muted">{{ "Your signature" if user.party == party else "Signature of the " ~ party }}</span> <span class="mono" style="word-break: break-all">{{ s.signature }}</span></p>{% endif %}
-      {% if user.party == party %}
+      {% if s.auto %}
+      <p class="explain">The server holds the lab key and signs each version as soon as it is saved. Nothing to do here.</p>
+      {% elif user.party == party %}
       {% if s.status == 'ok' %}
       <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?">
         <input type="hidden" name="party" value="{{ party }}">
         <button class="btn btn--ghost">Re-sign</button>
       </form>
       {% else %}
+      <div class="browser-key" data-party="{{ party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[party] or '' }}">
+        <p class="field-hint browser-key-note" hidden></p>
+        <div data-state="unsupported" hidden>
+          <p class="explain">This browser cannot make Ed25519 keys (needs Safari 17, Firefox 130 or Chrome 137, or newer). Use the commands under Other ways to sign above and paste the signature below.</p>
+        </div>
+        <div data-state="none" hidden>
+          <p class="explain">No {{ party }} key in this browser yet. Make one here: it stays in this browser (on this site only), the server never sees it, and the backup file you download now is the only other copy. Then submit its public key; signing is possible once production trusts it.</p>
+          <form class="browser-make">
+            <div class="field"><label for="make-password-{{ party }}">Backup password</label><input id="make-password-{{ party }}" name="password" type="password" autocomplete="new-password" required></div>
+            <div class="field"><label for="make-again-{{ party }}">Backup password, again</label><input id="make-again-{{ party }}" name="again" type="password" autocomplete="new-password" required></div>
+            <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Make a key in this browser</button></p>
+          </form>
+          <details class="info" style="margin: var(--space-4) 0 0">
+            <summary>Already have a backup file from another browser?</summary>
+            <div class="info-body">
+              <form class="browser-import">
+                <div class="field"><label for="import-file-{{ party }}">Backup file</label><input id="import-file-{{ party }}" name="backup" type="file" accept="application/json,.json" required></div>
+                <div class="field"><label for="import-password-{{ party }}">Its password</label><input id="import-password-{{ party }}" name="password" type="password" autocomplete="current-password" required></div>
+                <p style="margin-top: var(--space-4)"><button class="btn btn--ghost">Import into this browser</button></p>
+              </form>
+            </div>
+          </details>
+        </div>
+        <div data-state="ready" hidden>
+          <p class="explain keyline"><span class="text-muted">Key in this browser</span> <span class="mono browser-public-key"></span></p>
+          <p class="explain keyline"><span class="text-muted">Status</span> <span class="browser-key-verdict"></span></p>
+          <p class="row">
+            <button type="button" class="btn btn--primary browser-sign">Sign this version in this browser</button>
+            <button type="button" class="btn btn--ghost browser-key-submit" hidden>Submit this public key</button>
+            <button type="button" class="btn btn--ghost btn--sm browser-forget">Forget this key</button>
+          </p>
+        </div>
+      </div>
       <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
-        <summary>Submit a new public key</summary>
+        <summary>Submit a new public key by hand</summary>
         <div class="info-body">
-          <p class="explain">Signatures are checked against the key production trusts, shown above, read from GitHub: by this UI, by the check on the plan pull request and by the box alike. Submitting a new key opens a pull request that changes it; the check merges it within a minute and the status line follows the pull request. No release starts from that merge: the box takes the key together with the next plan you sign with it and deploy, because it only starts with a plan signed by the keys it trusts. Sign with the new key once the status line says it is trusted on production.</p>
-          <form method="post" action="{{ base }}/sign/key" data-busy="Submitting your public key: making the branch and opening the pull request. A few seconds.">
+          <p class="explain">Signatures are checked against the key production trusts, shown above, read from GitHub: by this UI and by the box alike. Submitting a new key opens a pull request that changes it; the check merges it within a minute and starts the release that builds the key into the box, and the status line follows both. Sign with the new key once the status line says the box trusts it: the box refuses a plan signed with a key its image does not hold.</p>
+          <form id="key-form-{{ party }}" method="post" action="{{ base }}/sign/key" data-busy="Submitting your public key: making the branch and opening the pull request. A few seconds.">
             <input type="hidden" name="party" value="{{ party }}">
             <div class="field"><label for="key-{{ party }}">Public key</label><input id="key-{{ party }}" name="public_key" class="json" placeholder="the 44-character line ending in =, or the ssh-ed25519 line from 1Password" required></div>
             <p style="margin-top: var(--space-4)"><button class="btn btn--ghost">Submit this public key</button></p>
           </form>
         </div>
       </details>
-      <form method="post" action="{{ base }}/sign/upload">
-        <input type="hidden" name="party" value="{{ party }}">
-        <div class="field"><label for="sig-{{ party }}">Your signature</label><textarea id="sig-{{ party }}" name="signature" class="code" style="min-height: 72px" placeholder="paste the line the sign command printed"></textarea></div>
-        <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Verify and store</button></p>
-      </form>
+      <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
+        <summary>Paste a signature made elsewhere</summary>
+        <div class="info-body">
+          <form id="upload-form-{{ party }}" method="post" action="{{ base }}/sign/upload">
+            <input type="hidden" name="party" value="{{ party }}">
+            <div class="field"><label for="sig-{{ party }}">Your signature</label><textarea id="sig-{{ party }}" name="signature" class="code" style="min-height: 72px" placeholder="paste the line the sign command printed"></textarea></div>
+            <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Verify and store</button></p>
+          </form>
+        </div>
+      </details>
       {% endif %}
       {% else %}<p class="text-muted">Only the {{ party }} can sign here.</p>{% endif %}
     </div>

@@ -1,5 +1,5 @@
-"""Leaving the editing pages, signing or deploying ends an edit lease, so a stale
-"X is editing" never blocks Deploy."""
+"""Leaving the editing pages or signing ends an edit lease, so a stale "X is editing"
+never blocks Run."""
 
 from server import app as ui
 from server import editing

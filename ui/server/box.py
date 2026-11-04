@@ -24,7 +24,7 @@ async def _get_json(base_url: str, path: str) -> tuple[dict[str, Any] | None, st
 _recent: dict[str, tuple[float, tuple]] = {}
 
 
-async def box_status(base_url: str | None, local_digest: str) -> dict[str, Any]:
+async def box_status(base_url: str | None) -> dict[str, Any]:
     if not base_url:
         return {"configured": False}
     hit = _recent.get(base_url)
@@ -35,7 +35,6 @@ async def box_status(base_url: str | None, local_digest: str) -> dict[str, Any]:
             _get_json(base_url, "/aiab/manifest"), _get_json(base_url, "/aiab/health")
         )
         _recent[base_url] = (time.monotonic(), ((manifest, manifest_error), (health, health_error)))
-    box_plan = (manifest or {}).get("plan_digest")
     return {
         "configured": True,
         "url": base_url,
@@ -44,6 +43,4 @@ async def box_status(base_url: str | None, local_digest: str) -> dict[str, Any]:
         "health": health,
         "health_error": health_error,
         "image_digest": (manifest or {}).get("image_digest"),
-        "plan_digest": box_plan,
-        "plan_matches": (box_plan == local_digest) if box_plan else None,
     }

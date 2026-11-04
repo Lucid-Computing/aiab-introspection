@@ -20,8 +20,8 @@ from pathlib import Path
 
 import httpx
 
-from aiab.audit.plan import Trust
 from aiab.audit.protocol import canonical, digest
+from aiab.baked.runtime import Runtime
 from aiab.config import read_private_key
 from auditor.audit import AuditClient
 
@@ -82,19 +82,31 @@ def render(config, trust, build, release_tag):
     if len(entries) != 1:
         raise ValueError("Expected one measured trust source")
     entries[0]["AIAB_AUDIT_TRUST_JSON"] = canonical(trust).decode()
-    if "plan_digest" in build:
-        from aiab.baked.bundle import load_bundle
-        from aiab.baked.runtime import Runtime
-
-        bundle = load_bundle(Path(__file__).resolve().parents[4] / "plan", trust)
-        if bundle.digest != build["plan_digest"]:
-            raise ValueError("Built plan differs from signed source bundle")
-        container["command"] = ["python", "-m", "aiab.baked.main"]
-        # Keep the route to return a clear authenticated 405 rather than shim HTML.
-        manifest = Runtime(bundle, trust, None).manifest
-    else:
-        manifest = Trust(**trust).manifest()
+    container["command"] = ["python", "-m", "aiab.baked.main"]
+    # The image holds no plan: the manifest commits to the runtime, keys and model only.
+    manifest = Runtime(trust, None).manifest
     return config, trust, manifest
+
+
+PRODUCTION_REPO = "Lucid-Computing/aiab-signed-audit-enclave"
+PRODUCTION_INSTANCE = "28c10708-7f8b-4981-8280-dca928a2654b"
+PRODUCTION_IMAGE = "ghcr.io/lucid-computing/aiab-introspection-enclave"
+
+
+def environment(prior, instance=None):
+    """What differs between environments (production, staging), read from the branch's
+    release.json: the Tinfoil instance to update and the image name. ``instance`` is None for
+    an environment whose first measured release has not yet been used to create one; the
+    release then stops after measuring. Production's release.json predates both fields, so
+    its values are the literals."""
+    legacy = prior.get("repo") == PRODUCTION_REPO
+    instance = instance or prior.get("instance") or (PRODUCTION_INSTANCE if legacy else None)
+    if instance is not None and not re.fullmatch(r"[0-9a-f-]{36}", instance):
+        raise ValueError("Invalid instance ID")
+    image = prior.get("image") or (PRODUCTION_IMAGE if legacy else None)
+    if not image or not re.fullmatch(r"ghcr.io/[a-z0-9-]+/[a-z0-9._-]+", image):
+        raise ValueError("release.json needs the environment's image name")
+    return instance, image
 
 
 class ControlPlane:
@@ -113,9 +125,53 @@ class ControlPlane:
         response = self.client.request(method, path, json=value)
         if response.status_code not in (200, 201, 202):
             raise RuntimeError(
-                "Control plane rejected operation: HTTP " + str(response.status_code)
+                "Control plane rejected operation: HTTP "
+                + str(response.status_code)
+                + " on "
+                + method
+                + " "
+                + path
+                + ": "
+                + response.text[:300]
             )
         return response.json()
+
+
+def secret_names(config):
+    """The secrets the config's audit container declares; a new instance must be granted
+    them explicitly, like the CLI's --secret flags do."""
+    containers = [c for c in config["containers"] if c["name"] == "aiab"]
+    return list(containers[0].get("secrets", [])) if containers else []
+
+
+def instance_host(view):
+    """The public hostname of a container as the control plane describes it."""
+    host = view.get("domain")
+    if not host:
+        raise RuntimeError(
+            "The control plane gave no public domain for the instance; fields: "
+            + ", ".join(sorted(view))
+        )
+    return host
+
+
+def create_instance(cp, name, repo, tag, secrets):
+    """Create a Tinfoil instance from a measured release and start it: what the CLI's
+    ``container create`` does (POST /api/containers, then POST .../deploy). Returns the
+    instance id and its public hostname, for release.json."""
+    body = {"name": name, "repo": repo, "tag": tag, "mark_latest_release": True}
+    if secrets:
+        body["secrets"] = secrets
+    created = cp.request("POST", "/api/containers", body)
+    instance = created["id"]
+    if not re.fullmatch(r"[0-9a-f-]{36}", instance):
+        raise RuntimeError("Unexpected instance id from the control plane: " + instance)
+    view = cp.request("GET", "/api/containers/" + instance)
+    # Creation can already start the deployment; starting it twice returns HTTP 409.
+    if view.get("status") not in {"deploying", "started", "running"}:
+        cp.request("POST", "/api/containers/" + instance + "/deploy", {})
+        view = cp.request("GET", "/api/containers/" + instance)
+    return instance, instance_host(view)
 
 
 async def verify(release, token_file):
@@ -148,17 +204,34 @@ def main():
         required=True,
         help="Local synthetic-demo role keys/tokens; never uploaded to CI",
     )
-    parser.add_argument("--instance", default="28c10708-7f8b-4981-8280-dca928a2654b")
+    parser.add_argument(
+        "--instance",
+        default=None,
+        help="Tinfoil instance to update; default: the 'instance' field of release.json",
+    )
+    parser.add_argument(
+        "--create",
+        default=None,
+        metavar="NAME",
+        help="For an environment without an instance: create one with this name from the "
+        "measured release, start it and record its id and hostname in release.json",
+    )
     args = parser.parse_args()
     if not re.fullmatch(r"v\d+\.\d+\.\d+", args.tag):
         parser.error("Tag must be vMAJOR.MINOR.PATCH")
-    if not re.fullmatch(r"[0-9a-f-]{36}", args.instance):
-        parser.error("Invalid instance ID")
     root = Path(__file__).resolve().parents[4]
     baseline = Path(__file__).parent
     source_repo = "Lucid-Computing/aiab-introspection"
+    # Everything that differs between environments (production, staging) is in release.json
+    # on the environment's branch: the public config repo, the Tinfoil instance and the image.
     prior = json.loads((baseline / "release.json").read_text())
     repo = prior["repo"]
+    try:
+        instance, image = environment(prior, args.instance)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.create and instance:
+        parser.error("release.json already names an instance; --create is for a new environment")
     sha = command("git", "rev-parse", "HEAD", cwd=root)
     if command("git", "status", "--porcelain", cwd=root):
         raise RuntimeError("Commit local changes before planning a release")
@@ -173,7 +246,7 @@ def main():
         "schema": "aiab-release-attempt/v1",
         "source_commit": sha,
         "tag": args.tag,
-        "instance": args.instance,
+        "instance": instance,
         "previous_release": prior,
         "status": "planned",
     }
@@ -192,7 +265,6 @@ def main():
     cp = ControlPlane(Path.home() / ".tinfoil/config.json")
     try:
         record("building", status="in_progress")
-        image = "ghcr.io/lucid-computing/aiab-introspection-enclave"
         run_id, built_sha = workflow(
             source_repo, "build-image.yml", args.source_ref, args.output, "-f", "image=" + image
         )
@@ -219,8 +291,8 @@ def main():
         # The trust the box runs with: the last recorded trust (runtime digest, model) with
         # the keys and model from static/aiab/baked/trust.json on the source ref, the file
         # the key pull requests change and the image bakes. The box compares the two at
-        # start-up (static_trust_mismatch), so they must agree; the plan's signatures are
-        # verified against these keys below.
+        # start-up (static_trust_mismatch), so they must agree; every run's plan is then
+        # verified against these keys.
         trust_in = json.loads((baseline / "trust.json").read_text())
         trust_in.update(json.loads((root / "static/aiab/baked/trust.json").read_text()))
         config, trust, manifest = render(
@@ -269,25 +341,44 @@ def main():
             raise RuntimeError("Invalid release measurement")
         release = {
             **prior,
+            **({"instance": instance} if instance else {}),
+            "image": image,
             "tag": args.tag,
             "reviewed_config_commit": config_sha,
             "release_digest": "sha256:" + release_hash,
             "policy_digest": digest(manifest),
             "application_source_commit": sha,
-            **(
-                {"image_digest": build["digest"], "plan_digest": build["plan_digest"]}
-                if "plan_digest" in build
-                else {}
-            ),
+            "image_digest": build["digest"],
         }
         (args.output / "release.json").write_bytes(canonical(release) + b"\n")
-        record("deploying", target_release=release)
-        cp.request(
-            "POST", "/api/containers/" + args.instance + "/update", {"tag": args.tag, "hold": False}
-        )
+        if instance is None and not args.create:
+            # A new environment: nothing runs this config yet. The measured release is what
+            # the instance gets created from (--create here, once the project secrets exist);
+            # its id and hostname then go into release.json as "instance" and "host", and
+            # the next release deploys to it.
+            record(
+                "measured",
+                status="succeeded",
+                next_step="run again with --create NAME once the project secrets exist",
+            )
+            print("No instance in release.json: measured only, nothing deployed.", flush=True)
+            return
+        if instance is None:
+            # The environment's first instance, from the release just measured. The project
+            # secrets the config names must already exist in Tinfoil, or it will not start.
+            record("creating", name=args.create, target_release=release)
+            instance, host = create_instance(cp, args.create, repo, args.tag, secret_names(config))
+            release.update(instance=instance, host=host)
+            (args.output / "release.json").write_bytes(canonical(release) + b"\n")
+            record("deploying", target_release=release)
+        else:
+            record("deploying", target_release=release)
+            cp.request(
+                "POST", "/api/containers/" + instance + "/update", {"tag": args.tag, "hold": False}
+            )
         deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
-            live = cp.request("GET", "/api/containers/" + args.instance)
+            live = cp.request("GET", "/api/containers/" + instance)
             if live.get("current_tag") == args.tag and live.get("status") == "running":
                 break
             if live.get("update_status") == "failed" or live.get("status") == "failed":

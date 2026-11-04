@@ -1,123 +1,72 @@
-"""View models over the plan folder, built on the box's own loader (aiab.baked.bundle)."""
+"""View models over an agreement folder, built on the box's own loader (aiab.baked.bundle).
+
+An agreement is one file, plan.json, the audit plan as a graph. The builder (ui/playground,
+embedded in the plan page) edits it and saves it through ``save_plan``, which runs the
+box's loader on the candidate first, so nothing the box would refuse is ever written.
+"""
 
 from __future__ import annotations
 
+import base64
 import json
+import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from aiab.audit.protocol import AuditError, canonical, decode, verify_signature
-from aiab.baked.bundle import bundle_files, file_digest, load_bundle, restrictions
+from aiab.audit.protocol import AuditError, canonical, decode, sign_bytes, verify_signature
+from aiab.baked.bundle import PLAN_FILE, bundle_files, file_digest, load_bundle, restrictions
+from aiab.baked.plan_ir import PLAN_VERSION, PlanError, output_port
 
 from server.config import Settings
-from server.pipeline import PARTIES, PIPELINE, Step
-from server.plansource import FunctionInfo, plan_functions, replace_function_source
+
+PARTIES: tuple[str, ...] = ("lab", "auditor")
+ARCHIVE_DIR = "_archive"  # agreements in the previous plan format, kept read-only
 
 # Where the box's loader error codes point. One code at a time: the loader stops at the
 # first problem, exactly as the box does at boot.
 ISSUE_WHERE = {
-    "invalid_bundle": "folder layout (__init__.py, plan.py, plan.json, prompts/*.txt)",
-    "invalid_bundle_init": "__init__.py",
-    "invalid_plan": "plan.json does not match schema aiab-baked-plan/v1",
-    "unapproved_parties": "plan.json: parties / input_scope.logger_key_id",
+    "invalid_bundle": "plan.json is missing, a symlink or larger than 256 KiB",
+    "invalid_json": "plan.json is not valid JSON",
+    "invalid_plan": "the plan graph (the builder lists the problems)",
     "invalid_trust_roots": "the trust file",
-    "unapproved_model": "plan.json: model does not match the pinned model",
-    "invalid_limits": "plan.json: window exceeds limits.max_logs_per_query",
-    "invalid_scope": "plan.json: input_scope window",
-    "missing_prompt": "prompts/<prompt_id>.txt",
-    "invalid_plan_source": "plan.py: functions, imports or forbidden names",
-    "invalid_output_schema": "plan.json: output_schema",
+    "invalid_scope": "the Input Logs scope: the window ends before it starts",
+    "invalid_output_schema": "the Final Report fields",
+    "invalid_signature": "a signature file",
 }
-ISSUE_STEP = {
-    "unapproved_model": "classify",
-    "missing_prompt": "classify",
-    "invalid_limits": "build_query",
-    "invalid_output_schema": "emit_report",
+NODE_LABELS = {
+    "input_logs": "Input Logs",
+    "classifier": "Classifier",
+    "run_python": "Run Python",
+    "run_llm": "Run LLM",
+    "final_report": "Final Report",
 }
 
 
-def get_setting(config: Any, dotted: str) -> Any:
-    node = config
-    for part in dotted.split("."):
-        if not isinstance(node, dict) or part not in node:
-            return None
-        node = node[part]
-    return node
-
-
-def set_setting(config: dict[str, Any], dotted: str, value: Any) -> None:
-    parts = dotted.split(".")
-    node = config
-    for part in parts[:-1]:
-        node = node.setdefault(part, {})
-    node[parts[-1]] = value
-
-
-def parse_setting(text: str) -> Any:
-    """JSON, but forgiving about a comma after the last item of a list or object."""
-    import re
-
-    try:
-        return json.loads(text)
-    except ValueError:
-        return json.loads(re.sub(r",\s*([\]}])", r"\1", text))
-
-
-def _kind(value: Any) -> str:
-    if isinstance(value, bool):
-        return "bool"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, float):
-        return "float"
-    if isinstance(value, str):
-        return "str"
-    if isinstance(value, list):
-        return "list"
-    if isinstance(value, dict):
-        return "dict"
-    return "null"
-
-
 @dataclass(frozen=True)
-class SettingView:
-    path: str
-    value: Any
-    value_json: str
-    kind: str
-
-    @property
-    def multiline(self) -> bool:
-        long_text = self.kind == "str" and (len(self.value) > 60 or self.path.endswith(".problem"))
-        return self.kind in {"list", "dict"} or long_text
-
-    @property
-    def raw(self) -> str:
-        """What the form shows: plain text for strings, JSON for everything else."""
-        return self.value if self.kind == "str" else self.value_json
-
-
-@dataclass(frozen=True)
-class StepView:
-    step: Step
-    function: FunctionInfo | None
-    settings: tuple[SettingView, ...]
-    issue: str | None
-    prompt_id: str | None
-    prompt_text: str | None
+class NodeView:
+    id: str
+    type: str
+    label: str
+    title: str
+    inputs: tuple[str, ...]  # "name ← node.output"
+    output: str  # "name · Type", or "releases N fields" for the report
 
 
 @dataclass(frozen=True)
 class PlanView:
     plan_dir: Path
     plan_id: str
+    title: str
+    description: str
     files: tuple[str, ...]
     digest: str
-    config: Any
-    steps: tuple[StepView, ...]
+    plan: Any  # the plan document as saved, or None when plan.json is not JSON
+    nodes: tuple[NodeView, ...]
     issue: str | None
     issue_where: str | None
+    issues: tuple[dict[str, Any], ...]  # the loader's reasons, each with node and message
     signatures: dict[str, dict[str, Any]]
     frozen: bool
     stale: tuple[str, ...]
@@ -125,15 +74,11 @@ class PlanView:
     state: str
     state_badge: str
     restrictions: dict[str, Any]
-    prompts: dict[str, str]
     history: tuple[dict[str, str], ...]
 
     @property
     def signed_by_both(self) -> bool:
         return all(s["status"] == "ok" for s in self.signatures.values())
-
-    def step(self, name: str) -> StepView | None:
-        return next((s for s in self.steps if s.step.name == name), None)
 
 
 def load_trust(settings: Settings) -> dict[str, Any]:
@@ -167,28 +112,54 @@ def agreement_state(
     return "not signed", "badge"
 
 
+def node_views(plan: Any) -> tuple[NodeView, ...]:
+    """A one-line summary per node for the plan page, tolerant of a plan the loader refused."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return ()
+    out = []
+    for n in plan["nodes"]:
+        if not isinstance(n, dict) or not isinstance(n.get("id"), str):
+            continue
+        kind = n.get("type") if n.get("type") in NODE_LABELS else "?"
+        inputs = n.get("inputs") if isinstance(n.get("inputs"), dict) else {}
+        try:
+            port = output_port(n) if kind in NODE_LABELS else None
+        except (KeyError, TypeError):
+            port = None
+        if kind == "final_report":
+            fields = (n.get("config") or {}).get("fields") or []
+            output = f"releases {len(fields)} field{'s' if len(fields) != 1 else ''}"
+        else:
+            output = f"{port[0]} · {port[1]}" if port else "?"
+        out.append(
+            NodeView(
+                id=n["id"],
+                type=kind,
+                label=NODE_LABELS.get(kind, kind),
+                title=str(n.get("title") or n["id"]),
+                inputs=tuple(f"{k} ← {v}" for k, v in inputs.items()),
+                output=output,
+            )
+        )
+    return tuple(out)
+
+
 def load_plan_view(settings: Settings) -> PlanView:
     plan_dir = settings.plan_dir
     files = bundle_files(plan_dir)
     plan_digest = file_digest(files)
-    config = decode(files["plan.json"])
     trust = load_trust(settings)
-
-    issue = None
+    try:
+        plan = decode(files[PLAN_FILE])
+    except AuditError:
+        plan = None
+    issue, issues = None, ()
     try:
         load_bundle(plan_dir, trust, signed=False)
+    except PlanError as exc:
+        issue, issues = exc.code, tuple(exc.issues)
     except AuditError as exc:
         issue = exc.code
-
-    try:
-        functions = plan_functions(files["plan.py"].decode("utf-8"))
-    except (SyntaxError, UnicodeDecodeError):
-        functions = {}
-    prompts = {
-        Path(name).stem: raw.decode("utf-8", "replace")
-        for name, raw in sorted(files.items())
-        if name.startswith("prompts/")
-    }
 
     signatures: dict[str, dict[str, Any]] = {}
     for role in PARTIES:
@@ -208,45 +179,29 @@ def load_plan_view(settings: Settings) -> PlanView:
                 "detail": "does not verify for the current digest (stale edit or wrong key)",
             }
         signatures[role] = {"present": True, "signature": text, **entry}
-    frozen = any(s["status"] == "ok" for s in signatures.values())
+    # With a lab key on the server, the lab signature is the server's own and never
+    # freezes the plan: the server signs the next version again. Only the auditor's does.
+    auto = lab_auto_key(settings) is not None
+    signatures["lab"]["auto"] = auto and signatures["lab"]["status"] == "ok"
+    frozen = any(
+        s["status"] == "ok" and not (auto and role == "lab") for role, s in signatures.items()
+    )
     stale = [r for r, s in signatures.items() if s["status"] == "invalid"]
-
-    prompt_id = get_setting(config, "classification.prompt_id")
-    steps = []
-    for step in PIPELINE:
-        values = tuple(
-            SettingView(
-                path=path,
-                value=get_setting(config, path),
-                value_json=json.dumps(get_setting(config, path), indent=2),
-                kind=_kind(get_setting(config, path)),
-            )
-            for path in step.settings
-        )
-        step_issue = issue if ISSUE_STEP.get(issue) == step.name else None
-        if issue == "invalid_plan_source" and step.name not in functions and step.called:
-            step_issue = issue
-        steps.append(
-            StepView(
-                step=step,
-                function=functions.get(step.name),
-                settings=values,
-                issue=step_issue,
-                prompt_id=prompt_id if step.kind == "run_llm" else None,
-                prompt_text=prompts.get(prompt_id) if step.kind == "run_llm" else None,
-            )
-        )
     state, badge = agreement_state(signatures, frozen, issue)
     where = ISSUE_WHERE.get(issue, issue) if issue else None
+    meta = plan if isinstance(plan, dict) else {}
     return PlanView(
         plan_dir=plan_dir,
-        plan_id=str(get_setting(config, "plan_id") or "?"),
+        plan_id=str(meta.get("plan_id") or plan_dir.name),
+        title=str(meta.get("title") or ""),
+        description=str(meta.get("description") or ""),
         files=tuple(sorted(files)),
         digest=plan_digest,
-        config=config,
-        steps=tuple(steps),
+        plan=plan,
+        nodes=node_views(plan),
         issue=issue,
         issue_where=where,
+        issues=issues,
         signatures=signatures,
         frozen=frozen,
         stale=tuple(stale),
@@ -254,7 +209,6 @@ def load_plan_view(settings: Settings) -> PlanView:
         state=state,
         state_badge=badge,
         restrictions=restrictions(trust),
-        prompts=prompts,
         history=tuple(load_history(plan_dir)),
     )
 
@@ -308,134 +262,86 @@ def _short_diff(before: str, after: str) -> str:
     return "\n".join(list(lines)[2:])  # drop the file headers
 
 
+def pretty(raw: bytes | str) -> str:
+    """plan.json as people read it: indented, keys in the order the plan has them."""
+    try:
+        return json.dumps(json.loads(raw), indent=2, ensure_ascii=False) + "\n"
+    except (ValueError, TypeError):
+        return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+
+
 # --------------------------------------------------------------------------- pre-save check
 
 
-def _explain_schema(config: Any) -> str:
-    """Name the field the box's plan schema rejects, when the jsonschema package can tell."""
-    try:
-        from aiab.baked.bundle import PLAN
-        from jsonschema import Draft202012Validator
-
-        errors = sorted(Draft202012Validator(PLAN).iter_errors(config), key=lambda e: e.json_path)
-    except Exception:  # noqa: BLE001 - fall back to the bare code
-        return ""
-    if not errors:
-        return ""
-    error = errors[0]
-    where = error.json_path.removeprefix("$.") or "plan.json"
-    return f"{where}: {error.message}"
-
-
 def box_would_reject(settings: Settings, overrides: dict[str, bytes]) -> str | None:
-    """Run the box's loader on a copy of the folder with these files replaced."""
-    import shutil
+    """Run the box's loader on a copy of the folder with these files replaced. Returns one
+    line naming the problem, or None when the box would accept the result."""
+    code, issues = loader_verdict(settings, overrides)
+    if code is None:
+        return None
+    detail = "; ".join(i["message"] for i in issues[:3]) or ISSUE_WHERE.get(code, code)
+    return f"the box would reject this ({code}): {detail}"
+
+
+def loader_verdict(
+    settings: Settings, overrides: dict[str, bytes]
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """(error code, the loader's issues) for the folder with ``overrides`` applied."""
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="aiab-check-") as tmp:
+        # The bundle is one file: the loader reads nothing else, so nothing else is copied.
         folder = Path(tmp) / "plan"
-        shutil.copytree(
-            settings.plan_dir,
-            folder,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests", "signatures"),
-        )
-        for name, raw in overrides.items():
+        folder.mkdir()
+        current = settings.plan_dir / PLAN_FILE
+        files = {PLAN_FILE: current.read_bytes()} if current.is_file() else {}
+        files.update(overrides)
+        for name, raw in files.items():
             (folder / name).parent.mkdir(parents=True, exist_ok=True)
             (folder / name).write_bytes(raw)
         try:
             load_bundle(folder, load_trust(settings), signed=False)
+        except PlanError as exc:
+            return exc.code, list(exc.issues)
         except AuditError as exc:
-            detail = ""
-            if exc.code == "invalid_plan" and "plan.json" in overrides:
-                try:
-                    detail = _explain_schema(decode(overrides["plan.json"]))
-                except AuditError:
-                    detail = ""
-            where = detail or ISSUE_WHERE.get(exc.code, exc.code)
-            return f"the box would reject this ({exc.code}): {where}"
-    return None
+            return exc.code, [{"message": ISSUE_WHERE.get(exc.code, exc.code), "node": None}]
+    return None, []
 
 
 # --------------------------------------------------------------------------- edits
 
 
-def save_step_settings(
-    settings: Settings, step_name: str, form: dict[str, str], actor: dict[str, str]
-) -> list[str]:
-    step = next((s for s in PIPELINE if s.name == step_name), None)
-    if step is None:
-        return [f"unknown step {step_name}"]
-    path = settings.plan_dir / "plan.json"
-    config = decode(path.read_bytes())
-    errors: list[str] = []
-    changes: list[tuple[str, str, str]] = []
-    numeric = {"int", "float"}
-    for dotted in step.settings:
-        if dotted not in form:
-            continue
-        current = get_setting(config, dotted)
-        if _kind(current) == "str":
-            value = form[dotted].replace("\r\n", "\n").strip()
-        else:
-            try:
-                value = parse_setting(form[dotted])
-            except ValueError as exc:
-                errors.append(f"{dotted}: could not read this as a value ({exc})")
-                continue
-        if current is not None and _kind(current) != _kind(value):
-            if not (_kind(current) in numeric and _kind(value) in numeric):
-                errors.append(f"{dotted}: expected {_kind(current)}, got {_kind(value)}")
-                continue
-        if current != value:
-            changes.append((dotted, json.dumps(current), json.dumps(value)))
-        set_setting(config, dotted, value)
-    if errors:
-        return errors
-    if not changes:
-        return []
-    rejected = box_would_reject(settings, {"plan.json": canonical(config) + b"\n"})
-    if rejected:
-        return [rejected]
-    path.write_bytes(canonical(config) + b"\n")  # the box's canonical form
-    for dotted, before, after in changes:
-        record_change(settings, actor, "settings", f"{step_name}: {dotted}", f"{before} → {after}")
-    return []
+def save_plan(
+    settings: Settings, plan: Any, actor: dict[str, str]
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Write the plan the builder sent, after the box's loader accepted it.
 
-
-def save_function(
-    settings: Settings, name: str, new_source: str, actor: dict[str, str]
-) -> str | None:
-    path = settings.plan_dir / "plan.py"
-    before = path.read_text(encoding="utf-8")
+    Returns (new digest, []) on success or (None, issues) when the box would refuse it.
+    The file is written in the box's canonical JSON; the plan id stays the folder's."""
+    if not isinstance(plan, dict):
+        return None, [{"message": "the plan must be a JSON object", "node": None}]
+    if plan.get("plan_id") != settings.plan_dir.name:
+        return None, [
+            {
+                "message": f"plan_id must stay {settings.plan_dir.name}; rename the folder instead",
+                "node": None,
+                "path": ["plan_id"],
+            }
+        ]
     try:
-        updated = replace_function_source(before, name, new_source.replace("\r\n", "\n"))
-    except AuditError as exc:
-        return f"the box would reject this plan.py: {exc.code}"
-    except (SyntaxError, ValueError, KeyError) as exc:
-        return f"{type(exc).__name__}: {exc}"
-    if updated != before:
-        path.write_text(updated, encoding="utf-8")
-        record_change(settings, actor, "code", f"{name}: code", _short_diff(before, updated))
-    return None
-
-
-def save_prompt(settings: Settings, prompt_id: str, text: str, actor: dict[str, str]) -> str | None:
-    path = settings.plan_dir / "prompts" / f"{prompt_id}.txt"
-    if not path.is_file():
-        return f"prompts/{prompt_id}.txt does not exist"
-    text = text.replace("\r\n", "\n")
-    if not text.endswith("\n"):
-        text += "\n"
-    before = path.read_text(encoding="utf-8")
-    if text != before:
-        rejected = box_would_reject(settings, {f"prompts/{prompt_id}.txt": text.encode("utf-8")})
-        if rejected:
-            return rejected
-        path.write_text(text, encoding="utf-8")
-        record_change(
-            settings, actor, "prompt", f"classify: prompt {prompt_id}", _short_diff(before, text)
-        )
-    return None
+        raw = canonical(plan) + b"\n"
+    except AuditError:
+        return None, [{"message": "the plan is not representable as JSON", "node": None}]
+    code, issues = loader_verdict(settings, {PLAN_FILE: raw})
+    if code is not None:
+        return None, issues
+    path = settings.plan_dir / PLAN_FILE
+    before = path.read_bytes() if path.is_file() else b""
+    if before != raw:
+        path.write_bytes(raw)
+        record_change(settings, actor, "plan", "plan", _short_diff(pretty(before), pretty(raw)))
+    ensure_lab_signature(settings, actor)
+    return file_digest({PLAN_FILE: raw}), []
 
 
 def write_signature(
@@ -488,17 +394,88 @@ def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -
     return removed
 
 
-PLACEHOLDER_DIGEST = "sha256:" + "0" * 64
-ID_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
+AUTO_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for auto-signing
+
+
+def lab_auto_key(settings: Settings) -> Any | None:
+    """The private key the server signs with as the lab, or None when AIAB_LAB_KEY is unset
+    or not a key."""
+    if not settings.lab_signing_key:
+        return None
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    try:
+        return Ed25519PrivateKey.from_private_bytes(
+            base64.b64decode(settings.lab_signing_key, validate=True)
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def lab_auto_public_key(settings: Settings) -> str | None:
+    key = lab_auto_key(settings)
+    if key is None:
+        return None
+    return base64.b64encode(key.public_key().public_bytes_raw()).decode()
+
+
+def lab_auto_problem(settings: Settings) -> str | None:
+    """Why the server cannot sign as the lab right now: no key, a malformed key, or a key
+    production does not trust. None when it can."""
+    if not settings.lab_signing_key:
+        return None
+    public = lab_auto_public_key(settings)
+    if public is None:
+        return "AIAB_LAB_KEY is not a base64 Ed25519 private key"
+    trusted = load_trust(settings).get("lab_key")
+    if public != trusted:
+        return f"the server's lab key ({public}) is not the lab key production trusts"
+    return None
+
+
+def ensure_lab_signature(settings: Settings, actor: dict[str, str] | None = None) -> bool:
+    """Sign the current version as the lab with the server's key, unless there is no key, it
+    is not the trusted one, or a valid lab signature is already there. True when it signed."""
+    key = lab_auto_key(settings)
+    if key is None or lab_auto_problem(settings) is not None:
+        return False
+    plan_digest = file_digest(bundle_files(settings.plan_dir))
+    trust = load_trust(settings)
+    target = settings.plan_dir / "signatures" / "lab.sig"
+    if target.is_file():
+        try:
+            verify_signature(
+                trust["lab_key"],
+                target.read_text(encoding="utf-8").strip(),
+                "plan-bundle",
+                {"plan_digest": plan_digest},
+            )
+            return False
+        except (AuditError, ValueError, KeyError):
+            pass
+    signature = base64.b64encode(
+        key.sign(sign_bytes("plan-bundle", {"plan_digest": plan_digest}))
+    ).decode()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(signature + "\n", encoding="utf-8")
+    who = f" after a change by {actor['username']}" if actor and actor.get("username") else ""
+    record_change(
+        settings,
+        AUTO_SIGNER,
+        "signature",
+        "signature: lab",
+        f"signed version {plan_digest[7:19]} automatically with the server's lab key{who}",
+    )
+    return True
+
+
+ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"  # no leading _ or .: those folders are ours
 
 
 def for_agreement(settings: Settings, agreement_id: str) -> Settings | None:
-    """Settings pointing at one agreement folder; "plan" is the deploy slot plan/."""
-    import re
+    """Settings pointing at one agreement folder under agreements/."""
     from dataclasses import replace
 
-    if agreement_id == "plan":
-        return settings
     if not re.fullmatch(ID_PATTERN, agreement_id):
         return None
     folder = settings.agreements_dir / agreement_id
@@ -507,75 +484,94 @@ def for_agreement(settings: Settings, agreement_id: str) -> Settings | None:
     return replace(settings, plan_dir=folder)
 
 
-def deployed_plan(settings: Settings) -> dict[str, Any]:
-    """The deploy slot, plan/: what was deployed, read only. Changes reach it only through a
-    merged plan pull request and a pull of the checkout, never through this UI."""
+def is_current_format(folder: Path) -> bool:
+    """A folder holds a plan in the format this UI and the box read."""
+    path = folder / PLAN_FILE
+    if not path.is_file():
+        return False
     try:
-        view = load_plan_view(settings)
-    except Exception as exc:  # noqa: BLE001 - a broken deploy slot is shown, not raised
-        return {
-            "plan_id": "plan",
-            "digest": None,
-            "state": None,
-            "error": str(exc),
-            "trusted": False,
-        }
-    # Signed by the keys production trusts now? After a key change this turns false, and the
-    # box's plan counts as invalid until a plan signed with the new keys is deployed.
-    try:
-        load_bundle(settings.plan_dir, load_trust(settings), signed=True)
-        trusted = True
-    except (OSError, ValueError, AuditError):
-        trusted = False
-    return {
-        "plan_id": view.plan_id,
-        "digest": view.digest,
-        "state": view.state,
-        "error": None,
-        "trusted": trusted,
-    }
+        return json.loads(path.read_text(encoding="utf-8")).get("version") == PLAN_VERSION
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
-FILE_CUT = 64 * 1024
-
-
-def plan_files(settings: Settings) -> list[dict[str, Any]]:
-    """Every file under the deploy slot, plan/, in path order, read only: what the box image
-    was built from. Caches and hidden files are left out; a long file is cut so the page
-    stays readable."""
-    root = settings.plan_dir
-    files = []
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
-        rel = path.relative_to(root)
-        if any(part.startswith(".") or part == "__pycache__" for part in rel.parts):
+def archive_old_agreements(settings: Settings) -> list[str]:
+    """Move agreements written for the previous plan format (plan.py and a plan.json of
+    schema aiab-baked-plan/v1) into agreements/_archive/. The box no longer runs that
+    format, so they cannot be edited, signed or run; they stay on disk, read only,
+    until someone deletes them. Returns the names moved."""
+    root = settings.agreements_dir
+    if not root.is_dir():
+        return []
+    moved = []
+    for folder in sorted(root.iterdir()):
+        if not folder.is_dir() or folder.name.startswith((".", "_")) or is_current_format(folder):
             continue
-        raw = path.read_bytes()
+        target = root / ARCHIVE_DIR / folder.name
+        target.parent.mkdir(exist_ok=True)
+        if target.exists():  # archived once already under this name: keep both
+            target = root / ARCHIVE_DIR / f"{folder.name}-{folder_digest(folder)[7:15]}"
+        shutil.move(str(folder), str(target))
+        moved.append(folder.name)
+    return moved
+
+
+def folder_digest(folder: Path) -> str:
+    """A digest of a folder's files, for naming an archived copy."""
+    import hashlib
+
+    hashed = hashlib.sha256()
+    for path in sorted(p for p in folder.rglob("*") if p.is_file()):
+        hashed.update(path.relative_to(folder).as_posix().encode() + path.read_bytes())
+    return "sha256:" + hashed.hexdigest()
+
+
+def list_archived(settings: Settings) -> list[dict[str, Any]]:
+    """The archived agreements, read only: name, what the old plan.json called itself, size."""
+    root = settings.agreements_dir / ARCHIVE_DIR
+    if not root.is_dir():
+        return []
+    rows = []
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        plan_id, schema = folder.name, "?"
         try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = None
-        files.append(
+            old = json.loads((folder / "plan.json").read_text(encoding="utf-8"))
+            plan_id, schema = str(old.get("plan_id", plan_id)), str(old.get("schema", "?"))
+        except (OSError, ValueError, AttributeError):
+            pass
+        rows.append(
             {
-                "path": str(rel),
-                "size": len(raw),
-                "text": text[:FILE_CUT] if text is not None else None,
-                "cut": text is not None and len(text) > FILE_CUT,
+                "id": folder.name,
+                "plan_id": plan_id,
+                "schema": schema,
+                "files": sum(1 for p in folder.rglob("*") if p.is_file()),
             }
         )
-    return files
+    return rows
+
+
+def delete_archived(settings: Settings, name: str) -> str | None:
+    if not re.fullmatch(ID_PATTERN, name):
+        return "unknown archived agreement"
+    folder = settings.agreements_dir / ARCHIVE_DIR / name
+    if not folder.is_dir():
+        return "unknown archived agreement"
+    shutil.rmtree(folder)
+    return None
 
 
 def list_agreements(settings: Settings) -> list[dict[str, Any]]:
-    """Every folder under agreements/, the editable ones. The deploy slot is not an
-    agreement; see deployed_plan()."""
+    """Every folder under agreements/: what people edit, sign and run. Folders in the
+    previous format are archived first."""
+    archive_old_agreements(settings)
     rows = []
-    try:
-        selected = file_digest(bundle_files(settings.plan_dir))
-    except AuditError:
-        selected = None
     candidates = []
     if settings.agreements_dir.is_dir():
-        candidates += [(f.name, f) for f in sorted(settings.agreements_dir.iterdir()) if f.is_dir()]
+        candidates += [
+            (f.name, f)
+            for f in sorted(settings.agreements_dir.iterdir())
+            if f.is_dir() and not f.name.startswith((".", "_"))
+        ]
     for agreement_id, _folder in candidates:
         try:
             view = load_plan_view(for_agreement(settings, agreement_id) or settings)
@@ -583,10 +579,10 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                 {
                     "id": agreement_id,
                     "plan_id": view.plan_id,
+                    "title": view.title,
                     "digest": view.digest,
                     "state": view.state,
                     "signed": view.signed_by_both,
-                    "selected": view.digest == selected,  # same files as the deploy slot
                     "error": None,
                     "issue": view.issue,
                 }
@@ -596,10 +592,10 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                 {
                     "id": agreement_id,
                     "plan_id": agreement_id,
+                    "title": "",
                     "digest": None,
                     "state": f"does not load: {type(exc).__name__}",
                     "signed": False,
-                    "selected": False,
                     "error": str(exc),
                     "issue": None,
                 }
@@ -608,27 +604,36 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
 
 
 def _copy_folder(source: Path, target: Path) -> None:
-    import shutil
-
     shutil.copytree(
         source, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"), dirs_exist_ok=True
     )
 
 
+def taken_names(settings: Settings) -> list[str]:
+    """Names a new agreement cannot take: existing folders under agreements/ (archived or
+    not). The form checks these as the user types."""
+    names = set()
+    if settings.agreements_dir.is_dir():
+        names |= {f.name for f in settings.agreements_dir.iterdir()}
+    return sorted(names)
+
+
 def new_agreement(
     settings: Settings, form: dict[str, str], actor: dict[str, str]
 ) -> tuple[list[str], str | None]:
-    """Create agreements/<name>/ from the minimal template or as a copy of the deploy slot.
+    """Create agreements/<name>/ from the minimal template.
 
-    Signatures and the evaluation are never copied. Returns (errors, agreement id).
+    The question becomes the plan's description and the classifier's instructions.
+    Returns (errors, agreement id).
     """
-    import re
-
     errors: list[str] = []
     plan_id = form.get("plan_id", "").strip()
     if not re.fullmatch(ID_PATTERN, plan_id):
-        errors.append("name: letters, digits, _ and - only, up to 128 characters")
-    elif plan_id == "plan" or (settings.agreements_dir / plan_id).exists():
+        errors.append(
+            "name: letters, digits, _ and - only, up to 128 characters,"
+            " starting with a letter or digit"
+        )
+    elif (settings.agreements_dir / plan_id).exists():
         errors.append(f"name: an agreement called {plan_id} already exists")
     problem = form.get("problem", "").strip().replace("\r\n", "\n")
     if not 1 <= len(problem) <= 16384:
@@ -637,55 +642,32 @@ def new_agreement(
         return errors, None
 
     target = settings.agreements_dir / plan_id
-    if form.get("source") == "copy":
-        _copy_folder(settings.plan_dir, target)
-    else:
-        _copy_folder(Path(__file__).with_name("template"), target)
-    for role in PARTIES:
-        sig = target / "signatures" / f"{role}.sig"
-        if sig.is_file():
-            sig.unlink()
-    evaluation = target / "tests" / "evaluation.json"
-    if evaluation.is_file():
-        evaluation.unlink()
-    path = target / "plan.json"
-    config = decode(path.read_bytes())
-    config["plan_id"] = plan_id
-    config["classification"]["problem"] = problem
-    config["classification"]["evaluation"] = {
-        "test_set_digest": PLACEHOLDER_DIGEST,
-        "results_digest": PLACEHOLDER_DIGEST,
-    }
-    if form.get("source") != "copy":  # the template takes the pinned model from the trust file
-        model = load_trust(settings)["model"]
-        config["model"] = {
-            k: model[k] for k in ("id", "artifact_digest", "temperature", "max_output_tokens")
-        }
-    path.write_bytes(canonical(config) + b"\n")
+    _copy_folder(Path(__file__).with_name("template"), target)
+    shutil.rmtree(target / "signatures", ignore_errors=True)
+    path = target / PLAN_FILE
+    plan = decode(path.read_bytes())
+    plan["plan_id"] = plan_id
+    plan["description"] = problem
+    plan["title"] = problem.splitlines()[0][:120]
+    for node in plan["nodes"]:
+        if node["type"] == "classifier":
+            node["config"]["instructions"] = problem + "\n"
+    path.write_bytes(canonical(plan) + b"\n")
     history = target / HISTORY_FILE
     if history.is_file():
         history.unlink()  # a new agreement starts its own trail
-    source = "a copy of the deployed plan" if form.get("source") == "copy" else "the template"
-    record_change(
-        for_agreement(settings, plan_id) or settings,
-        actor,
-        "created",
-        "agreement",
-        f"created from {source}",
-    )
+    created = for_agreement(settings, plan_id) or settings
+    record_change(created, actor, "created", "agreement", "created from the template")
+    ensure_lab_signature(created, actor)
     return [], plan_id
 
 
 def delete_agreement(settings: Settings, agreement_id: str) -> str | None:
-    """Remove an agreement folder; never the deploy slot or the agreement it was made from."""
-    import shutil
-
-    if agreement_id == "plan":
-        return "the deploy slot cannot be deleted"
+    """Remove an agreement folder. Runs keep their own frozen copy of what they sent."""
     target = for_agreement(settings, agreement_id)
     if target is None:
         return "unknown agreement"
-    shutil.rmtree(target.plan_dir)  # the deployed copy, if any, stays in plan/ and in git
+    shutil.rmtree(target.plan_dir)
     return None
 
 

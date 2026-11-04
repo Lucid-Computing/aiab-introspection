@@ -3,7 +3,7 @@
 Open `index.html` directly in a browser, or publish this directory to a static host.
 It is self-contained: no build step, external libraries, fonts, API calls or credentials.
 
-The page embeds the committed `static/demo/audit/evidence/acceptance.json` snapshot
+The page embeds the `acceptance.json` snapshot (once at `static/demo/audit/evidence/`, removed from the repository on 3 Nov 2026)
 from the October 15, 2026 v0.1.1 live acceptance run. It deliberately remains a
 historical record even when the service is upgraded. Its five cases show synthetic
 logs, the actual jointly signed plan (including variants), signed report envelopes,

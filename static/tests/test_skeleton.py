@@ -5,7 +5,7 @@ from importlib.metadata import distribution
 import pytest
 
 
-@pytest.mark.parametrize("name", ["aiab", "auditor"])
+@pytest.mark.parametrize("name", ["aiab-audit", "aiab-plan"])
 def test_console_entrypoint_loads(name: str) -> None:
     entrypoints = distribution("aiab-introspection").entry_points
     matches = [

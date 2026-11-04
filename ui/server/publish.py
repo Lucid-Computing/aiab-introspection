@@ -1,8 +1,9 @@
-"""Deploy = copy the agreement into plan/, then push that one change as a branch and open a PR.
+"""The UI's git side: a party's key change as a pull request, draft backups, the checkout
+following its branch.
 
 Everything here is plain git and the GitHub CLI, run with the credentials of whoever runs
-the UI. The branch is made from the remote's default branch in a temporary worktree, so the
-checkout you are working in is never switched. Merging is left to people and to CI.
+the UI. A branch is made from the base branch in a temporary worktree, so the checkout you
+are working in is never switched. Merging is left to CI.
 """
 
 from __future__ import annotations
@@ -64,25 +65,6 @@ def github_slug(repo: Path) -> str | None:
     return None
 
 
-def copy_into_plan(source: Path, target: Path) -> None:
-    """Make plan/ exactly the agreement folder: stale files go, README.md stays, and the
-    change log (history.jsonl) stays with the agreement, it is not part of the baked plan."""
-    if target.exists():
-        for child in target.iterdir():
-            if child.name == "README.md":
-                continue
-            if child.is_dir():
-                shutil.rmtree(child)
-            else:
-                child.unlink()
-    shutil.copytree(
-        source,
-        target,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "history.jsonl"),
-        dirs_exist_ok=True,
-    )
-
-
 def _open_pr(slug: str, base: str, branch: str, title: str, body: str, cwd: Path) -> str | None:
     """Open a pull request with the GitHub CLI when it is installed and logged in."""
     if not shutil.which("gh"):
@@ -114,74 +96,8 @@ def _open_pr(slug: str, base: str, branch: str, title: str, body: str, cwd: Path
     return None
 
 
-def push_deploy(
-    repo: Path,
-    agreement: Path,
-    name: str,
-    digest: str,
-    actor: dict[str, str],
-    base: str | None = None,
-) -> PushResult:
-    """Put plan/ for this version on its branch, rebuilt from the base, and open the pull
-    request.
-
-    One branch per version: plan/<name>-<digest8>, always rebuilt from the current tip of
-    the base so the pull request changes plan/ and nothing else, and force-pushed: an open
-    pull request for the branch simply updates, a merged one from an earlier deploy of the
-    same version is history and a new pull request follows. ``unchanged`` means the base
-    already holds exactly these files: nothing to deploy.
-    """
-    result = PushResult()
-    base = base or default_branch(repo)
-    branch = f"plan/{name}-{digest[7:15]}"
-    who = f"{actor.get('party', 'party')} ({actor.get('username', '?')}) via the agreement UI"
-    worktree = Path(tempfile.mkdtemp(prefix="aiab-deploy-"))
-    try:
-        _git(repo, "fetch", "origin", base)
-        _git(repo, "worktree", "add", "--detach", str(worktree), f"origin/{base}")
-        _git(worktree, "checkout", "-q", "-B", branch)
-        copy_into_plan(agreement, worktree / "plan")
-        _git(worktree, "add", "-A", "plan")
-        slug = github_slug(repo)
-        if slug:
-            result.compare_url = f"https://github.com/{slug}/compare/{base}...{branch}?expand=1"
-        if not _git(worktree, "status", "--porcelain", "--", "plan"):
-            result.unchanged = True
-            result.branch = base
-            return result
-        message = (
-            f"Deploy agreement {name}\n\nplan_digest: {digest}\nSelected for deployment by {who}.\n"
-        )
-        _git(worktree, "commit", "-q", "-m", message)
-        result.commit = _git(worktree, "rev-parse", "--short", "HEAD")
-        _git(worktree, "push", "--force", "-u", "origin", branch, timeout=300)
-        result.branch = branch
-        if slug:
-            result.pr_url = _open_pull_request(slug, branch)  # an open one follows the push
-            if not result.pr_url:
-                body = (
-                    f"Plan digest `{digest}`.\n\nSelected for deployment by {who}. "
-                    "Plan-only change; CI verifies both signatures and the restrictions."
-                )
-                result.pr_url = _open_pr(
-                    slug, base, branch, f"Deploy agreement {name}", body, worktree
-                )
-    except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
-        result.error = str(exc)[-400:]
-    finally:
-        try:
-            _git(repo, "worktree", "remove", "--force", str(worktree))
-        except RuntimeError:
-            shutil.rmtree(worktree, ignore_errors=True)
-        try:
-            _git(repo, "branch", "-D", branch)  # the branch lives on origin; keep the checkout tidy
-        except RuntimeError:
-            pass
-    return result
-
-
 # ---- agreement drafts: pushed to the checkout's own branch, so the server disk is never the
-#      only copy. Drafts are not baked and CI does not check them, so a plain push is right.
+#      only copy. CI does not check them, so a plain push is right.
 
 _drafts_lock = threading.Lock()
 _drafts_timer: threading.Timer | None = None
@@ -245,8 +161,8 @@ def push_key_change(
 
     One branch per key: keys/<party>-<key8>, always rebuilt from the current base, so a
     branch left behind by an earlier, closed pull request is simply overwritten and a new
-    pull request opened. The check on it merges it; the next plan deploy puts the key in
-    the box."""
+    pull request opened. The check on it merges it and starts the release that puts the
+    key in the box."""
     result = PushResult()
     base = base or default_branch(repo)
     branch = f"keys/{party}-{public_key[:8].replace('+', '').replace('/', '')}"
@@ -283,9 +199,8 @@ def push_key_change(
             else:
                 body = (
                     f"Replaces the {party} public key in `static/aiab/baked/trust.json` with "
-                    f"`{public_key}`.\n\nSubmitted by {who}. approve-keys.yml checks the change "
-                    "and merges it. No release starts from this merge: the box takes the key "
-                    "with the next plan deployed and signed with it."
+                    f"`{public_key}`.\n\nSubmitted by {who}. approve-keys.yml checks the change, "
+                    "merges it and starts the release that puts the key in the box."
                 )
                 result.pr_url = _open_pr(
                     slug, base, branch, f"Trust the {party} public key", body, worktree
@@ -331,8 +246,8 @@ def _open_pull_request(slug: str, branch: str) -> str | None:
     return done.stdout.strip() or None if done.returncode == 0 else None
 
 
-# ---- the checkout follows its remote branch: after a plan merges and the release writes new
-#      pins, the deployed plan shown on the Agreements page is current within a minute.
+# ---- the checkout follows its remote branch: after a release writes new pins, the Runs page
+#      verifies the box against them within a minute.
 
 
 # The last catch-up attempt, so a page can say why the copy did not move instead of

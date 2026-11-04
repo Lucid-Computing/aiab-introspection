@@ -1,10 +1,11 @@
-"""Run the deployed plan against the live box, one step at a time, through the auditor CLI.
+"""Run a signed agreement against the live box, one step at a time, through the auditor CLI.
 
-This mirrors static/demo/audit/walkthrough.py. The UI adds no verification logic: every
+The UI adds no verification logic: every
 step is one call of ``python -m auditor.baked`` from the static part, and the screen shows
 what that command printed or wrote. A run is a folder under the runs directory holding
-state.json (the step list) and the CLI's own output files (anchor, submission, admission,
-report). A background thread performs the steps; the page re-reads state.json on each load.
+plan/ (a frozen copy of the agreement as it was sent, signatures included), state.json (the
+step list) and the CLI's own output files (anchor, submission, admission, report). A
+background thread performs the steps; the page re-reads state.json on each load.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -21,6 +23,7 @@ from pathlib import Path
 
 from aiab.audit.protocol import AuditError
 from aiab.baked.bundle import load_bundle
+from aiab.baked.plan_ir import check_plan
 
 from server.config import STATIC_DIR, Settings
 
@@ -31,14 +34,14 @@ STEPS = (
     (
         "verify",
         "Verify the plan",
-        "Loads the deployed plan folder and checks both signatures against the keys the box "
+        "Loads the agreement folder and checks both signatures against the keys the box "
         "pins. Offline. The run stops here if the plan is not jointly signed.",
     ),
     (
         "attest",
         "Attest the box",
         "Connects to the box with the Tinfoil SDK, checks its attestation against the "
-        "release pins (image, policy, plan digest) and saves its report-signing identity. "
+        "release pins (image, policy) and saves its report-signing identity. "
         "This is the moment we learn which service will see the logs.",
     ),
     (
@@ -50,8 +53,9 @@ STEPS = (
     (
         "submit",
         "Submit the logs",
-        "Sends the signed export to the box. The box checks evidence, scope and size, admits "
-        "it and starts running the plan with the real model.",
+        "Sends the signed export and the signed plan to the box. The box verifies the plan's "
+        "two signatures and restrictions, checks evidence, scope and size, admits the run "
+        "and starts the plan with the real model. It keeps nothing of the plan afterwards.",
     ),
     (
         "report",
@@ -72,29 +76,35 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def transcripts(settings: Settings) -> list[str]:
-    folder = settings.deployed_plan_dir / "tests" / "transcripts"
-    return sorted(p.name for p in folder.glob("*.jsonl")) if folder.is_dir() else []
-
-
-def plan_scope(settings: Settings) -> dict | None:
-    """The deployed plan's input_scope block, or None when the plan does not load."""
+def _plan(folder: Path) -> dict | None:
     try:
-        return json.loads((settings.deployed_plan_dir / "plan.json").read_text(encoding="utf-8"))[
-            "input_scope"
-        ]
-    except (OSError, ValueError, KeyError):
+        return json.loads((folder / "plan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
 
 
-def scope_notes(settings: Settings, who: str, first: float, last: float) -> list[str]:
-    """Why the deployed plan's input scope would make the box refuse these records."""
-    scope = plan_scope(settings)
+def plan_scope(folder: Path) -> dict | None:
+    """What the agreement's Input Logs step pins (agents, a time window), or None when it
+    pins nothing or the plan does not load."""
+    plan = _plan(folder)
+    try:
+        source = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+        scope = source["config"]["input_scope"]
+    except (TypeError, KeyError, StopIteration):
+        return None
+    if not scope.get("agents") and not scope.get("window_start") and not scope.get("window_end"):
+        return None
+    return scope
+
+
+def scope_notes(folder: Path, who: str, first: float, last: float) -> list[str]:
+    """Why the agreement's input scope would make the box refuse these records."""
+    scope = plan_scope(folder)
     if not scope:
         return []
     notes = []
     agents = scope.get("agents", [])
-    if who not in agents:
+    if agents and who not in agents:
         notes.append(f"agent '{who}' is not in the plan's scope ({', '.join(agents)})")
     try:
         start = datetime.fromisoformat(scope["window_start"]).timestamp()
@@ -108,13 +118,11 @@ def scope_notes(settings: Settings, who: str, first: float, last: float) -> list
     return notes
 
 
-def check_limits(settings: Settings, records: list[dict]) -> None:
+def check_limits(folder: Path, records: list[dict]) -> None:
     """Refuse here what the box would refuse as input_too_large."""
     try:
-        limits = json.loads((settings.deployed_plan_dir / "plan.json").read_text(encoding="utf-8"))[
-            "limits"
-        ]
-    except (OSError, ValueError, KeyError):
+        limits = check_plan(_plan(folder)).limits
+    except (AuditError, TypeError, KeyError):
         return
     size = len(json.dumps(records, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     if len(records) > limits["max_records_per_run"]:
@@ -129,31 +137,30 @@ def check_limits(settings: Settings, records: list[dict]) -> None:
         )
 
 
-def preflight(settings: Settings) -> dict:
-    """What a run needs, and what is missing. Shown on the Runs screen before starting."""
+def preflight(settings: Settings, folder: Path | None) -> dict:
+    """What a run of this agreement needs, and what is missing. Shown before starting."""
     release = {}
     missing = []
     plan_digest = None
-    try:
-        # Against the keys production trusts now. After a key change the deployed plan is
-        # signed by keys that are no longer trusted: nothing may run until a plan signed
-        # with the new keys is deployed.
-        bundle = load_bundle(
-            settings.deployed_plan_dir,
-            json.loads(settings.trust_file.read_text(encoding="utf-8")),
-            signed=True,
-        )
-        plan_digest = bundle.digest
-    except AuditError as exc:
-        if str(exc) == "invalid_signature":
-            missing.append(
-                "the deployed plan is not signed by the keys production trusts (the keys"
-                " changed): sign a plan with the trusted keys and deploy it"
+    if folder is None:
+        missing.append("an agreement signed by both parties")
+    else:
+        try:
+            # Against the keys the box trusts now. After a key change an agreement signed
+            # with the old keys is refused by the box, so it is refused here too.
+            bundle = load_bundle(
+                folder, json.loads(settings.trust_file.read_text(encoding="utf-8")), signed=True
             )
-        else:
-            missing.append("signed deployed plan: " + str(exc))
-    except (OSError, ValueError) as exc:
-        missing.append("signed deployed plan: " + str(exc))
+            plan_digest = bundle.digest
+        except AuditError as exc:
+            if str(exc) == "invalid_signature":
+                missing.append(
+                    "the agreement is not signed by both parties with the keys the box trusts"
+                )
+            else:
+                missing.append("signed agreement: " + str(exc))
+        except (OSError, ValueError) as exc:
+            missing.append("signed agreement: " + str(exc))
     if settings.release_file.is_file():
         release = json.loads(settings.release_file.read_text(encoding="utf-8"))
     else:
@@ -161,15 +168,6 @@ def preflight(settings: Settings) -> dict:
     for name in ("lab.token", "logger.key"):
         if not (settings.demo_keys_dir / name).is_file():
             missing.append(f"{name} in {settings.demo_keys_dir}")
-    if release and plan_digest and release.get("plan_digest") != plan_digest:
-        # The pins say which box to expect; the box is verified against them. They are
-        # written by the release that deploys the plan, so this means that release did
-        # not finish, or has not run yet.
-        missing.append(
-            f"the release pins ({release.get('tag', '?')}) are older than the deployed plan,"
-            " so the box cannot be verified against them; the next release records new"
-            " pins (a push to production starts one)"
-        )
     return {"release": release, "missing": missing, "ok": not missing, "plan_digest": plan_digest}
 
 
@@ -179,14 +177,8 @@ def _write(folder: Path, state: dict) -> None:
     tmp.replace(folder / "state.json")
 
 
-def _cli(settings: Settings, *args: str, offline: bool = False) -> dict | None:
-    base = [
-        "--folder",
-        str(settings.deployed_plan_dir),
-        "--trust",
-        str(settings.run_trust_file),
-        *args,
-    ]
+def _cli(settings: Settings, folder: Path, *args: str, offline: bool = False) -> dict | None:
+    base = ["--folder", str(folder), "--trust", str(settings.trust_file), *args]
     if offline:
         # The same CLI, with sockets disabled, as the walkthrough does for the offline check.
         code = (
@@ -208,9 +200,8 @@ def _cli(settings: Settings, *args: str, offline: bool = False) -> dict | None:
 def _execute(settings: Settings, folder: Path, state: dict) -> None:
     release, token = settings.release_file, settings.demo_keys_dir / "lab.token"
     logger = settings.demo_keys_dir / "logger.key"
+    plan = folder / "plan"  # the agreement as it was when the run started
     fixture = folder / "records.jsonl"  # chosen sessions, written by start_run
-    if not fixture.exists():
-        fixture = settings.deployed_plan_dir / "tests" / "transcripts" / state["transcript"]
     files = {
         "anchor": folder / "anchor.json",
         "submission": folder / "submission.json",
@@ -226,21 +217,15 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
             # The CLI hides the cause of a load failure behind one code; call the same box
             # function here so a missing file or a bad key shows as itself.
             try:
-                bundle = load_bundle(
-                    settings.deployed_plan_dir,
-                    json.loads(settings.run_trust_file.read_text()),
-                    signed=True,
-                )
+                bundle = load_bundle(plan, json.loads(settings.trust_file.read_text()), signed=True)
             except AuditError as exc:
-                raise RuntimeError(
-                    f"{exc.code} (the box's loader refused {settings.deployed_plan_dir})"
-                ) from None
+                raise RuntimeError(f"{exc.code} (the box's loader refused the plan)") from None
             except OSError as exc:
                 raise RuntimeError(f"{type(exc).__name__}: {exc}") from None
             return {"plan_digest": bundle.digest, "signatures_verified": True}
         if key == "attest":
             try:
-                _cli(settings, "pin-identity", *connection, "--output", str(files["anchor"]))
+                _cli(settings, plan, "pin-identity", *connection, "--output", str(files["anchor"]))
             except RuntimeError as exc:
                 if "model_unavailable" not in str(exc):
                     raise
@@ -260,6 +245,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
         if key == "export":
             _cli(
                 settings,
+                plan,
                 "mock-export",
                 "--records",
                 str(fixture),
@@ -275,6 +261,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
         if key == "submit":
             _cli(
                 settings,
+                plan,
                 "submit",
                 *connection,
                 "--input",
@@ -287,6 +274,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
         if key == "report":
             _cli(
                 settings,
+                plan,
                 "report",
                 *connection,
                 "--run-id",
@@ -300,6 +288,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
         if key == "offline":
             return _cli(
                 settings,
+                plan,
                 "verify-offline",
                 "--release",
                 str(release),
@@ -344,35 +333,42 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
 def start_run(
     settings: Settings,
     actor: dict[str, str],
-    transcript: str | None = None,
-    records: list[dict] | None = None,
+    agreement: str,
+    folder: Path,
+    records: list[dict],
     label: str | None = None,
 ) -> str:
-    """Start a run on a test transcript, or on records chosen from the Logs page."""
-    if records is None and transcript not in transcripts(settings):
-        raise ValueError("unknown transcript")
-    if records is not None:
-        if not records:
-            raise ValueError("no records chosen")
-        check_limits(settings, records)
+    """Start a run of the agreement in ``folder`` on records chosen from the Logs page.
+
+    The agreement is copied into the run folder first, signatures included: that copy is
+    what is sent, so an edit made while the run is going changes nothing, and the report
+    can always be verified again against exactly the plan it names."""
+    if not records:
+        raise ValueError("no records chosen")
+    check_limits(folder, records)
     run_id = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(3)}"
-    folder = settings.runs_dir / run_id
-    folder.mkdir(parents=True, exist_ok=False)
-    if records is not None:
-        (folder / "records.jsonl").write_text(
-            "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
-        )
+    target = settings.runs_dir / run_id
+    target.mkdir(parents=True, exist_ok=False)
+    shutil.copytree(
+        folder,
+        target / "plan",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "history.jsonl"),
+    )
+    (target / "records.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+    )
     state = {
         "id": run_id,
         "started": _now(),
         "by": {"party": actor.get("party", ""), "user": actor.get("username", "")},
-        "transcript": label or transcript,
+        "agreement": agreement,
+        "transcript": label or agreement,
         "status": "running",
         "steps": [{"key": k, "title": t, "explain": e, "status": "waiting"} for k, t, e in STEPS],
         "result": None,
     }
-    _write(folder, state)
-    threading.Thread(target=_execute, args=(settings, folder, state), daemon=True).start()
+    _write(target, state)
+    threading.Thread(target=_execute, args=(settings, target, state), daemon=True).start()
     return run_id
 
 
@@ -434,24 +430,23 @@ def outcome(state: dict) -> dict:
             "or review the plan limits."
         ),
         "invalid_output": (
-            "The plan returned a result outside its agreed output schema. Review emit_report "
-            "and the schema, then re-sign the corrected plan."
+            "The plan returned a result outside its agreed report fields. Review the Final "
+            "Report, then re-sign the corrected plan."
         ),
         "plan_start_failed": (
-            "The plan worker failed to start or load the signed code. Check the runtime and "
-            "plan imports."
+            "The plan worker failed to start or to compile the plan's Python steps. Check the "
+            "runtime and the plan."
         ),
-        "plan_query_failed": (
-            "The plan failed while grouping input records. Check build_query against the "
-            "selected record types."
-        ),
+        "plan_query_failed": ("The plan failed in its Input Logs step while selecting records."),
         "plan_classify_failed": (
-            "The plan failed in classify. Check its use of run_llm and returned scores."
+            "The plan failed in a classifier or model step: the model's answers did not fit, "
+            "or an item could not be prepared."
         ),
         "plan_metric_failed": (
-            "The plan failed while combining scores. Check metric, including empty input."
+            "A Python step failed or returned a value that does not match its declared output. "
+            "Check its code against the records it receives, including an empty input."
         ),
-        "plan_report_failed": "The plan failed while producing its result. Check emit_report.",
+        "plan_report_failed": "The plan failed while producing the report from its input.",
         "execution_timeout": (
             "The plan exceeded its signed runtime limit. Reduce the input or review and re-sign "
             "the limit."

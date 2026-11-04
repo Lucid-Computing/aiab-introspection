@@ -1,5 +1,5 @@
 # Run every target from this directory (ui/).
-.PHONY: sync dev account dev-keys lint
+.PHONY: sync dev account admin dev-keys lint
 
 KEYS ?= $(HOME)/.aiab-dev
 PORT ?= 8090
@@ -7,10 +7,17 @@ PORT ?= 8090
 sync:
 	uv sync
 
+# With dev keys made, the server signs as the lab by itself (AIAB_LAB_KEY from $(KEYS)/lab.key).
 dev:
-	uv run uvicorn server.app:app --reload --port $(PORT)
+	$(if $(wildcard $(KEYS)/lab.key),AIAB_LAB_KEY=$$(cat $(KEYS)/lab.key),) uv run uvicorn server.app:app --reload --port $(PORT)
 
-# make account NAME=teddy PARTY=lab   (prompts for a password; writes ui/accounts.json)
+# WorkOS login: admins are the lab, everyone else the auditor.   make admin EMAIL=teddy@lucid.example
+# (REMOVE=1 takes them off; writes ui/admins.json, which is committed: commit and deploy)
+admin:
+	uv run python -m server.auth admin $(EMAIL) $(if $(REMOVE),--remove,)
+
+# Local accounts (with or without WorkOS): make account NAME=teddy PARTY=lab
+# (prompts for a password; writes ui/accounts.json)
 account:
 	uv run python -m server.auth add $(NAME) $(PARTY)
 
