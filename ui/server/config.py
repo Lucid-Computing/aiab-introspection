@@ -30,7 +30,7 @@ class LogSource:
     label: str  # on the selector button
     url: str  # the proxy's address (its /_logs download API); "" for a local copy
     header: str  # the header the key is sent in
-    key: str | None  # None: nothing is fetched; a proxy source is then shown disabled
+    key: str | None  # a proxy: nothing is fetched without one; Slack: opens the bundle
     key_env: str  # the environment variable the key or folder comes from, for messages
     folder: str  # under settings.logs_dir, unless ``root`` names the folder outright
     kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack": the Slack export
@@ -41,9 +41,9 @@ class LogSource:
 
     @property
     def configured(self) -> bool:
-        """Whether the pages can offer this source: a proxy needs its key; a local copy
-        needs its folder named."""
-        return bool(self.key) if self.kind == "proxy" else self.root is not None
+        """Whether the pages can offer this source: a proxy needs its key; the Slack export
+        needs its folder named, or the key that opens the committed bundle."""
+        return bool(self.key) or self.root is not None
 
     @property
     def fetches(self) -> bool:
@@ -69,6 +69,9 @@ class Settings:
     auto_pull: bool  # fast-forward the checkout to its remote branch every minute when clean
     logs_dir: Path  # downloaded proxy log segments, one subfolder per log source
     log_sources: tuple[LogSource, ...]  # Prod Agent Logs, Dev Agent Logs, in selector order
+    # The Slack export, committed sealed (server.slackexport); opened into logs_dir/slack at
+    # start when AIAB_SLACK_EXPORT_KEY is set and no export folder is named.
+    slack_bundle: Path = UI_ROOT / "data" / "slack-export.enc"
 
     anthropic_api_key: str | None = field(default=None, repr=False)
     # AIAB_LAB_KEY: the lab's private key (base64 raw Ed25519, the format of lab.key from
@@ -178,6 +181,9 @@ def load_settings() -> Settings:
         auto_pull=env.get("AIAB_AUTO_PULL", "").lower() in {"1", "true", "yes"},
         logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
         log_sources=log_sources_from_env(env),
+        slack_bundle=Path(
+            env.get("AIAB_SLACK_BUNDLE", UI_ROOT / "data" / "slack-export.enc")
+        ).resolve(),
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
         lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
@@ -195,9 +201,11 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
     """The log sources this server reads, all at once when all are set. Production takes
     its reader key as x-log-key (AIAB_LOG_KEY); the test proxy takes its shared key as
     x-proxy-key (AIAB_PROXY_KEY); each has its own folder under AIAB_LOGS_DIR. Slack Logs
-    is the public-channel export (AIAB_SLACK_EXPORT names its folder), a static copy read
-    in place."""
+    is the public-channel export, a static copy: read in place from the folder
+    AIAB_SLACK_EXPORT names, or, without one, opened from the committed bundle with
+    AIAB_SLACK_EXPORT_KEY into AIAB_LOGS_DIR/slack at start (server.slackexport)."""
     slack = env.get("AIAB_SLACK_EXPORT", "").strip()
+    slack_key = env.get("AIAB_SLACK_EXPORT_KEY", "").strip() or None
     return (
         LogSource(
             id="prod",
@@ -222,8 +230,8 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
             label="Slack Logs",
             url="",
             header="",
-            key=None,
-            key_env="AIAB_SLACK_EXPORT",
+            key=None if slack else slack_key,
+            key_env="AIAB_SLACK_EXPORT" if slack else "AIAB_SLACK_EXPORT_KEY",
             folder="slack",
             kind="slack",
             root=Path(slack).resolve() if slack else None,

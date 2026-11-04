@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from server import deploystatus, editing, plan_chat, proxylogs, publish, runs
+from server import deploystatus, editing, plan_chat, proxylogs, publish, runs, slackexport
 from server import plan_view as pv
 from server.auth import LoginError, OidcLogin, SessionSigner, Stamp, authenticate, pkce_pair
 from server.box import box_status
@@ -62,6 +62,9 @@ async def lifespan(_: FastAPI):
             print(f"moved {len(moved)} test proxy file(s) into the Dev Agent Logs folder")
     except OSError as exc:
         print(f"warning: could not move the test proxy's segments into dev/: {exc}")
+    opened = slackexport.unpack_at_start(settings)  # the committed bundle, into logs/slack
+    if opened:
+        print(f"opened the Slack export bundle: {len(opened)} channel file(s)")
     proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of every proxy fresh
     asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
     refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
