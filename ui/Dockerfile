@@ -22,13 +22,14 @@ COPY ui/playground ./
 RUN pnpm build
 
 FROM docker.io/library/node:22.22.2-bookworm-slim AS auditor
-RUN apt-get update && apt-get install -y --no-install-recommends make gcc libc6-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends make gcc libc6-dev curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/static/agent_runtime
 COPY static/agent_runtime/package.json static/agent_runtime/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY static/agent_runtime ./
 RUN make NODE_INCLUDE=/usr/local/include/node
+RUN sh verified_transport/build-image.sh
 
 FROM docker.io/library/python:3.12-slim
 # git pushes the deploy branches, gh opens the pull requests.

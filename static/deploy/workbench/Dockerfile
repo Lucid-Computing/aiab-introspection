@@ -6,13 +6,14 @@ ARG UV_IMAGE
 FROM ${UV_IMAGE} AS uv
 FROM ${NODE_IMAGE} AS auditor
 RUN test "$(node --version)" = v22.22.2
-RUN apt-get update && apt-get install -y --no-install-recommends make gcc libc6-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends make gcc libc6-dev curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/static/agent_runtime
 COPY static/agent_runtime/package.json static/agent_runtime/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY static/agent_runtime ./
 RUN make -B NODE_INCLUDE=/usr/local/include/node
+RUN sh verified_transport/build-image.sh
 FROM ${PYTHON_IMAGE}
 RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
