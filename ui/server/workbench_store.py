@@ -47,6 +47,10 @@ class WorkbenchStore:
                     status TEXT NOT NULL, result TEXT, error TEXT,
                     governance_id TEXT, created REAL NOT NULL, updated REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS annotations (
+                    id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL,
+                    body TEXT NOT NULL, created REAL NOT NULL
+                );
             """)
 
     @contextmanager
@@ -60,7 +64,9 @@ class WorkbenchStore:
         finally:
             db.close()
 
-    def save_plan(self, owner, plan, digest, *, expected_digest=None, create=False):
+    def save_plan(
+        self, owner, plan, digest, *, expected_digest=None, create=False, before_commit=None
+    ):
         body = json.dumps(plan, allow_nan=False)
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -69,6 +75,8 @@ class WorkbenchStore:
             ).fetchone()
             if (create and old) or (not create and (not old or old[0] != expected_digest)):
                 raise Conflict("Plan changed; reload before saving.")
+            if before_commit:
+                before_commit()
             db.execute(
                 "INSERT OR IGNORE INTO revisions VALUES (?,?,?,?,?)",
                 (owner, plan["id"], digest, body, time.time()),
@@ -80,6 +88,50 @@ class WorkbenchStore:
             )
         return {"plan": json.loads(body), "digest": digest}
 
+    def is_current(self, owner, plan):
+        try:
+            return self.plan(owner, plan["id"])["plan"] == plan
+        except KeyError:
+            return False
+
+    def current_owner(self, digest):
+        with self.connection() as db:
+            rows = db.execute("SELECT owner FROM plans WHERE digest=?", (digest,)).fetchall()
+        if len(rows) != 1:
+            raise KeyError("Agreement not found")
+        return rows[0][0]
+
+    def job_header(self, run_id):
+        """Trusted routing metadata only; caller MUST authorize before fetching job()."""
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT owner,mode,plan,digest,governance_id,status FROM jobs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Run not found")
+        out = dict(row)
+        out["plan"] = json.loads(out["plan"])
+        return out
+
+    def annotate(self, kind, target, value):
+        """Append-only private material; authorization belongs to API integration."""
+        value = dict(value, id=value.get("id", uuid.uuid4().hex), created=time.time())
+        with self.connection() as db:
+            db.execute(
+                "INSERT INTO annotations VALUES (?,?,?,?,?)",
+                (value["id"], kind, target, json.dumps(value, allow_nan=False), value["created"]),
+            )
+        return value
+
+    def annotations(self, kind, target, actor):
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT body FROM annotations WHERE kind=? AND target=? ORDER BY created,id",
+                (kind, target),
+            ).fetchall()
+        return [value for row in rows if actor in (value := json.loads(row[0]))["recipients"]]
+
     def plan(self, owner, plan_id):
         with self.connection() as db:
             row = db.execute(
@@ -88,6 +140,16 @@ class WorkbenchStore:
         if row is None:
             raise KeyError("Plan not found")
         return {"plan": json.loads(row[0]), "digest": row[1]}
+
+    def revision(self, owner, plan_id, digest):
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT body FROM revisions WHERE owner=? AND id=? AND digest=?",
+                (owner, plan_id, digest),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Revision not found")
+        return {"plan": json.loads(row[0]), "digest": digest}
 
     def plans(self, owner):
         with self.connection() as db:

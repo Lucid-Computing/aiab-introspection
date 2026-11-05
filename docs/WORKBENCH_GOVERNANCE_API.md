@@ -161,3 +161,133 @@ evidence-owned module is absent they install a narrow test-only contract adapter
 (digest/validation), without creating or changing `contracts.py`; once present,
 tests use the actual module. Runtime facts and aggregate validator assertions in
 unit tests are explicit trusted fixtures, not claims of live enclave execution.
+
+## Authenticated workbench HTTP workflow
+
+The UI adapter uses authenticated session usernames and exact same-origin mutations.
+`POST /plans` and `PUT /plans/{id}` retain their existing shapes; PUT uses
+`expected_digest`. After an agreement has been bound, an edit registers its new
+unsigned draft while holding the local editor CAS transaction. Superseded signatures
+cannot approve/admit/release the new version, and historical approved versions cannot
+be restored. A failure between the two SQLite commits can advance governance ahead
+of the editor: this fails closed and requires operator reconciliation, never fallback
+to the prior consent. Local current-version checks also gate execution and release.
+
+Minimal frontend additions (all paths below have `/api/workbench` prefix):
+
+| Endpoint | Request / response |
+| --- | --- |
+| `POST /plans/{id}/bind` | Owner freezes an operator-authorized manifest before inviting signers; `{bound,digest}`. No signing consent is created. Existing owner `approval-payload` also binds. |
+| `GET /plans`, `GET /bootstrap` | Owner drafts plus current authorized agreements. No approvals, refusals, signer state/count/timing, identities, or private datasets from other accounts. Ambiguous plan IDs are rejected. |
+| `GET /plans/{id}/readiness` | `{ready:bool}` only. |
+| `POST /plans/{id}/reviews` | `{digest,clause,note,recipients?}`; `clause` is an exact JSON pointer. Stores actor, full plan digest, clause commitment, text and explicit authorized recipients. Default visibility is author-only. Review is never signing consent. |
+| `GET /plans/{id}/reviews?digest=...` | Exact-version notes visible to caller; historical owner revisions and historically authorized agreements are supported. |
+| `POST /runs` | Existing `{plan_id,dataset_id,mode}` plus optional `request_id` for audit admission replay protection. Only the built-in corpus can rehearse. |
+| `GET /runs/{id}` | Rehearsals are owner-only and labelled synthetic. Audit owners and explicit recipients receive only their governed projection and signed receipt; included subjects/signers are not thereby result recipients. Queued/running status contains no result or private error. |
+| `POST /runs/{id}/release` | Authenticated recipient releases to self only; no caller-selected destination or authorization JSON. Returns `{projection,receipt}`; repeated retrieval returns the immutable saved package after fresh authorization checks. |
+| `GET /receipts/public-key` | Public `{algorithm:"Ed25519",public_key}`. Pin independently. |
+| `POST /receipts/verify` | Public read-only `{package:{projection,receipt},public_key,expected?}` verifies with caller-pinned key and optional exact receipt bindings, without any private job lookup. It authenticates issuer/bytes/bindings only. |
+| `POST /runs/{id}/challenge` | Existing frontend shape `{finding_id,correction,evidence_ids,requested_remedy,recipients}`; optional `parent_id,disposition,corrected_release_id` for review lineage. Finding must exist in caller's released findings (or owner synthetic findings). |
+| `GET /runs/{id}/challenges` | Authorized challenge records in lineage order plus durable correction text. Historical challenge visibility follows the original agreement. Evidence IDs remain owner-only. |
+
+Audit UI run IDs route to internal governance run IDs; the signed receipt's `run_id`
+is the governance ID. Use the receipt's exact identifier for independent expected
+bindings. The API never returns a private audit result, trace, usage, input, arbitrary
+finding details, or evidence IDs to a recipient. The projection schema does allow
+reviewed finding prose; it cannot detect secrets/covert encoding in free text.
+Owner review of raw audit traces is not exposed through these routes either.
+
+Challenges do not mutate original results or receipts. A finding already released
+to a principal remains challengeable after withdrawal/cancellation, using only that
+saved projection; attaching new evidence still requires fresh source authority.
+Ordinary challenges store
+private correction material durably and ledger its commitment. Review dispositions
+require the independently enrolled reviewer role, inclusion in the parent challenge,
+no owner/challenger conflict, and narrowed recipients. Corrections linked to another
+release must satisfy the ordinary governance rules; overlapping numerical analyses
+have no budget exemption. Recipient correction evidence references are currently
+unsupported: only an owner can attach IDs resolving through their scoped evidence
+store, and those IDs are never delivered to other principals. Synthetic challenges
+are durable, owner-only, explicitly `synthetic_unverified`, and have no governance
+receipt, disposition, or claimed factual verification. Delivery/notifications,
+deadlines and attempt limits remain unimplemented.
+
+## Offline operator provisioning
+
+Run from the UI Python environment with `PYTHONPATH=ui:static` (or equivalent
+installed packages):
+
+```
+python -m server.workbench_admin --directory /persistent/workbench identity identity.json
+python -m server.workbench_admin --directory /persistent/workbench frozenroster roster.json
+python -m server.workbench_admin --directory /persistent/workbench releasepolicy policy.json
+python -m server.workbench_admin --directory /persistent/workbench sourcegrant grant.json
+python -m server.workbench_admin --directory /persistent/workbench revoke-source revocation.json
+```
+
+Every input MUST contain
+`"trust":"imported_operator_authorization_not_independently_verified"`.
+This is an explicit trust acknowledgement, not evidence that the CLI verified the
+source, principal, roster, or voluntary consent. Administrators must establish these
+facts independently. Never import a private signing key. Browser enrollment proves
+possession against the authenticated session; it does not establish employer roles.
+Identity keys/roles are immutable, so provision privileged identities before browser
+enrollment (later roles require a new identity). No command generates identity keys,
+signs approval, fills absent consent, or manufactures runtime facts.
+
+Input fields in addition to `trust`:
+
+- `identity`: `actor,public_key,roles?`; roles are `employer,roster_authority,
+  release_authority,source_authority,challenge_reviewer`.
+- `frozenroster`: `authority,roster_id,subjects,scope_id,source_commitment`.
+- `releasepolicy`: `authority,domain,max_releases,min_group_size,families`;
+  each family maps a chosen ID to `{plan:<exact reviewed plan>,fields:[...]}`.
+  The CLI computes the query commitment. Independently configure every permitted
+  query family/version before binding; requester edits do not grant new families.
+  The release authority must differ from the owner.
+- `sourcegrant`: `authority,owner,plan,authorization,dataset_manifest,
+  source_commitment,roster_id?`. `authorization` is the exact governance object
+  documented above, including explicit `expires_at` (null means no expiry).
+  `dataset_manifest` must be `{dataset_digest:contracts.dataset_digest(dataset),
+  manifest:dataset.manifest}` for the complete independently authorized corpus.
+  The CLI checks source-authority role and exact dataset/subject sets, stores the
+  provenance/trust label, and atomically writes mode-0600 `source-grants.json`.
+  Admission compares the entire manifest to the owner's immutable corpus.
+- `revoke-source`: `authority,plan_digest`; permanently invalidates the source grant
+  across versions/runs in the privacy domain. Removing the local grant also denies
+  subsequent event checkpoints/releases; use permanent revocation for withdrawal.
+
+Use exclusive operator access when provisioning the source-grant file; concurrent
+operator file writers are not serialized. Legacy manually installed grants remain
+trusted operator assertions; the API does not reinterpret them as independently
+verified provenance. HTTP cannot provision roles, rosters, policies or source grants.
+
+## Runtime integration status and exact remaining boundary
+
+The adapter invokes runtime `budgets`, `graph_order`, and `validate_operators(live=True)`
+for `/check`, each catalog's `runtime_validation`, and admission. This is operator
+configuration validation, not a successful live DeepSeek/Tinfoil qualification.
+Model verification must occur inside execution; MR_SEAM failure has no bypass.
+Joint execution receives a trusted capability dict derived solely from the operator
+source grant: `{id,authorized_dataset_ids,authorized_subjects}`. Synthetic rehearsal
+capabilities derive solely from the server-generated built-in corpus. Personal mode
+continues to intersect the actual authenticated subject in the runtime.
+
+The adapter re-reads source grants, full manifest and current plan binding, then calls
+`GovernanceStore.revalidate` before/after execution and on **every available private
+async `on_event` callback**. Callback payloads never go to HTTP. An authorization denial
+discards completion; explicit cancellation also cancels the task and wins over a late
+finish. Source authorization is not accepted from request JSON.
+
+**Exact gap:** this runtime's events include step start/end, model completion and
+tool results, but it has no callback immediately before every model inference or
+every evidence/tool access. Revocation during a pending call is only detected at the
+next event, and cannot recall data already sent. If a runner lacks `on_event`, only
+pre/post checks are available. A trusted pre-access/pre-inference hook plus resolved
+source/field/time permission intersection is still required for the full throughout-run
+claim. The API advertises this limitation, creates no runtime facts, and continues to
+block confidential audit admission unconditionally until verified sealed ingestion,
+client/runtime integration and independent output validation actually exist. Tests
+inject labelled deterministic stand-ins for HTTP lifecycle tests; they are not live
+runtime/confidential-execution evidence. Cryptographic approvals and receipts use
+real Ed25519 and durable SQLite in tests.

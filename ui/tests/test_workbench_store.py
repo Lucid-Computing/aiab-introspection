@@ -45,3 +45,26 @@ def test_atomic_worker_claim_cancellation_and_restart(tmp_path):
     assert restarted.job("alice", pending)["status"] == "interrupted"
     assert not restarted.claim("alice", running)
     assert restarted.job("alice", run)["status"] == "cancelled"
+
+
+def test_failed_version_transition_is_not_saved_or_called_for_stale_editor(tmp_path):
+    store = WorkbenchStore(tmp_path / "workbench.db")
+    plan = {"id": "p", "question": "original"}
+    store.save_plan("owner", plan, "v1", create=True)
+    calls = []
+
+    def transition():
+        calls.append("attempted")
+        raise ValueError("governance denied supersession")
+
+    with pytest.raises(Conflict):
+        store.save_plan("owner", plan, "v2", expected_digest="stale", before_commit=transition)
+    assert calls == []
+    with pytest.raises(ValueError, match="governance"):
+        store.save_plan("owner", plan, "v2", expected_digest="v1", before_commit=transition)
+    assert calls == ["attempted"]
+    assert WorkbenchStore(store.path).plan("owner", "p")["digest"] == "v1"
+    with pytest.raises(KeyError):
+        store.revision("owner", "p", "v2")
+    with pytest.raises(KeyError):
+        store.revision("outsider", "p", "v1")

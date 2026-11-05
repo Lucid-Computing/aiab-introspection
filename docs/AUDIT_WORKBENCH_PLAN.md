@@ -347,3 +347,17 @@ The eventual completion condition is the entire coverage matrix, four interactiv
 Fixed decisions are the DeepSeek/Tinfoil audit-model route, readable executable agreements, evidence-backed adaptive investigation, explicit recipient control, full coverage of the original audit portfolio, and isolated branch/worktree development. Pi is provisional; an actual serving release and approved transport/retry behavior remain to be qualified.
 
 External inputs are native WORM/Amber samples and trust/checkpoint specifications, authoritative identity and participant rosters, access to permissioned pilot sources, independent annotation/review expertise, and target users for comprehension testing. Synthetic adapters and datasets allow the product work to proceed while these are obtained. Native completeness, real-world effectiveness, and any provider-dependent lifecycle claim remain visibly unvalidated until their own evidence exists.
+
+### Backend governance integration status (November 5)
+
+The authenticated workbench adapter now connects multi-party discovery, exact-version
+Ed25519 approvals, independent operator-provisioned policies/manifests, recipient-only
+projections, receipt verification, durable clause review notes and challenge review
+lineage. Operational input formats and frontend endpoint additions are specified in
+[WORKBENCH_GOVERNANCE_API.md](WORKBENCH_GOVERNANCE_API.md). Provisioned authority is
+explicitly imported trust; the service creates neither voluntary-consent claims nor
+runtime verification facts. Synthetic challenges remain owner-only and unverified.
+Confidential admission remains blocked. Private runtime event checkpoints now check
+current agreement/source authority, but lack of a pre-access/pre-inference hook still
+prevents claiming authorization enforcement immediately before every tool/model call.
+These backend tests do not qualify live DeepSeek inference or confidential execution.
