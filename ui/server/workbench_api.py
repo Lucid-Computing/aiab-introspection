@@ -260,9 +260,18 @@ class WorkbenchAPI:
                 if job["governance_id"]:
                     self.revalidate_job(job)
 
+            async def authorize_access():
+                if self.store.job(actor, run_id)["status"] != "running":
+                    raise ValueError("Run is no longer authorized")
+                if job["governance_id"]:
+                    self.revalidate_job(job)
+                return True
+
             kwargs = {"actor": trusted_actor}
             if "on_event" in inspect.signature(execute_plan).parameters:
                 kwargs["on_event"] = checkpoint
+            if "authorize" in inspect.signature(execute_plan).parameters:
+                kwargs["authorize"] = authorize_access
             result = await execute_plan(job["plan"], data, **kwargs)
             if job["governance_id"]:
                 self.revalidate_job(job)
