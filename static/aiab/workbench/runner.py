@@ -244,7 +244,11 @@ class Supervisor:
             "no_finding, insufficient_evidence. Cite only fetched events. Missing evidence is "
             "insufficient_evidence. All criteria must be addressed. No recipients, keys, shell, "
             "network, skills or configuration tools exist. Tool arguments use a request string "
-            "containing JSON. Mandate: "
+            'containing JSON. Final response shape: {"findings":[{"id":"unique-id",'
+            '"criterion_id":"declared-criterion-id","title":"Title",'
+            '"outcome":"insufficient_evidence","claim":"Evidence-based claim",'
+            '"evidence_ids":[],"counterevidence_ids":[],"limitations":[],"method":"agent",'
+            '"details":{}}]}. Use this envelope, never a bare finding or Markdown. Mandate: '
             + json.dumps(
                 {k: plan[k] for k in ("id", "question", "criteria", "scope")}, separators=(",", ":")
             )
@@ -367,6 +371,7 @@ class Supervisor:
                     ),
                 }
             )
+            format_repairs = 0
             while True:
                 frame = await receive()
                 kind = frame.get("kind")
@@ -374,12 +379,43 @@ class Supervisor:
                     if self.pending_calls:
                         raise RuntimeFailure("unresolved_tool_calls")
                     text = "".join(b["text"] for b in frame["content"] if b["type"] == "text")
-                    parsed = json.loads(text)
-                    if not isinstance(parsed, dict) or set(parsed) != {"findings"}:
-                        raise RuntimeFailure("invalid_agent_result")
-                    result = validate_findings(
-                        parsed["findings"], self.plan, self.broker, require_examined=True
-                    )
+                    try:
+                        try:
+                            parsed = json.loads(text)
+                        except ValueError:
+                            raise RuntimeFailure("invalid_agent_json") from None
+                        if not isinstance(parsed, dict) or set(parsed) != {"findings"}:
+                            raise RuntimeFailure("invalid_agent_result")
+                        result = validate_findings(
+                            parsed["findings"], self.plan, self.broker, require_examined=True
+                        )
+                    except RuntimeFailure as exc:
+                        if (
+                            str(exc)
+                            not in {
+                                "invalid_agent_json",
+                                "invalid_agent_result",
+                                "invalid_finding_schema",
+                            }
+                            or format_repairs >= 2
+                        ):
+                            raise
+                        format_repairs += 1
+                        await self.emit("result_format_rejected", {"code": str(exc)})
+                        await send(
+                            {
+                                "id": frame["id"],
+                                "result": {
+                                    "accepted": False,
+                                    "instruction": "Final response structural error: "
+                                    + str(exc)
+                                    + '. Return only {"findings":[...]} using exactly the '
+                                    "finding fields in the mandate. Preserve evidence and "
+                                    "uncertainty. Never invent citations or change scope.",
+                                },
+                            }
+                        )
+                        continue
                     if {f["criterion_id"] for f in result} != {
                         c["id"] for c in self.plan["criteria"]
                     }:
@@ -389,6 +425,7 @@ class Supervisor:
                         and self.broker.countersearches == 0
                     ):
                         raise RuntimeFailure("counterevidence_search_required")
+                    await send({"id": frame["id"], "result": {"accepted": True}})
                     return result
                 if kind == "event":
                     await self.emit("pi_event", {"event": frame["event"]})

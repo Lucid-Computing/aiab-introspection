@@ -167,6 +167,25 @@ async def test_malformed_nested_tool_json_is_not_authorized_and_can_be_corrected
     assert result["findings"][0]["counterevidence_ids"] == ["e2"]
 
 
+async def test_final_envelope_can_be_corrected_without_changing_evidence(narrow_contracts):
+    model = Model()
+    valid = model.messages[-1]
+    model.messages[-1] = {"content": json.dumps(finding(counterevidence_ids=["e2"]))}
+    model.messages.append(valid)
+    result = await execute_plan(PLAN, DATASET, actor="alice", model=model)
+    assert result["usage"]["turns"] == 5
+    assert result["usage"]["tool_calls"] == 3
+    assert result["findings"][0]["counterevidence_ids"] == ["e2"]
+    assert "structural error" in json.dumps(model.requests[-1])
+
+
+async def test_final_envelope_correction_is_bounded(narrow_contracts):
+    model = Model(messages=[{"content": "{}"}] * 3)
+    with pytest.raises(RuntimeFailure, match="invalid_agent_result"):
+        await execute_plan(PLAN, DATASET, actor="alice", model=model)
+    assert len(model.requests) == 3
+
+
 async def test_pi_real_multiturn_with_test_model(narrow_contracts):
     model = Model()
     result = await execute_plan(PLAN, DATASET, actor="alice", model=model)

@@ -64,8 +64,12 @@ async function run(init) {
     if (['turn_start','turn_end','tool_execution_start','tool_execution_end'].includes(event.type)) send({kind:'event',event});
   });
   await agent.prompt(init.prompt);
-  const last = agent.state.messages.at(-1);
-  if (!last || last.role !== 'assistant' || last.stopReason !== 'stop') throw Error('agent_failed');
-  send({kind:'result',content:last.content});
+  while (true) {
+    const last = agent.state.messages.at(-1);
+    if (!last || last.role !== 'assistant' || last.stopReason !== 'stop') throw Error('agent_failed');
+    const validation = await rpc('result', {content:last.content});
+    if (validation.accepted === true) break;
+    await agent.prompt(validation.instruction);
+  }
   input.close();
 }
