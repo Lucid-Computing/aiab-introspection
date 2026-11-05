@@ -257,7 +257,10 @@ def validate_dataset(dataset):
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError("invalid_native_reference") from exc
     for event in dataset["events"]:
-        key = (event["source"], event["native_id"])
+        revision = event["provenance"].get("native_revision")
+        if revision is not None and (not isinstance(revision, str) or not revision):
+            raise ValueError("invalid_native_revision")
+        key = (event["source"], event["native_id"], revision)
         if key in native:
             raise ValueError("duplicate_native_conflict")
         native.add(key)

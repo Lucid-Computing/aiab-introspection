@@ -962,6 +962,9 @@ def build(seed=0, *, include_truth=False, replicas=1):
                         else:
                             replacement = hashlib.sha256(_json(value).encode()).hexdigest()
                         duplicate["attributes"][field] = replacement
+                        decisive["provenance"]["native_revision"] = "1"
+                        duplicate["provenance"]["native_revision"] = "2"
+                        seal(decisive)
                         duplicate["provenance"]["native_bytes"] = _json(
                             {
                                 "revision_of": decisive["native_id"],

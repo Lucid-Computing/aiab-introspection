@@ -34,6 +34,7 @@ from server.auth import LoginError, OidcLogin, SessionSigner, Stamp, authenticat
 from server.box import box_status
 from server.config import UI_ROOT, LogSource, Settings, load_settings
 from server.plan_view import PARTIES
+from server.workbench_api import WorkbenchAPI
 
 settings = load_settings()
 signer = SessionSigner(settings.session_secret)
@@ -57,6 +58,7 @@ oidc: OidcLogin | None = (
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    workbench.store.recover()
     try:
         moved = pv.archive_old_agreements(settings)  # the box no longer runs that format
         if moved:
@@ -83,6 +85,7 @@ async def lifespan(_: FastAPI):
     if settings.auto_pull:
         publish.start_auto_pull(settings.git_dir)  # the release pins follow the branch
     yield
+    await workbench.close()
     refresher.cancel()
 
 
@@ -213,6 +216,17 @@ EDIT_WARNING = (
 
 def user_of(request: Request) -> dict[str, str] | None:
     return signer.read(request.cookies.get(COOKIE))
+
+
+workbench = WorkbenchAPI(settings.runs_dir.parent / "workbench", user_of)
+app.include_router(workbench.router)
+
+
+@app.get("/workbench")
+async def audit_workbench(request: Request) -> Response:
+    if not user_of(request):
+        return to_login(request)
+    return RedirectResponse("/audit-plan-playground/?workbench=1", status_code=303)
 
 
 def to_login(request: Request) -> RedirectResponse:
