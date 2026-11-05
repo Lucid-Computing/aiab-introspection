@@ -35,6 +35,7 @@ from server.box import box_status
 from server.config import UI_ROOT, LogSource, Settings, load_settings
 from server.plan_view import PARTIES
 from server.workbench_api import WorkbenchAPI
+from server.workbench_assist import create_router as workbench_assist_router
 
 settings = load_settings()
 signer = SessionSigner(settings.session_secret)
@@ -220,6 +221,7 @@ def user_of(request: Request) -> dict[str, str] | None:
 
 workbench = WorkbenchAPI(settings.runs_dir.parent / "workbench", user_of)
 app.include_router(workbench.router)
+app.include_router(workbench_assist_router(workbench))
 
 
 @app.get("/workbench")
