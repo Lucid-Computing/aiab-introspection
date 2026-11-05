@@ -363,7 +363,7 @@ the parent UI and confidential factory wire current agreement/source authority i
 that adapter. Tests cover revocation and denial independently of private event callbacks.
 Live DeepSeek qualification is recorded separately in
 `static/agent_runtime/review/integrated-qualification.json`: real inference, synthetic
-evidence, two turns, all seven tools and 14,603 tokens. It does not establish native
+evidence, two turns, all seven tools and 13,657 tokens. It does not establish native
 source completeness, real-world audit accuracy or confidential supervisor execution.
 
 ### Integrated implementation status (November 5)

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-05T18:37:02.961830+00:00",
+  "timestamp": "2026-11-05T18:55:38.500998+00:00",
   "live_inference": true,
   "synthetic_evidence": true,
   "profile": {
@@ -42,7 +42,7 @@
       "name": "tinfoil-go",
       "version": "0.16.4"
     },
-    "verifiedAt": "2026-11-05T18:37:08.671760999Z",
+    "verifiedAt": "2026-11-05T18:55:42.814625818Z",
     "freshnessExpiresAt": "2026-11-09T22:20:58Z",
     "steps": {
       "compareMeasurements": {
@@ -59,7 +59,7 @@
       }
     },
     "codeTag": "v0.0.10+b200",
-    "attestationSHA256": "d4a04d0c678ec21e7295f5e29c3002f9bddcf4f7486ec136890e8818bfa8b503",
+    "attestationSHA256": "904283658b4fc1b8e86ec5abe54eac378f259e85eb7927de2f944c812a302182",
     "platformReference": {
       "digest": "6a4515c3305a81136bda42aef5fc4f13a4a2c63a51c522b17883d008cfbbd472",
       "repo": "tinfoilsh/cvmimage",
@@ -68,13 +68,13 @@
   },
   "tokenizer_parity": [
     {
-      "chat_count": 772,
-      "released_prompt_count": 772,
+      "chat_count": 905,
+      "released_prompt_count": 905,
       "equal": true
     },
     {
-      "chat_count": 783,
-      "released_prompt_count": 783,
+      "chat_count": 916,
+      "released_prompt_count": 916,
       "equal": true
     }
   ],
@@ -89,7 +89,7 @@
       "name": "tinfoil-go",
       "version": "0.16.4"
     },
-    "verifiedAt": "2026-11-05T18:37:24.566539786Z",
+    "verifiedAt": "2026-11-05T18:55:59.172314356Z",
     "freshnessExpiresAt": "2026-11-09T22:20:58Z",
     "steps": {
       "compareMeasurements": {
@@ -106,7 +106,7 @@
       }
     },
     "codeTag": "v0.0.10+b200",
-    "attestationSHA256": "143258957d922a8ad2f8ea92bbc703d19b132ef46a1b686e7b2ef34a5c21af35",
+    "attestationSHA256": "1fa2132b1e28d3586c7dbef44a89b277dd5c42738adaa5a2fe198b90481007da",
     "platformReference": {
       "digest": "6a4515c3305a81136bda42aef5fc4f13a4a2c63a51c522b17883d008cfbbd472",
       "repo": "tinfoilsh/cvmimage",
@@ -116,9 +116,9 @@
   "usage": {
     "turns": 2,
     "tool_calls": 7,
-    "total_tokens": 14603,
-    "prompt_tokens": 11783,
-    "completion_tokens": 2820
+    "total_tokens": 13657,
+    "prompt_tokens": 11962,
+    "completion_tokens": 1695
   },
   "tools_exercised": [
     "counterevidence",
@@ -129,11 +129,13 @@
     "search",
     "sql"
   ],
-  "executed_git_commit": "f0806e5e8c53394c31548d9293a8d507e3efe377",
-  "runtime_source_sha256": {
+  "executed_git_commit": "671d47f",
+  "source_sha256": {
     "static/agent_runtime/harness.mjs": "011592c7d9189368136d4b7189c08f3ed512c0dbba0fcdc6121894bc946c78d6",
-    "static/aiab/workbench/runner.py": "e10816dd288f80e0dce590834e50770849bd4b197801852f36a05437b870d6b1",
-    "static/aiab/workbench/tools.py": "13e1edf46917786d014c2204d4e95f5bf496e1fae49b26bd89829f72b7d0bec6",
-    "static/aiab/workbench/model.py": "89119c8940f6d4d8cce0f4ed5e50b5c1459b16267cdb6696efa798d901c23a57"
+    "static/agent_runtime/python_worker.py": "9bdde6f576acc96d6796035e63c31bee4e074541aa57af898f9b2bdb04283a0f",
+    "static/aiab/workbench/runner.py": "d0240e3fd9206fde86f87659b32e28bcc5e84d395b487447b4a2db015e3606f3",
+    "static/aiab/workbench/tools.py": "9da1c80839f9cb9b22c5580957c490341dddd1a006280596ee693558657d062d",
+    "static/aiab/workbench/model.py": "89119c8940f6d4d8cce0f4ed5e50b5c1459b16267cdb6696efa798d901c23a57",
+    "static/aiab/baked/worker.py": "f90103aba3e402d667be3ce86035affa393b4940936a32da60417cd93b4e6025"
   }
 }
