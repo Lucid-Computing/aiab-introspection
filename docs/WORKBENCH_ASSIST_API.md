@@ -33,11 +33,29 @@ Only the draft plan and instruction enter the user message; the system message
 contains the server-owned schema. No dataset, fixture labels, signing keys, or
 secrets are retrieved. Tool calls, malformed/duplicate-key JSON, invalid operator
 configs, extra response-envelope fields, changed identity mappings, and excess
-usage are rejected. There is one verified DeepSeek completion, no retry or provider
-fallback: 24,000 input tokens, 8,192 output tokens, 180 seconds including startup
-and token counting, followed by a bounded 10-second close. Verification/provider
-unavailability yields a safe 503 `suggestion_unavailable` (adapter validation
-failures may yield 400). `AIAB_DEEPSEEK_TRANSPORT=go` selects the already-qualified
+usage are rejected. The authoring-only request omits tool declarations and uses
+strict structured JSON output. The generation grammar declares existing draft
+extension keys and omits unsupported `uniqueItems`; the unchanged shared validators
+still enforce uniqueness and all executable constraints on the completed plan.
+
+At most two verified completions are allowed, with aggregate reservations of
+24,000 input tokens and 8,192 output tokens. The first completion reserves at most
+4,096 output tokens; a correction may use only the remaining aggregate output
+budget. Each attempt's complete counted input is reserved before inference.
+Returned usage sums both attempts. Only malformed envelopes/JSON or invalid
+structural/executable proposals qualify for one correction, using the original
+draft and a fixed server-owned diagnostic. Rejected provider text and validation
+exception strings are never echoed into correction input or diagnostics. Tool calls,
+private payloads, identity changes and usage violations fail closed without retry.
+The total 180-second deadline includes startup, token counting and correction;
+close has a separate 10-second bound. There is no provider or transport fallback.
+
+Correctable draft failures return safe 400 `invalid_plan`, `private_payload`, or
+`invalid_instruction` errors. Aggregate input exhaustion returns 422
+`suggestion_budget`; a second invalid proposal returns 422 `invalid_proposal`.
+Verification/provider/protocol failures return safe 503 `suggestion_unavailable`,
+including adapter `ValueError` subclasses; raw provider error bodies never escape.
+`AIAB_DEEPSEEK_TRANSPORT=go` selects the already-qualified
 official pinned broker through the real `DeepSeekModel`; credentials and reviewed
 host remain server configuration. A Python-only `suggest(..., test_model=...)`
 seam accepts explicitly labeled test models; HTTP cannot activate it.
@@ -140,3 +158,23 @@ retain their terminal status. Cancellation commits before task cancellation;
 late completion cannot overwrite it. Owner-only GET/cancel return 404 to every
 other principal, including plan participants. Cancellation preserves already
 committed partial case checkpoints.
+
+Local verified authoring regression (2026-11-05): the saved synthetic deterministic
+agent-reconciliation plan passed admission. The previous shared request received
+verified HTTP 400 for an empty tools declaration. A direct full-schema grammar
+also received HTTP 400 for unsupported `uniqueItems`. The authoring-specific wire
+request with compatible grammar returned HTTP 200 with `securityVerified: true`,
+and the instruction “Change only the title to Review agent contributions. Preserve
+all other fields exactly. Return the entire plan.” produced exactly `/title` as its
+diff (2,296 prompt + 1,538 completion = 3,834 tokens). The existing scope extension
+was retained. This used the reviewed host, real `DeepSeekModel` Go transport and
+parent-qualified broker SHA-256
+`437a648d172eb60cc761a1a611a0eb97bdc5b95e08fb99f16e1a3b2d3ae0043e`.
+No runtime transport/model source, frontend, credentials, or private records were
+changed or recorded. This local evidence does not assert a hosted deployment.
+
+An end-to-end local authenticated `POST /api/workbench/suggestions` also returned
+HTTP 200 through the real verified broker. Exact object equality confirmed the
+result was the original plan with only `title` replaced; `test_model` was false,
+`securityVerified` was true, and usage was 2,296 prompt + 1,732 completion = 4,028
+tokens. No draft was saved or accepted by this request.

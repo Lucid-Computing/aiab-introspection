@@ -65,7 +65,7 @@ class ExplicitTestModel:
         return 100
 
     async def complete(self, messages, tools, max_tokens):
-        assert self.started and max_tokens == assist.MAX_OUTPUT_TOKENS and tools == []
+        assert self.started and 0 < max_tokens <= assist.MAX_OUTPUT_TOKENS and tools == []
         return {
             "message": self.message,
             "usage": {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130},
@@ -367,3 +367,210 @@ def test_authoring_rejects_embedded_evidence_and_secrets_before_model(observed, 
     with pytest.raises(ValueError, match="forbidden"):
         asyncio.run(assist.suggest(value, "Improve", test_model=model))
     assert not model.started
+
+
+class SequenceModel(ExplicitTestModel):
+    def __init__(self, candidate, contents):
+        super().__init__(candidate)
+        self.contents = iter(contents)
+        self.calls = []
+        self.count = 100
+
+    async def count_tokens(self, messages, tools):
+        await super().count_tokens(messages, tools)
+        return self.count
+
+    async def complete(self, messages, tools, max_tokens):
+        self.calls.append((copy.deepcopy(messages), max_tokens))
+        answer = await super().complete(messages, tools, max_tokens)
+        answer["message"] = {"role": "assistant", "content": next(self.contents)}
+        return answer
+
+
+@pytest.mark.parametrize("failure", ["envelope", "operator"])
+def test_bounded_correction_restarts_from_draft_and_accounts_all_usage(observed, failure):
+    original = plan(observed)
+    candidate = copy.deepcopy(original)
+    candidate["title"] = "Review agent contributions"
+    rejected = {"private_marker": "DO_NOT_ECHO"}
+    if failure == "operator":
+        invalid = copy.deepcopy(original)
+        invalid["steps"][0]["config"]["operator"] = "DO_NOT_ECHO"
+        rejected = {"plan": invalid}
+    model = SequenceModel(original, [json.dumps(rejected), json.dumps({"plan": candidate})])
+    result = asyncio.run(assist.suggest(original, "Change title", test_model=model))
+    assert model.closed and len(model.calls) == 2
+    assert result["usage"] == {
+        "prompt_tokens": 200,
+        "completion_tokens": 60,
+        "total_tokens": 260,
+        "test_model": True,
+    }
+    assert model.calls[0][1] == assist.MAX_OUTPUT_TOKENS // 2
+    assert model.calls[1][1] == assist.MAX_OUTPUT_TOKENS - 30
+    assert "DO_NOT_ECHO" not in json.dumps(model.calls[1][0])
+    assert json.loads(model.calls[1][0][1]["content"])["plan"] == original
+    assert [change["path"] for change in result["changes"]] == ["/title"]
+
+
+def test_correction_reserves_aggregate_input_before_inference(observed):
+    value = plan(observed)
+    model = SequenceModel(value, ["{}"])
+    model.count = assist.MAX_INPUT_TOKENS // 2 + 1
+    with pytest.raises(assist.APIError) as error:
+        asyncio.run(assist.suggest(value, "Improve", test_model=model))
+    assert error.value.code == "suggestion_budget"
+    assert len(model.calls) == 1 and model.closed
+
+
+def test_second_invalid_response_stops_with_safe_diagnostic(observed):
+    value = plan(observed)
+    model = SequenceModel(value, ['{"marker":"PRIVATE_PROVIDER_TEXT"}', "{}"])
+    with pytest.raises(assist.APIError) as error:
+        asyncio.run(assist.suggest(value, "Improve", test_model=model))
+    assert error.value.code == "invalid_proposal" and error.value.status == 422
+    assert "PRIVATE_PROVIDER_TEXT" not in str(error.value)
+    assert len(model.calls) == 2 and model.closed
+
+
+@pytest.mark.parametrize("key", ["credentials", "events", "world_truth"])
+def test_private_provider_payload_is_rejected_without_correction(observed, key):
+    value = plan(observed)
+    model = SequenceModel(value, [json.dumps({"plan": value, key: "DO_NOT_ECHO"})])
+    with pytest.raises(ValueError, match="forbidden"):
+        asyncio.run(assist.suggest(value, "Improve", test_model=model))
+    assert len(model.calls) == 1 and model.closed
+
+
+def test_authoring_wire_omits_tools_and_retains_extension_keys(observed):
+    value = plan(observed)
+    value["scope"]["sources"] = {"reviewed": True}
+    captured = []
+
+    class Connection:
+        async def request(self, method, path, body, credential, timeout):
+            captured.append(json.loads(body))
+            return 200, {
+                "model": assist.MODEL_ID,
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"plan": value}),
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130},
+            }
+
+    model = object.__new__(assist.ProposalModel)
+    model.connection, model.credential = Connection(), "test-only"
+    asyncio.run(
+        model.complete(
+            [
+                {"role": "system", "content": "schema"},
+                {"role": "user", "content": json.dumps({"plan": value, "instruction": "Title"})},
+            ],
+            [],
+            100,
+        )
+    )
+    request = captured[0]
+    assert "tools" not in request and "tool_choice" not in request
+    assert request["model"] == assist.MODEL_ID
+    for key, setting in assist.MODEL_PROFILE["inference"].items():
+        assert request[key] == setting
+    schema = request["response_format"]["json_schema"]["schema"]
+    assert "uniqueItems" not in json.dumps(schema)
+    assert "sources" in schema["properties"]["plan"]["properties"]["scope"]["required"]
+    # The generation grammar is only a subset: local strict uniqueness still applies.
+    value["scope"]["subjects"] *= 2
+    with pytest.raises(ValueError):
+        assist.validate(value)
+
+
+def test_suggestion_api_safe_errors_and_unsigned_no_save(api, observed, monkeypatch):
+    workbench, _, client = api
+    value = plan(observed)
+    save(api, value)
+    candidate = copy.deepcopy(value)
+    candidate["title"] = "Review agent contributions"
+
+    monkeypatch.setattr(assist, "ProposalModel", lambda: ExplicitTestModel(candidate))
+    response = client.post(
+        "/api/workbench/suggestions", json={"plan": value, "instruction": "Title"}
+    )
+    assert response.status_code == 503  # test models cannot supply live verification
+
+    # HTTP cannot activate the Python-only test seam; exercise the real API flow
+    # with an adapter double whose verification document is explicit test evidence.
+    class VerifiedDouble(ExplicitTestModel):
+        def verification_document(self):
+            return {"test_double": True}
+
+    monkeypatch.setattr(assist, "ProposalModel", lambda: VerifiedDouble(candidate))
+    response = client.post(
+        "/api/workbench/suggestions", json={"plan": value, "instruction": "Title"}
+    )
+    assert response.status_code == 200
+    assert [c["path"] for c in response.json()["changes"]] == ["/title"]
+    assert workbench.store.plan("alice", value["id"])["plan"] == value
+    invalid = copy.deepcopy(value)
+    invalid["scope"]["subjects"] = 7
+    response = client.post("/api/workbench/suggestions", json={"plan": invalid, "instruction": "x"})
+    assert response.status_code == 400 and response.json()["error"]["code"] == "invalid_plan"
+    invalid["credentials"] = "PRIVATE_MARKER"
+    response = client.post("/api/workbench/suggestions", json={"plan": invalid, "instruction": "x"})
+    assert response.json()["error"]["code"] == "private_payload"
+    assert "PRIVATE_MARKER" not in response.text
+
+    async def failed_provider(*args):
+        raise assist.RuntimeFailure("PRIVATE_PROVIDER_MARKER")
+
+    monkeypatch.setattr(VerifiedDouble, "complete", failed_provider)
+    response = client.post(
+        "/api/workbench/suggestions", json={"plan": value, "instruction": "Title"}
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "suggestion_unavailable"
+    assert "PRIVATE_PROVIDER_MARKER" not in response.text
+
+
+def test_usage_violation_never_retries(observed):
+    value = plan(observed)
+    model = ExplicitTestModel(value)
+    complete = model.complete
+
+    async def excessive(*args):
+        answer = await complete(*args)
+        answer["usage"]["prompt_tokens"] = 101
+        answer["usage"]["total_tokens"] = 131
+        return answer
+
+    model.complete = excessive
+    with pytest.raises(ValueError, match="reservation"):
+        asyncio.run(assist.suggest(value, "Improve", test_model=model))
+    assert model.closed
+
+
+def test_correction_cannot_overspend_remaining_output(observed):
+    value = plan(observed)
+    model = SequenceModel(value, ["{}", json.dumps({"plan": value})])
+    complete = model.complete
+
+    async def excessive(messages, tools, limit):
+        answer = await complete(messages, tools, limit)
+        completion = 4000 if len(model.calls) == 1 else 4200
+        answer["usage"] = {
+            "prompt_tokens": 100,
+            "completion_tokens": completion,
+            "total_tokens": 100 + completion,
+        }
+        return answer
+
+    model.complete = excessive
+    with pytest.raises(ValueError, match="reservation"):
+        asyncio.run(assist.suggest(value, "Improve", test_model=model))
+    assert model.calls[1][1] == assist.MAX_OUTPUT_TOKENS - 4000
+    assert len(model.calls) == 2 and model.closed
