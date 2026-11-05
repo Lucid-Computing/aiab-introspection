@@ -315,7 +315,7 @@ class WorkbenchAPI:
                     "operator_prevalidation": True,
                     "live_model_verification": "required_at_execution",
                     "confidential_execution": False,
-                    "authorization_checkpoints": "before evidence access, tokenization and inference",
+                    "authorization_checkpoints": "before evidence, tokenization and inference",
                 },
             }
 

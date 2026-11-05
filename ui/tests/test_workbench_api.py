@@ -23,6 +23,30 @@ def api(tmp_path):
         yield service, client
 
 
+def test_hosted_origin_is_configured_not_forwarded_by_caller(api, monkeypatch):
+    service, client = api
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://astra.example")
+    key = Ed25519PrivateKey.generate()
+    body = {"public_key": base64.b64encode(key.public_key().public_bytes_raw()).decode()}
+    endpoint = "/api/workbench/identities/challenge"
+    assert (
+        client.post(endpoint, json=body, headers={"origin": "https://astra.example"}).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            endpoint,
+            json=body,
+            headers={
+                "origin": "https://evil.example",
+                "x-forwarded-host": "evil.example",
+                "x-forwarded-proto": "https",
+            },
+        ).status_code
+        == 403
+    )
+
+
 def test_auth_origin_and_plan_isolation(api):
     service, client = api
     assert client.get("/api/workbench/bootstrap").json()["user"]["id"] == "alice"
