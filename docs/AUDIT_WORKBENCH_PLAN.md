@@ -344,7 +344,7 @@ The eventual completion condition is the entire coverage matrix, four interactiv
 
 ## Decisions and external inputs
 
-Fixed decisions are the DeepSeek/Tinfoil audit-model route, readable executable agreements, evidence-backed adaptive investigation, explicit recipient control, full coverage of the original audit portfolio, and isolated branch/worktree development. Pi is provisional; an actual serving release and approved transport/retry behavior remain to be qualified.
+Fixed decisions are the DeepSeek/Tinfoil audit-model route, readable executable agreements, evidence-backed adaptive investigation, explicit recipient control, full coverage of the original audit portfolio, and isolated branch/worktree development. Pi is implemented. A pinned DeepSeek serving release has passed live tool-use qualification through the official Go Tinfoil SDK; this does not qualify the separate confidential audit supervisor deployment.
 
 External inputs are native WORM/Amber samples and trust/checkpoint specifications, authoritative identity and participant rosters, access to permissioned pilot sources, independent annotation/review expertise, and target users for comprehension testing. Synthetic adapters and datasets allow the product work to proceed while these are obtained. Native completeness, real-world effectiveness, and any provider-dependent lifecycle claim remain visibly unvalidated until their own evidence exists.
 
@@ -357,7 +357,35 @@ lineage. Operational input formats and frontend endpoint additions are specified
 [WORKBENCH_GOVERNANCE_API.md](WORKBENCH_GOVERNANCE_API.md). Provisioned authority is
 explicitly imported trust; the service creates neither voluntary-consent claims nor
 runtime verification facts. Synthetic challenges remain owner-only and unverified.
-Confidential admission remains blocked. Private runtime event checkpoints now check
-current agreement/source authority, but lack of a pre-access/pre-inference hook still
-prevents claiming authorization enforcement immediately before every tool/model call.
-These backend tests do not qualify live DeepSeek inference or confidential execution.
+Confidential admission remains blocked. The runtime now calls an independent
+authorization adapter immediately before tokenization, inference and tool access;
+the parent UI and confidential factory wire current agreement/source authority into
+that adapter. Tests cover revocation and denial independently of private event callbacks.
+Live DeepSeek qualification is recorded separately in
+`static/agent_runtime/review/integrated-qualification.json`: real inference, synthetic
+evidence, two turns, all seven tools and 14,603 tokens. It does not establish native
+source completeness, real-world audit accuracy or confidential supervisor execution.
+
+### Integrated implementation status (November 5)
+
+The isolated `dev-astra-one` branch contains the readable document/graph/code builder,
+verified draft-only authoring suggestions, deterministic and agent evaluations,
+27 executable audit methods, 432 synthetic cases in 54 families, bounded evidence
+queries and adaptive Pi investigations, browser-held consent keys, recipient releases,
+challenge lineage and local pinned-key receipt verification. Findings expose
+counterevidence and coverage; rehearsal findings can open cited synthetic records.
+Evaluation reports include family-level metrics with denominators. Synthetic oracle
+agreement is not held-out validation.
+
+The separate Render environment is at https://aiab-dev-astra-one.onrender.com/workbench
+with its own disk, accounts and session key. It uses real verified Tinfoil inference,
+but its evidence-processing host is ordinary Render infrastructure. Confidential
+employee audits remain refused there. The production confidential factory, trusted
+collector and image packaging are implemented; the independently reviewed authority,
+measured release, protected keys/storage and deployment gate artifacts remain required.
+
+Render is configured for the branch, but its repository push integration did not fire.
+Manual deployments work. The branch-only GitHub workflow requires the isolated
+service's `RENDER_DEV_ASTRA_ONE_DEPLOY_HOOK` secret before automatic deployments work.
+Never reuse a dev/prod service hook. Target-user interviews, native WORM/Amber
+verification fixtures and independent held-out evaluation remain external work.
