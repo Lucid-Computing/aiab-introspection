@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-11-05T16:56:34.586612+00:00",
+  "live_inference": false,
+  "synthetic_evidence": true,
+  "profile": {
+    "id": "deepseek-v4-1-flash",
+    "repo": "tinfoilsh/confidential-deepseek-v4-1-flash",
+    "release_digest": "sha256:71f41a053232a06dd6ed61ca3a40502a9b972dc16dd9f04ca895ced5a7809def",
+    "artifact_digest": "sha256:6c4a2b637f7f45d9e48d1bdc38c12e0454584f48d3759851f7ee4471cd90b2e7",
+    "model_revision": "deepseek-ai/DeepSeek-V4.1-Flash-1017@1bae0e1088993b9b82de08f59de5be5a34e42170",
+    "context_tokens": 1048576,
+    "serving_image": "sha256:b98ca8cc6ace7ecc00eb08b5e550992175f46766a69a68508ca8227490101af5",
+    "tool_parser": "deepseek_v41",
+    "reasoning_parser": "deepseek_v41",
+    "inference": {
+      "temperature": 1.0,
+      "top_p": 1.0,
+      "reasoning_effort": "low",
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "reasoning_effort": "low",
+        "drop_thinking": false
+      }
+    }
+  },
+  "host": "deepseek-v4-1-flash-inf16-0.tinfoil.containers.tinfoil.dev",
+  "status": "failed",
+  "stage": "attestation",
+  "error_code": "model_unavailable",
+  "usage": {
+    "turns": 0,
+    "tool_calls": 0,
+    "total_tokens": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0
+  },
+  "tools_exercised": []
+}

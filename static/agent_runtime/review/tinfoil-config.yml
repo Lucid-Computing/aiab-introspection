@@ -1,0 +1,108 @@
+cvm-version: 0.14.17
+cpus: 32
+memory: 524288
+gpus: 4
+models:
+- name: deepseek-v4-1-flash
+  repo: deepseek-ai/DeepSeek-V4.1-Flash-1017@1bae0e1088993b9b82de08f59de5be5a34e42170
+  mpk: 6c4a2b637f7f45d9e48d1bdc38c12e0454584f48d3759851f7ee4471cd90b2e7_510311071744_27a6c072-8626-550d-a130-c888e25902cb
+  schema: 2
+containers:
+- name: deepseek-v4-1-flash
+  image: "ghcr.io/tinfoilsh/confidential-deepseek-v4-1-flash@sha256:b98ca8cc6ace7ecc00eb08b5e550992175f46766a69a68508ca8227490101af5" # v0.0.10+b200
+  runtime: nvidia
+  read_only: true
+  gpus: all
+  restart: always
+  env:
+  - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:False
+  - VLLM_ALLREDUCE_USE_SYMM_MEM: '0'
+  - VLLM_ALLREDUCE_USE_FLASHINFER: '0'
+  - VLLM_DISABLE_UVA: '1'
+  - VLLM_TINFOIL_CC_OPTIMIZATIONS: '1'
+  - VLLM_TINFOIL_DEEPSEEK_TARGET_TACTIC: '1'
+  - FLASHINFER_NO_DOWNLOAD: '1'
+  - FLASHINFER_AUTOTUNE_TIMER: globaltimer
+  - VLLM_CACHE_ROOT: /root/.cache/vllm
+  - TORCH_EXTENSIONS_DIR: /root/.cache/deepseek-stock-torch-extensions
+  - NUMBA_CACHE_DIR: /root/numba-cache
+  - VLLM_ENGINE_READY_TIMEOUT_S: '3600'
+  - TINFOIL_TUNING_MODE: require
+  - FLASHINFER_DISABLE_JIT: '1'
+  - TINFOIL_FLASHINFER_REPLAY_ONLY: '1'
+  - TINFOIL_TARGET_PREPARATION: '1'
+  - TINFOIL_TARGET_VERIFICATION: '1'
+  - TINFOIL_TARGET_FILTERING: '1'
+  - TINFOIL_PROCESSOR_MIRRORS: '1'
+  - VLLM_WORKER_MULTIPROC_METHOD: spawn
+  - TINFOIL_PREFILL_GRAPHS: '1'
+  - TINFOIL_PREFILL_CAPTURE_SET: compact
+  - VLLM_USE_BREAKABLE_CUDAGRAPH: '1'
+  command:
+  - --model
+  - /tinfoil/mpk/mpk-6c4a2b637f7f45d9e48d1bdc38c12e0454584f48d3759851f7ee4471cd90b2e7
+  - --tokenizer-mode
+  - deepseek_v41
+  - --tensor-parallel-size
+  - '4'
+  - --attention-backend
+  - FLASHMLA_SPARSE_DSV41
+  - --kv-cache-dtype
+  - fp8_ds_mla
+  - --mm-encoder-tp-mode
+  - data
+  - --engram-config
+  - '{"cpu_offload":false}'
+  - --tool-call-parser
+  - deepseek_v41
+  - --enable-auto-tool-choice
+  - --reasoning-parser
+  - deepseek_v41
+  - --enable-force-include-usage
+  - --enable-prompt-tokens-details
+  - --served-model-name
+  - deepseek-v4-1-flash
+  - --scheduling-policy
+  - priority
+  - --port
+  - '8001'
+  - --disable-custom-all-reduce
+  - --compilation-config
+  - '{"mode":0,"cudagraph_mode":"FULL_AND_PIECEWISE","pass_config":{"fuse_allreduce_rms":false},"cudagraph_capture_sizes":[1,2,4,6,8,12,16,24,32,40,48,56,64,72,80,88,96,104,112,120,128,136,144,152,160,168,176,184,192,200,208,216,224,232,240,248,256,272,288,304,320,336,352,368,384,400,416,432,448,464,480,496,512,528,544,560,576,592,608,624,640,656,672,688,704,720,736,752,768,1024,2048,4096,8192],"max_cudagraph_capture_size":8192}'
+  - --max-model-len
+  - '1048576'
+  - --max-num-seqs
+  - '64'
+  - --speculative-config
+  - '{"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"probabilistic","rejection_sample_method":"block","enable_adaptive_verification":false}'
+  - --override-generation-config
+  - '{"temperature":1.0,"top_p":1.0}'
+  - --cudagraph-metrics
+  tmpfs:
+    /run/lock: size=16m,mode=1777,noexec,nosuid,nodev
+    /tmp: size=16g,mode=1777,exec
+    /root: size=20g,mode=0700,exec
+  healthcheck:
+    test:
+    - CMD
+    - curl
+    - -sf
+    - http://localhost:8001/health
+    interval: 30s
+    timeout: 5s
+    start_period: 120m
+shim:
+  upstream-port: 8001
+  authenticated: true
+  authenticated-endpoints:
+  - /v1/chat/completions
+  - /v1/responses
+  - /tokenize
+  - /metrics
+  paths:
+  - /v1/chat/completions
+  - /v1/models
+  - /v1/responses
+  - /tokenize
+  - /metrics
+  - /health
