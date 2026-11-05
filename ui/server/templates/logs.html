@@ -8,8 +8,8 @@
 {% set src = "logs=" ~ source.id %}
 {% set filters = "&" ~ src ~ "&who=" ~ (who | urlencode) ~ "&q=" ~ (q | urlencode) %}
 {% set keep = filters ~ "&page=" ~ page %}
-{% set chat = source.kind == "slack" %}{# messages people wrote (_logslack.html), not calls a model answered #}
-{% set unit = "msg" if chat else "req" %}
+{% set chat = source.chat %}{# posts people wrote (_logslack.html, _loggithub.html), not calls a model answered #}
+{% set unit = "post" if source.kind == "github" else "msg" if chat else "req" %}
 <h1>Logs</h1>
 {{ selector(sources, source, "/logs?") }}
 <div class="logs-tools">
@@ -21,8 +21,8 @@
   </form>
   <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><input type="hidden" name="logs" value="{{ source.id }}"><button class="btn btn--ghost" {% if not source.fetches %}disabled{% endif %}>Refresh</button></form>
 </div>
-<p class="logs-status">{{ source.label }} · {{ total_requests }} {% if source.kind == "slack" %}messages{% else %}requests{% endif %} on disk ·
-    {% if source.kind == "slack" %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
+<p class="logs-status">{{ source.label }} · {{ total_requests }} {% if source.kind == "github" %}posts{% elif chat %}messages{% else %}requests{% endif %} on disk ·
+    {% if chat %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
     {% elif not source.configured %}no proxy key configured (<span class="mono">{{ source.key_env }}</span>), nothing is fetched
     {% elif fetch.running %}fetching now
     {% elif fetch.error %}last fetch failed: {{ fetch.error }}
@@ -49,7 +49,9 @@
   </aside>
 
   <section class="logs-detail">
-    {% if current and req and chat %}
+    {% if current and req and source.kind == "github" %}
+    {% include "_loggithub.html" %}
+    {% elif current and req and chat %}
     {% include "_logslack.html" %}
     {% elif current and req %}
     <h2 class="logs-h">{{ current.title }}</h2>

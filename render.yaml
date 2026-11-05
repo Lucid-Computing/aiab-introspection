@@ -51,3 +51,5 @@ services:
         sync: false
       - key: AIAB_SLACK_EXPORT_KEY  # optional, for the Logs screen: opens the committed Slack export bundle (slack-export-bundle in 1Password); Slack Logs
         sync: false
+      - key: AIAB_GITHUB_EXPORT_KEY  # optional, for the Logs screen: opens the committed GitHub export bundle (github-export-bundle in 1Password); GitHub Logs
+        sync: false

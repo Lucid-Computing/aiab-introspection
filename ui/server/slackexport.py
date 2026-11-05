@@ -50,19 +50,22 @@ def new_key() -> str:
     return base64.b64encode(secrets.token_bytes(KEY_BYTES)).decode("ascii")
 
 
-def _key_bytes(key: str) -> bytes:
+def _key_bytes(key: str, env: str = "AIAB_SLACK_EXPORT_KEY") -> bytes:
     try:
         raw = base64.b64decode(key.strip(), validate=True)
     except (ValueError, TypeError) as exc:
-        raise BundleError("AIAB_SLACK_EXPORT_KEY is not base64") from exc
+        raise BundleError(f"{env} is not base64") from exc
     if len(raw) != KEY_BYTES:
-        raise BundleError(f"AIAB_SLACK_EXPORT_KEY must decode to {KEY_BYTES} bytes, not {len(raw)}")
+        raise BundleError(f"{env} must decode to {KEY_BYTES} bytes, not {len(raw)}")
     return raw
 
 
-def pack(folder: Path, key: str, out: Path) -> list[str]:
+def pack(
+    folder: Path, key: str, out: Path, magic: bytes = MAGIC, env: str = "AIAB_SLACK_EXPORT_KEY"
+) -> list[str]:
     """Seal the ``*.jsonl`` files at the top of ``folder`` into ``out``; returns their names.
-    The ``.md`` renderings next to them are not the data and stay out."""
+    The ``.md`` renderings next to them are not the data and stay out. ``magic`` and ``env``
+    name the kind of bundle (the GitHub export reuses this with its own, server.githubexport)."""
     names = sorted(p.name for p in folder.glob("*.jsonl") if p.is_file())
     if not names:
         raise BundleError(f"no *.jsonl files in {folder}")
@@ -72,33 +75,40 @@ def pack(folder: Path, key: str, out: Path) -> list[str]:
             tar.add(folder / name, arcname=name)
     plain = zstandard.ZstdCompressor(level=19).compress(buf.getvalue())
     nonce = secrets.token_bytes(NONCE_BYTES)
-    sealed = AESGCM(_key_bytes(key)).encrypt(nonce, plain, MAGIC)
+    sealed = AESGCM(_key_bytes(key, env)).encrypt(nonce, plain, magic)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(MAGIC + nonce + sealed)
+    out.write_bytes(magic + nonce + sealed)
     return names
 
 
-def unpack(bundle: Path, key: str, dest: Path) -> list[str]:
+def unpack(
+    bundle: Path,
+    key: str,
+    dest: Path,
+    magic: bytes = MAGIC,
+    env: str = "AIAB_SLACK_EXPORT_KEY",
+    what: str = "Slack export",
+) -> list[str]:
     """Open ``bundle`` into ``dest`` (replaced whole, atomically); returns the file names.
     Only regular ``*.jsonl`` members without a path are taken out of the tar."""
-    raw = _key_bytes(key)
+    raw = _key_bytes(key, env)
     try:
         data = bundle.read_bytes()
     except OSError as exc:
         raise BundleError(f"cannot read {bundle}: {exc}") from exc
-    if not data.startswith(MAGIC) or len(data) < len(MAGIC) + NONCE_BYTES + 16:
-        raise BundleError(f"{bundle} is not a Slack export bundle")
-    nonce = data[len(MAGIC) : len(MAGIC) + NONCE_BYTES]
+    if not data.startswith(magic) or len(data) < len(magic) + NONCE_BYTES + 16:
+        raise BundleError(f"{bundle} is not a {what} bundle")
+    nonce = data[len(magic) : len(magic) + NONCE_BYTES]
     try:
-        plain = AESGCM(raw).decrypt(nonce, data[len(MAGIC) + NONCE_BYTES :], MAGIC)
+        plain = AESGCM(raw).decrypt(nonce, data[len(magic) + NONCE_BYTES :], magic)
     except InvalidTag as exc:
-        raise BundleError(f"AIAB_SLACK_EXPORT_KEY does not open {bundle}") from exc
+        raise BundleError(f"{env} does not open {bundle}") from exc
     try:
         tar_bytes = zstandard.ZstdDecompressor().decompress(plain, max_output_size=1 << 30)
     except zstandard.ZstdError as exc:
         raise BundleError(f"{bundle} opened but did not decompress: {exc}") from exc
     dest.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".slack-", dir=dest.parent))
+    staging = Path(tempfile.mkdtemp(prefix=f".{dest.name}-", dir=dest.parent))
     names: list[str] = []
     try:
         with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r") as tar:
