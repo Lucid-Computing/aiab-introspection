@@ -16,6 +16,7 @@ from pathlib import Path
 from aiab.workbench import contracts, datasets
 from aiab.workbench.evidence import EvidenceStore
 from aiab.workbench.governance import GovernanceStore, canonical, commitment
+from aiab.workbench.tools import RuntimeFailure
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, Request
@@ -280,6 +281,9 @@ class WorkbenchAPI:
         except asyncio.CancelledError:
             self.store.cancel(actor, run_id)
             raise
+        except RuntimeFailure as exc:
+            # Fixed reviewed codes only; provider response bodies never enter this type.
+            self.store.finish(actor, run_id, error="Investigation stopped: " + str(exc))
         except Exception:
             # Model/provider errors can contain sensitive request bodies. Keep them off HTTP.
             self.store.finish(
