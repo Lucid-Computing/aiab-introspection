@@ -1,15 +1,34 @@
 """Disposable computation. Trusted dependencies load before installing seccomp."""
 
 import collections
+import datetime
 import itertools
 import json
 import math
 import os
+import re
 import sqlite3
 import statistics
 import sys
 
 from aiab.baked.worker import isolate
+
+# Only exact built-in classes qualify. Never serialize an exception's message,
+# repr, traceback, source line, attributes or a user-defined subclass name.
+PYTHON_ERRORS = {
+    SyntaxError: "python_syntax_error",
+    IndentationError: "python_syntax_error",
+    TabError: "python_syntax_error",
+    TypeError: "python_type_error",
+    KeyError: "python_key_error",
+    NameError: "python_name_error",
+    UnboundLocalError: "python_name_error",
+    IndexError: "python_index_error",
+    AttributeError: "python_attribute_error",
+    ValueError: "python_value_error",
+    ZeroDivisionError: "python_zero_division_error",
+    AssertionError: "python_assertion_error",
+}
 
 
 def prepare_sql(events, sql):
@@ -107,7 +126,14 @@ def main():
         raise ValueError("analysis_trailing_data")
     operation = request.get("operation", "python")
     if operation == "python":
-        code = compile(request["code"], "<audit-analysis>", "exec")
+        # CPython's syntax diagnostics can consult the source filesystem. Compile
+        # before seccomp, as before, but retain only syntax failures for feedback
+        # after successful sandbox installation. No generated code runs here.
+        compile_error = None
+        try:
+            code = compile(request["code"], "<audit-analysis>", "exec")
+        except SyntaxError as exc:
+            compile_error = exc
         namespace = {
             "events": events,
             "json": json,
@@ -115,9 +141,13 @@ def main():
             "statistics": statistics,
             "collections": collections,
             "itertools": itertools,
+            "re": re,
+            "datetime": datetime,
         }
 
         def compute():
+            if compile_error is not None:
+                raise compile_error
             exec(code, namespace)
             return namespace.get("result")
     elif operation == "sql":
@@ -129,8 +159,22 @@ def main():
             return evaluate(request["rule"], events, request["config"])
     else:
         raise ValueError("invalid_operation")
-    isolate(3)
-    encoded = json.dumps(compute(), allow_nan=False)
+    isolate(3, kill_forbidden=operation == "python")
+    if operation == "python":
+        try:
+            result = compute()
+        except BaseException as exc:
+            error = PYTHON_ERRORS.get(type(exc))
+            if error is None:
+                raise
+            result = {"version": "aiab-python/v1", "status": "error", "code": error}
+        else:
+            result = {"version": "aiab-python/v1", "status": "ok", "result": result}
+    else:
+        result = compute()
+    # Serialization, nonfinite values and output limits are fatal, not analysis
+    # corrections. Keep these outside the narrow execution exception boundary.
+    encoded = json.dumps(result, allow_nan=False)
     if len(encoded.encode()) > 262144:
         raise ValueError("analysis_output_limit")
     print(encoded, flush=True)

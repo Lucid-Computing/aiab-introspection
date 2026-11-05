@@ -12,6 +12,20 @@ from pathlib import Path
 
 RUNTIME = Path(__file__).resolve().parents[2] / "agent_runtime"
 MAX_FRAME = 2_097_152
+PYTHON_ERROR_CODES = frozenset(
+    "python_" + name + "_error"
+    for name in (
+        "syntax",
+        "type",
+        "key",
+        "name",
+        "index",
+        "attribute",
+        "value",
+        "zero_division",
+        "assertion",
+    )
+)
 TOOL_SPECS = [
     {
         "name": "search",
@@ -27,8 +41,16 @@ TOOL_SPECS = [
     {
         "name": "python",
         "description": (
-            "Isolated Python over explicit event IDs, no files/network. "
-            "Parameters: ids, code. Set result."
+            'request encodes {"ids":["event-id"],"code":"result = len(events)"}. '
+            "ids is an array of authorized event ID strings; code is a Python string "
+            "(at most 32000 characters). events is a list of the fetched event dicts. "
+            "Assign a JSON-serializable value to result; do not print. Available globals: "
+            "events, json, math, statistics, collections, itertools, re, datetime "
+            "(the datetime module), and Python builtins. Use these preloaded modules "
+            "without imports. No files, network, subprocesses or package installation. "
+            "Ordinary analysis errors return a fixed error code with retryable=true; "
+            "correct the code within the remaining run budgets. Sandbox, resource and "
+            "output failures terminate the run."
         ),
     },
     {
@@ -57,6 +79,10 @@ TOOL_SPECS = [
 
 class RuntimeFailure(ValueError):
     """Fixed safe code; never include raw model/evidence exception text."""
+
+
+class CorrectablePythonError(RuntimeFailure):
+    """Validated worker analysis error; only the agent tool loop may correct it."""
 
 
 async def kill_process(process):
@@ -106,11 +132,26 @@ async def isolated_operation(operation, events, **parameters):
                     raise RuntimeFailure(operation + "_failed")
             if await process.wait() != 0:
                 raise RuntimeFailure(operation + "_failed")
-            return json.loads(output)
-    except (TimeoutError, ValueError):
+            result = json.loads(output)
+    except (TimeoutError, ValueError, OSError, RecursionError):
         raise RuntimeFailure(operation + "_failed") from None
     finally:
         await kill_process(process)
+    if operation != "python":
+        return result
+    # Exact envelope and fixed code allowlist. A result dict resembling an error
+    # remains successful data inside the success envelope, never a retry signal.
+    if isinstance(result, dict) and result.get("version") == "aiab-python/v1":
+        if set(result) == {"version", "status", "result"} and result["status"] == "ok":
+            return result["result"]
+        if (
+            set(result) == {"version", "status", "code"}
+            and result["status"] == "error"
+            and isinstance(result["code"], str)
+            and result["code"] in PYTHON_ERROR_CODES
+        ):
+            raise CorrectablePythonError(result["code"])
+    raise RuntimeFailure("python_failed")
 
 
 async def isolated_python(code, events):

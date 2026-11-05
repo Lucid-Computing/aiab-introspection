@@ -26,7 +26,12 @@ from aiab.workbench.runner import (
     graph_order,
     validate_findings,
 )
-from aiab.workbench.tools import RuntimeFailure, ToolBroker, isolated_python
+from aiab.workbench.tools import (
+    CorrectablePythonError,
+    RuntimeFailure,
+    ToolBroker,
+    isolated_python,
+)
 
 
 class Store:
@@ -274,6 +279,228 @@ async def test_python_seccomp_computation_and_escape_denial():
     ]:
         with pytest.raises(RuntimeFailure, match="python_failed"):
             await isolated_python(code, [])
+
+
+@pytest.mark.parametrize(
+    "code, error",
+    [
+        ("result = [", "syntax"),
+        ("  result = 1", "syntax"),
+        ("result = 1 + 'secret-source'", "type"),
+        ("result = events[0]['secret-key']", "key"),
+        ("result = secret_name", "name"),
+        ("result = events[9]", "index"),
+        ("result = events.missing", "attribute"),
+        ("raise ValueError(events[0]['content'])", "value"),
+        ("result = 1 / 0", "zero_division"),
+        ("assert False, events[0]['content']", "assertion"),
+    ],
+)
+async def test_actual_worker_correctable_errors_are_sanitized(code, error, capfd):
+    with pytest.raises(CorrectablePythonError) as caught:
+        await isolated_python(code, [{"content": "PRIVATE-EVIDENCE-SENTINEL"}])
+    assert str(caught.value) == f"python_{error}_error"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert capfd.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        # A forbidden syscall remains fatal even if code tries to catch EPERM
+        # and then present a correctable error (or successful result).
+        "try:\n open('/etc/passwd')\nexcept BaseException:\n raise TypeError('private')",
+        "try:\n import socket; socket.socket()\nexcept BaseException:\n result = 1",
+        "import os; os.listdir('/tmp')",
+        "try:\n __import__('os').fork()\nexcept BaseException:\n raise KeyError('private')",
+        "result = [0] * 100_000_000",  # actual RLIMIT_AS exhaustion
+        "def f(): return f()\nf()",  # recursion/resource errors are not corrections
+        "raise RuntimeError('private')",  # no blanket runtime-error retry
+        "raise OSError('private')",
+        "raise SystemExit(0)",
+        "class Custom(TypeError): pass\nraise Custom('private')",
+        "result = object()",  # serialization failure, outside execution boundary
+        "result = float('nan')",
+        "result = 'x' * 262144",
+        "print('private-output'); raise ValueError('private')",  # corrupt protocol
+        "import os; os.write(1, b'[' * 2000 + b']' * 2000); os._exit(0)",
+    ],
+)
+async def test_actual_worker_sandbox_resource_and_protocol_failures_stay_fatal(code, capfd):
+    with pytest.raises(RuntimeFailure) as caught:
+        await isolated_python(code, [])
+    assert type(caught.value) is RuntimeFailure
+    assert str(caught.value) == "python_failed"
+    assert capfd.readouterr() == ("", "")
+
+
+async def test_actual_worker_globals_and_success_envelope():
+    assert await isolated_python(
+        "result = [re.findall(r'\\d+', events[0]['content']), "
+        "datetime.datetime.fromisoformat('2026-11-05').year, "
+        "collections.Counter('aba')['a'], math.sqrt(4), statistics.mean([2,4]), "
+        "list(itertools.chain([1], [2])), json.loads('true')]",
+        [{"content": "case 17"}],
+    ) == [["17"], 2026, 2, 2.0, 3, [1, 2], True]
+    data = {"version": "aiab-python/v1", "status": "error", "code": "python_type_error"}
+    assert await isolated_python(f"result = {data!r}", []) == data
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        {"version": "aiab-python/v0", "status": "error", "code": "python_type_error"},
+        {"version": "aiab-python/v1", "status": "error", "code": "python_failed"},
+        {"version": "aiab-python/v1", "status": "error", "code": "MemoryError"},
+        {"version": "aiab-python/v1", "status": "error", "code": []},
+        {
+            "version": "aiab-python/v1",
+            "status": "error",
+            "code": "python_type_error",
+            "message": "private",
+        },
+    ],
+)
+async def test_actual_worker_malformed_error_protocol_fails_closed(envelope):
+    # Simulate a corrupt/untrusted worker's output, through the actual child and
+    # parent pipe, rather than mocking isolated_python or a broker error.
+    payload = json.dumps(envelope).encode()
+    code = f"import os; os.write(1, {payload!r}); os._exit(0)"
+    with pytest.raises(RuntimeFailure) as caught:
+        await isolated_python(code, [])
+    assert type(caught.value) is RuntimeFailure and str(caught.value) == "python_failed"
+
+
+async def test_actual_python_worker_cancellation_reaps_child(monkeypatch):
+    created = asyncio.Event()
+    children = []
+    create = asyncio.create_subprocess_exec
+
+    async def capture(*args, **kwargs):
+        process = await create(*args, **kwargs)
+        children.append(process)
+        created.set()
+        return process
+
+    monkeypatch.setattr("aiab.workbench.tools.asyncio.create_subprocess_exec", capture)
+    task = asyncio.create_task(isolated_python("while True: pass", []))
+    await asyncio.wait_for(created.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(children) == 1 and children[0].returncode is not None
+
+
+async def test_python_error_can_be_corrected_by_real_pi(narrow_contracts):
+    model = Model(
+        messages=[
+            {"tool_calls": [call("python", {"ids": ["e1"], "code": "result = missing"})]},
+            {"tool_calls": [call("python", {"ids": ["e1"], "code": "result = len(events)"})]},
+            {"content": json.dumps({"findings": [finding()]})},
+        ]
+    )
+    result = await execute_plan(PLAN, DATASET, model=model, actor="alice")
+    assert result["usage"]["turns"] == 3
+    assert result["usage"]["tool_calls"] == 2
+    assert result["usage"]["total_tokens"] == 360
+    feedback = [m for m in model.requests[1] if m.get("role") == "tool"]
+    assert json.loads(feedback[-1]["content"])["error"] == {
+        "code": "python_name_error",
+        "retryable": True,
+    }
+    assert "Available globals" in json.loads(feedback[-1]["content"])["parameters"]
+    assert result["coverage"]["examined_ids"] == ["e1"]
+
+
+@pytest.mark.parametrize(
+    "field, value, error, requests",
+    [
+        ("max_turns", 2, "turn_budget_exhausted", 2),
+        ("max_tool_calls", 2, "tool_budget_exhausted", 3),
+        ("max_tokens", 340, "token_budget_exhausted", 2),
+    ],
+)
+async def test_python_corrections_share_cumulative_budgets(
+    narrow_contracts, field, value, error, requests
+):
+    plan = copy.deepcopy(PLAN)
+    plan["agent"][field] = value
+    model = Model(
+        messages=[{"tool_calls": [call("python", {"ids": ["e1"], "code": "result = missing"})]}] * 4
+    )
+    with pytest.raises(RuntimeFailure, match=error):
+        await execute_plan(plan, DATASET, model=model, actor="alice")
+    assert len(model.requests) == requests and model.closed
+
+
+async def test_python_correction_rechecks_revocation_before_feedback(narrow_contracts):
+    allowed, trace = True, []
+
+    async def on_event(event):
+        nonlocal allowed
+        trace.append(event)
+        if event["kind"] == "tool_result":
+            allowed = False
+
+    model = Model(
+        messages=[
+            {"tool_calls": [call("python", {"ids": ["e1"], "code": "raise ValueError('private')"})]}
+        ]
+    )
+    with pytest.raises(RuntimeFailure, match="authorization_revoked"):
+        await execute_plan(
+            PLAN,
+            DATASET,
+            model=model,
+            actor="alice",
+            authorize=lambda: allowed,
+            on_event=on_event,
+        )
+    assert len(model.requests) == 1 and model.closed
+    assert trace[-1]["data"]["result"]["error"]["code"] == "python_value_error"
+
+
+@pytest.mark.parametrize("code", ["open('/etc/passwd')", "result = [0] * 100_000_000"])
+async def test_pi_does_not_retry_worker_sandbox_or_memory_failure(narrow_contracts, code):
+    model = Model(messages=[{"tool_calls": [call("python", {"ids": ["e1"], "code": code})]}])
+    with pytest.raises(RuntimeFailure, match="python_failed"):
+        await execute_plan(PLAN, DATASET, model=model, actor="alice")
+    assert len(model.requests) == 1 and model.closed
+
+
+async def test_python_correction_cannot_expand_authorized_ids(narrow_contracts):
+    model = Model(
+        messages=[
+            {"tool_calls": [call("python", {"ids": ["e1"], "code": "result = missing"})]},
+            {"tool_calls": [call("python", {"ids": ["private"], "code": "result = events"})]},
+        ]
+    )
+    with pytest.raises(RuntimeFailure, match="unauthorized_evidence_reference"):
+        await execute_plan(PLAN, DATASET, model=model, actor="alice")
+    assert len(model.requests) == 2 and model.closed
+
+
+async def test_python_correction_still_obeys_run_deadline(narrow_contracts):
+    plan = copy.deepcopy(PLAN)
+    plan["agent"]["max_seconds"] = 1
+    model = Model(
+        messages=[
+            {"tool_calls": [call("python", {"ids": ["e1"], "code": "while True: pass"})]},
+        ]
+    )
+    with pytest.raises(RuntimeFailure, match="runtime_deadline_exceeded"):
+        await execute_plan(plan, DATASET, model=model, actor="alice")
+    assert len(model.requests) == 1 and model.closed
+
+
+async def test_python_graph_error_is_not_a_successful_step(narrow_contracts):
+    plan = copy.deepcopy(PLAN)
+    plan["steps"] = [
+        {"id": "python", "kind": "python", "inputs": [], "config": {"code": "result = missing"}}
+    ]
+    with pytest.raises(CorrectablePythonError, match="python_name_error"):
+        await execute_plan(plan, DATASET, actor="alice")
 
 
 async def test_join_and_fetch_capabilities():

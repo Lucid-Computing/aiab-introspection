@@ -21,7 +21,7 @@ STAGES = {
 }
 
 
-def isolate(seconds):
+def isolate(seconds, *, kill_forbidden=False):
     if sys.platform != "linux" or platform.machine() != "x86_64":
         raise RuntimeError("unsupported_sandbox")
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -47,7 +47,11 @@ def isolate(seconds):
     # fork/clone, ptrace, process_vm_*, randomness or filesystem mutations.
     for number in (0, 1, 3, 5, 8, 9, 10, 11, 12, 13, 14, 15, 25, 28, 60, 131, 158, 202, 231):
         rules += [(0x15, 0, 1, number), (0x06, 0, 0, 0x7FFF0000)]
-    rules.append((0x06, 0, 0, 0x00050000 | 1))  # EPERM
+    # Interactive Python corrections must never mask a forbidden syscall by
+    # catching EPERM and subsequently raising an ordinary analysis exception.
+    # Keep the legacy signed-plan behavior unchanged by default.
+    denied = 0x80000000 if kill_forbidden else 0x00050000 | 1
+    rules.append((0x06, 0, 0, denied))  # KILL_PROCESS or EPERM
     array = (Filter * len(rules))(*(Filter(*row) for row in rules))
     program = Program(len(rules), array)
     if libc.prctl(38, 1, 0, 0, 0) != 0 or libc.prctl(22, 2, ctypes.byref(program), 0, 0) != 0:

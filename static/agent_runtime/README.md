@@ -91,10 +91,25 @@ Tools have one schema field, `request`, a JSON-encoded object. Operations:
   authorizer, VM instruction bound, row/output bound, OS limits and process deadline
   apply. No attach, extension loading, filesystem tables, mutation or silent limit.
 - `python`: `{ids,code}`; `events` contains exactly the fetched IDs. Assign `result`.
-  json/math/statistics/collections/itertools are preloaded. OS seccomp, resource
-  limits and an external 5-second deadline apply; no files, subprocesses or network.
+  json/math/statistics/collections/itertools/re/datetime (module) are preloaded.
+  OS seccomp, resource limits and an external 5-second deadline apply; no files,
+  subprocesses or network.
 - `coverage`: `{}`; source coverage, searched/examined IDs and counter-search count.
   Explicitly does not upgrade observed records into verified complete coverage.
+
+The disposable Python worker uses an exact `aiab-python/v1` envelope: `status:ok`
+with `result`, or `status:error` with a fixed `code`. Only exact built-in syntax,
+type, key, name, index, attribute, value, zero-division and assertion exceptions
+from compilation/execution become correctable Python tool feedback. Messages,
+tracebacks, source and exception attributes never enter that feedback. The agent
+may correct its code using the existing cumulative turn/token/tool/time budgets;
+each attempt is charged and authority is rechecked before returning feedback.
+Graph Python errors still abort the graph. Unknown exceptions (including subclasses),
+memory/recursion failures, serialization/output/input failures, bad envelopes,
+nonzero exits and deadlines remain fatal. Python's seccomp denial kills the process,
+so catching a forbidden filesystem/network/process syscall cannot turn it into an
+analysis correction. Legacy signed-plan, SQL and rules workers retain their existing
+sandbox denial behavior. Process-group cleanup remains mandatory on every exit.
 
 Every operator config is checked before first inference. Step kinds:
 `select` accepts ids OR query/filters; `rules` dispatches

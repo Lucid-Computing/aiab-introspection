@@ -27,6 +27,7 @@ from aiab.workbench.tools import (
     MAX_FRAME,
     RUNTIME,
     TOOL_SPECS,
+    CorrectablePythonError,
     RuntimeFailure,
     ToolBroker,
     events_from,
@@ -441,6 +442,15 @@ class Supervisor:
                     self.usage["tool_calls"] += 1
                     try:
                         response = await self.broker.call(*requested)
+                    except CorrectablePythonError as exc:
+                        if frame["name"] != "python":
+                            raise
+                        response = {
+                            "error": {"code": str(exc), "retryable": True},
+                            "parameters": next(
+                                t["description"] for t in TOOL_SPECS if t["name"] == "python"
+                            ),
+                        }
                     except RuntimeFailure as exc:
                         # A malformed argument is correctable within the same signed
                         # capability and budget. Authorization and resource denials
