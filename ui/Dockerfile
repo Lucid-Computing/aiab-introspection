@@ -21,10 +21,19 @@ COPY plan/plan.json /build/plan/plan.json
 COPY ui/playground ./
 RUN pnpm build
 
+FROM docker.io/library/node:22.22.2-bookworm-slim AS auditor
+RUN apt-get update && apt-get install -y --no-install-recommends make gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build/static/agent_runtime
+COPY static/agent_runtime/package.json static/agent_runtime/package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY static/agent_runtime ./
+RUN make NODE_INCLUDE=/usr/local/include/node
+
 FROM docker.io/library/python:3.12-slim
 # git pushes the deploy branches, gh opens the pull requests.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl \
+ && apt-get install -y --no-install-recommends git ca-certificates curl libstdc++6 \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -38,6 +47,8 @@ WORKDIR /app
 # The static part the UI imports (digest, loader, signatures, auditor CLI) and the release pins.
 COPY static/pyproject.toml static/uv.lock static/README.md /app/static/
 COPY static/aiab /app/static/aiab
+COPY --from=auditor /usr/local/bin/node /usr/local/bin/node
+COPY --from=auditor /build/static/agent_runtime /app/static/agent_runtime
 COPY static/auditor /app/static/auditor
 COPY static/deploy/tinfoil/audit/release.json /app/static/deploy/tinfoil/audit/release.json
 COPY ui/pyproject.toml ui/uv.lock /app/ui/

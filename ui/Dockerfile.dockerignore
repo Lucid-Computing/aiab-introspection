@@ -18,6 +18,9 @@ static/**
 !static/uv.lock
 !static/README.md
 !static/aiab/
+!static/agent_runtime/
+static/agent_runtime/node_modules
+static/agent_runtime/isolate.node
 !static/auditor/
 !static/deploy/
 static/deploy/**

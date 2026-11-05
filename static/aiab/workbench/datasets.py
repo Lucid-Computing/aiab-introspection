@@ -56,6 +56,8 @@ def catalog():
 
 
 def plan_for(audit_id):
+    from .model import MODEL_PROFILE
+
     try:
         spec = BY_ID[audit_id]
     except KeyError as exc:
@@ -68,7 +70,7 @@ def plan_for(audit_id):
             f"Do the authorized observations support a discrepancy in {spec.title.lower()}?"
         ),
         "criteria": [{"id": spec.id, "description": spec.method + " " + spec.limit}],
-        "mode": "personal",
+        "mode": "joint",
         "scope": {
             "dataset_ids": ["northstar"],
             "subjects": [],
@@ -94,7 +96,7 @@ def plan_for(audit_id):
                 "id": "investigate",
                 "kind": "agent",
                 "title": "Investigate alternatives and semantic ambiguity",
-                "inputs": ["measure"],
+                "inputs": [],
                 "config": {
                     "instructions": (
                         f"{spec.method} Fetch cited originals and follow artifact/identity links. "
@@ -108,7 +110,7 @@ def plan_for(audit_id):
                         "Do not upgrade a deterministic "
                         "result without a cited evidence chain."
                     ),
-                    "required_event_types": list(spec.types),
+                    "model_profile": dict(MODEL_PROFILE),
                 },
             },
         ],
