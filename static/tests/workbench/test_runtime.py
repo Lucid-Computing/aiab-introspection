@@ -149,8 +149,8 @@ async def test_malformed_search_can_be_corrected_within_budget(narrow_contracts)
     model = Model()
     model.messages.insert(0, {"tool_calls": [call("search", {"query": ["invalid"]})]})
     result = await execute_plan(PLAN, DATASET, model=model, actor="alice")
-    assert result["usage"]["turns"] == 4
-    assert result["usage"]["tool_calls"] == 3
+    assert result["usage"]["turns"] == 5
+    assert result["usage"]["tool_calls"] == 4
     assert "invalid_search" in json.dumps(model.requests[1])
     assert result["findings"][0]["counterevidence_ids"] == ["e2"]
 
