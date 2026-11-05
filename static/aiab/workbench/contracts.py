@@ -308,3 +308,75 @@ def manifest_digest(manifest):
 
 def dataset_digest(dataset):
     return digest("dataset", validate_dataset(dataset))
+
+
+def validate_operator_config(kind, config):
+    """Executable semantics, checked at admission before any inference.
+
+    Structural draft validation deliberately remains separate. Domain config uses
+    the same trusted operator's validation on an empty population; no user code,
+    evidence or external process is executed here. Actual analysis stays sandboxed.
+    """
+    if kind == "rules":
+        from .analyzers import evaluate
+
+        evaluate(config["rule"], [], config)
+    elif kind == "select":
+        if "ids" in config:
+            if (
+                set(config) != {"ids"}
+                or not isinstance(config["ids"], list)
+                or any(not isinstance(i, str) or not i for i in config["ids"])
+            ):
+                raise ValueError("invalid_select_config")
+        else:
+            if not isinstance(config.get("query", ""), str) or not isinstance(
+                config.get("filters", {}), dict
+            ):
+                raise ValueError("invalid_select_config")
+            filters = config.get("filters", {})
+            if set(filters) - (set(EVENT_FIELDS) | {"limit", "offset"}):
+                raise ValueError("invalid_select_filters")
+            if "limit" in filters and (
+                type(filters["limit"]) is not int or not 1 <= filters["limit"] <= 1000
+            ):
+                raise ValueError("invalid_pagination")
+            if "offset" in filters and (
+                type(filters["offset"]) is not int or filters["offset"] < 0
+            ):
+                raise ValueError("invalid_pagination")
+    elif kind == "aggregate":
+        if config.get("metric", "count") != "count" or config.get("group_by") not in {
+            None,
+            "actor",
+            "source",
+            "session_id",
+            "campaign_id",
+            "project_id",
+            "event_type",
+        }:
+            raise ValueError("invalid_aggregate_config")
+    elif kind == "agent":
+        if "instructions" in config and not isinstance(config["instructions"], str):
+            raise ValueError("invalid_agent_config")
+    elif kind == "python":
+        if len(config["code"]) > 32000:
+            raise ValueError("invalid_python_config")
+        compile(config["code"], "<audit-analysis>", "exec")
+    elif kind == "sql":
+        if set(config) != {"sql"} or len(config["sql"]) > 32000:
+            raise ValueError("invalid_sql_config")
+    elif kind == "join":
+        keys = {"actor", "agent_id", "session_id", "campaign_id", "project_id", "native_id", "id"}
+        if not {"left_ids", "right_ids", "on"} <= config.keys() or config["on"] not in keys:
+            raise ValueError("invalid_join")
+        if config.get("right_on", config["on"]) not in keys:
+            raise ValueError("invalid_join")
+        for field in ("left_ids", "right_ids"):
+            if not isinstance(config[field], list) or any(
+                not isinstance(i, str) for i in config[field]
+            ):
+                raise ValueError("invalid_join")
+        window = config.get("within_seconds")
+        if window is not None and (type(window) not in (int, float) or not 0 <= window <= 31536000):
+            raise ValueError("invalid_join_window")

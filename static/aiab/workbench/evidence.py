@@ -115,6 +115,8 @@ class EvidenceStore:
         self._allow_native = allow_native and self._fields == set(EVENT_FIELDS)
         self._records = {}
         self._native = {}
+        self._analysis_records = {}
+        self._selection_restricted = False
         self._unknown_time = 0
         self._unknown_identity = False
         self._loss = False
@@ -149,6 +151,12 @@ class EvidenceStore:
             self._records[event["id"]] = {
                 k: copy.deepcopy(v) for k, v in event.items() if k in self._fields
             }
+            # Inline bytes may contain fields outside this projection. Only the
+            # fixed sandboxed analyzer can obtain whole originals below.
+            if "provenance" in self._records[event["id"]]:
+                self._records[event["id"]]["provenance"].pop("native_bytes", None)
+            if self._fields == set(EVENT_FIELDS):
+                self._analysis_records[event["id"]] = copy.deepcopy(event)
             if self._allow_native:
                 raw_hash = event["provenance"].get("raw_sha256")
                 if raw_hash in native_index:
@@ -157,6 +165,9 @@ class EvidenceStore:
         # Identity maps are not exported. Resolution only returns authorized identities
         # and provenance references that themselves resolve inside this store.
         self._identities = copy.deepcopy(dataset["manifest"].get("identities", []))
+        self._build_index()
+
+    def _build_index(self):
         self._db = sqlite3.connect(":memory:")
         self._db.enable_load_extension(False)
         self._db.execute("PRAGMA temp_store=MEMORY")
@@ -229,7 +240,50 @@ class EvidenceStore:
         self._fully_examined.update(self._records)
         return result
 
-    def search(self, query="", **filters):
+    def iter_event_pages(self):
+        """Stream bounded projection pages without claiming examination.
+
+        Exhaustion means complete iteration; a single oversized record fails.
+        """
+        page, size = [], 2
+        for event in self._records.values():
+            event_size = len(canonical_json(event)) + 1
+            if event_size + 2 > self._max_bytes:
+                raise EvidenceError("result_limit_exceeded")
+            if page and (len(page) >= self._max_results or size + event_size > self._max_bytes):
+                yield copy.deepcopy(page)
+                page, size = [], 2
+            page.append(event)
+            size += event_size
+        if page:
+            yield copy.deepcopy(page)
+
+    def analysis_events(self, ids):
+        """Private originals for the fixed sandboxed domain analyzer ONLY.
+
+        Partial field grants cannot authorize whole-record commitment checks.
+        Native revisions and original normalized commitments are preserved.
+        """
+        if self._fields != set(EVENT_FIELDS):
+            raise EvidenceError("analysis_requires_complete_field_grant")
+        if any(i not in self._analysis_records for i in ids):
+            raise EvidenceError("reference_missing_or_unauthorized")
+        return [copy.deepcopy(self._analysis_records[i]) for i in ids]
+
+    def restrict_ids(self, ids):
+        """Narrow a validated snapshot without rewriting its native manifest."""
+        ids = set(ids)
+        if not ids <= self._records.keys():
+            raise EvidenceError("reference_missing_or_unauthorized")
+        view = copy.copy(self)
+        view._selection_restricted = self._selection_restricted or ids != self._records.keys()
+        for name in ("_records", "_native", "_analysis_records"):
+            setattr(view, name, {k: v for k, v in getattr(self, name).items() if k in ids})
+        view._searched, view._examined, view._fully_examined = set(), set(), set()
+        view._build_index()
+        return view
+
+    def search(self, query="", *, examine=True, **filters):
         if not isinstance(query, str):
             raise EvidenceError("invalid_search")
         paginated = "limit" in filters or "offset" in filters
@@ -245,12 +299,12 @@ class EvidenceStore:
         for field in filters:
             if field not in self._fields:
                 raise EvidenceError("field_not_authorized")
-        results = []
+        results, scanned = [], set()
         deadline = time.monotonic() + self._seconds
         for key, event in self._records.items():
             if time.monotonic() > deadline:
                 raise EvidenceError("search_resource_limit")
-            self._searched.add(key)
+            scanned.add(key)
             if any(
                 event.get(k) not in v if isinstance(v, list) else event.get(k) != v
                 for k, v in filters.items()
@@ -267,10 +321,12 @@ class EvidenceStore:
         result = self._bounded(page)
         # IDs may themselves be unprojected; associate rows internally without
         # introducing ungranted IDs into the returned projection.
-        returned_objects = {id(event) for event in page}
-        returned_ids = {k for k, v in self._records.items() if id(v) in returned_objects}
-        self._examined.update(returned_ids)
-        self._fully_examined.update(returned_ids)
+        self._searched.update(scanned)
+        if examine:
+            returned = {id(event) for event in page}
+            ids = {k for k, v in self._records.items() if id(v) in returned}
+            self._examined.update(ids)
+            self._fully_examined.update(ids)
         return result
 
     def fetch(self, ids):
@@ -495,7 +551,7 @@ class EvidenceStore:
         assertions = manifest["coverage"]
         # Exact scope binding is required: global "complete" must not be reused for
         # another population/window or inferred from the supplied event list.
-        bound = assertions.get("scope") == self._scope
+        bound = assertions.get("scope") == self._scope and not self._selection_restricted
         independent = bool(assertions.get("universe")) and bool(assertions.get("inventory_digest"))
         limitations = []
         if missing:

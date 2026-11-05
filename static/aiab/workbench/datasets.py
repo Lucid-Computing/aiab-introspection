@@ -55,14 +55,14 @@ def catalog():
     ]
 
 
-def plan_for(audit_id):
+def plan_for(audit_id, *, dataset=None):
     from .model import MODEL_PROFILE
 
     try:
         spec = BY_ID[audit_id]
     except KeyError as exc:
         raise ValueError(f"unknown audit: {audit_id}") from exc
-    return {
+    plan = {
         "version": "aiab-workbench/v1",
         "id": audit_id,
         "title": spec.title,
@@ -137,6 +137,17 @@ def plan_for(audit_id):
         },
         "approval": {"required_signers": [], "roster": [], "expires_at": None},
     }
+
+    if dataset is not None:
+        from .contracts import EVENT_FIELDS, validate_dataset
+
+        validate_dataset(dataset)
+        plan["scope"].update(
+            dataset_ids=[dataset["id"]],
+            subjects=sorted({e["actor"] for e in dataset["events"] if e["actor"] is not None}),
+            fields=list(EVENT_FIELDS),
+        )
+    return plan
 
 
 def generate(seed=0, *, replicas=1):

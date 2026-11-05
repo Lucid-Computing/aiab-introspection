@@ -85,9 +85,27 @@ def prepare_sql(events, sql):
 
 
 def main():
-    request = json.loads(sys.stdin.buffer.readline(2_097_153))
+    def read_frame():
+        raw = sys.stdin.buffer.readline(2_097_153)
+        if len(raw) > 2_097_152 or not raw.endswith(b"\n"):
+            raise ValueError("analysis_frame_limit")
+        return raw
+
+    header = read_frame()
+    request = json.loads(header)
+    count = request["event_count"]
+    if type(count) is not int or not 0 <= count <= 100000:
+        raise ValueError("analysis_event_limit")
+    events, size = [], len(header)
+    for _ in range(count):
+        frame = read_frame()
+        size += len(frame)
+        if size > 16 * 1024**2:
+            raise ValueError("analysis_input_limit")
+        events.append(json.loads(frame))
+    if sys.stdin.buffer.read(1):
+        raise ValueError("analysis_trailing_data")
     operation = request.get("operation", "python")
-    events = request["events"]
     if operation == "python":
         code = compile(request["code"], "<audit-analysis>", "exec")
         namespace = {

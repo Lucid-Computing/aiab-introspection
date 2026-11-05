@@ -54,17 +54,24 @@ class RuntimeFailure(ValueError):
 
 
 async def kill_process(process):
-    if process.returncode is None:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+    # Descendants can survive an already exited group leader.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
     await process.wait()
 
 
 async def isolated_operation(operation, events, **parameters):
-    payload = json.dumps({"operation": operation, "events": events, **parameters}).encode()
-    if len(payload) > MAX_FRAME:
+    # Bound each JSONL frame and total ingestion independently of output limits.
+    frames = [
+        json.dumps({"operation": operation, "event_count": len(events), **parameters}).encode()
+    ]
+    frames.extend(json.dumps(event, allow_nan=False).encode() for event in events)
+    if (
+        any(len(f) + 1 > MAX_FRAME for f in frames)
+        or sum(len(f) + 1 for f in frames) > 16 * 1024**2
+    ):
         raise RuntimeFailure("analysis_input_limit")
     # No inherited descriptors, environment, keys, user site or working directory.
     process = await asyncio.create_subprocess_exec(
@@ -81,8 +88,9 @@ async def isolated_operation(operation, events, **parameters):
     )
     try:
         async with asyncio.timeout(5):
-            process.stdin.write(payload + b"\n")
-            await process.stdin.drain()
+            for frame in frames:
+                process.stdin.write(frame + b"\n")
+                await process.stdin.drain()
             process.stdin.close()
             # Bounded reads prevent output-memory attacks before the worker's check.
             output = bytearray()
@@ -107,6 +115,8 @@ async def isolated_python(code, events):
 
 def events_from(store):
     # The evidence interface promises scoped event access. Never fall back to original data.
+    if hasattr(store, "iter_event_pages"):
+        return [event for page in store.iter_event_pages() for event in page]
     events = getattr(store, "events", None)
     if events is None:
         events = getattr(store, "scoped_events", None)
@@ -118,8 +128,9 @@ def events_from(store):
 
 
 class ToolBroker:
-    def __init__(self, store, events=None):
+    def __init__(self, store, events=None, authorize=None):
         self.store = store
+        self.authorize = authorize
         self.events = events_from(store) if events is None else copy.deepcopy(events)
         self.by_id = {e["id"]: e for e in self.events}
         if len(self.by_id) != len(self.events):
@@ -135,8 +146,13 @@ class ToolBroker:
             or any(not isinstance(i, str) or i not in self.by_id for i in ids)
         ):
             raise RuntimeFailure("unauthorized_evidence_reference")
+        result = [copy.deepcopy(self.by_id[i]) for i in ids]
+        if len(json.dumps(result).encode()) > 262144:
+            raise RuntimeFailure("tool_output_limit")
+        if hasattr(self.store, "fetch"):
+            self.store.fetch(ids)
         self.examined.update(ids)
-        return [copy.deepcopy(self.by_id[i]) for i in ids]
+        return result
 
     def coverage(self):
         return {
@@ -149,14 +165,26 @@ class ToolBroker:
         }
 
     async def call(self, name, args):
+        if self.authorize is not None:
+            await self.authorize()
         if not isinstance(args, dict):
             raise RuntimeFailure("invalid_tool_arguments")
         if name in {"search", "counterevidence"}:
             if set(args) - {"query", "filters"} or not isinstance(args.get("query"), str):
                 raise RuntimeFailure("invalid_search")
-            result = self.store.search(args["query"], **args.get("filters", {}))
+            filters = args.get("filters", {})
+            if not isinstance(filters, dict) or "examine" in filters:
+                raise RuntimeFailure("invalid_search")
+            if hasattr(self.store, "iter_event_pages"):
+                result = self.store.search(args["query"], examine=False, **filters)
+            else:
+                result = self.store.search(args["query"], **filters)
             # Search projections are not counted as fully examined event content.
-            self.searched.update(self.by_id)
+            self.searched.update(
+                self.store._searched
+                if hasattr(self.store, "_searched")
+                else (e["id"] for e in result)
+            )
             if name == "counterevidence":
                 self.countersearches += 1
         elif name == "fetch":

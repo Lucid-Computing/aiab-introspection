@@ -26,7 +26,7 @@ The parent owns image builds, measured release/attestation, mounting operator
 credentials, exposing HTTPS, service admission adapters and deployment. No server,
 container, deployment, PR or push was created by this workstream.
 
-`await runner.execute_plan(plan, dataset, *, model=None, actor=None, on_event=None)`
+`await runner.execute_plan(plan, dataset, *, model=None, actor=None, on_event=None, authorize=None)`
 returns the PRIVATE result. Cancel the asyncio task to stop it. `on_event` contains
 PRIVATE evidence/tool messages/reasoning; never connect it to an employer/UI event
 stream. Only pass recipient-safe lifecycle status through the host API.
@@ -183,3 +183,68 @@ contracts/evidence/analyzers/governance integration; measured runtime image and
 client attestation/key distribution; parent-owned approval/release/receipt adapters;
 independent sandbox/security and semantic-evidence review. Local unit tests do not
 satisfy these live/deployment/assurance gates.
+
+## Merged runtime integration
+
+`execute_plan(..., authorize=check_current_authority)` accepts a separate trusted
+zero-argument sync/async callback returning **exactly `True`**. A denial aborts
+with `authorization_revoked`. It runs before graph steps, before every broker tool
+call, before tokenization and completion, before sending responses to Pi, and at
+completion. Use it for fresh approval/revocation checks; it is independent of
+`on_event`, which remains a private debugging callback. The host API must wire
+this hook from trusted admission state. Without the callback, the runner enforces
+the admitted static capability only. Admission and recipient release checks remain
+separate requirements; this hook does not authorize admission or disclosure.
+
+Source/native validation sees the original complete snapshot before scope filtering.
+Scoped graph views retain the snapshot manifest and native revisions rather than
+constructing invalid partially normalized datasets. `plan_for(id)` is an authoring
+template with unresolved subject/field scope; `plan_for(id, dataset=dataset)` binds
+explicit observed subjects and fields for a synthetic rehearsal. Neither grants
+admission capabilities. Missing grants fail closed.
+
+Internal inventory uses `EvidenceStore.iter_event_pages()` (each page respects the
+store row/byte bounds); inventory alone never counts as examination. Analysis input
+uses bounded JSONL frames, at most 2 MiB per frame and 16 MiB total. Analysis output
+remains 256 KiB, tool output 256 KiB, and Pi frames 2 MiB. No limit was replaced by
+silent truncation. Graph event selections stay private and can exceed an individual
+response frame; derived outputs still obey their output limits. Actual domain
+analysis executes only in the disposable seccomp worker. Operator configuration,
+graph input types and SQL semantics are checked before any inference.
+
+Normalized tool projections exclude inline `provenance.native_bytes` even when
+provenance is granted. Native payloads are available to the fixed domain analyzer
+through a separate internal whole-record capability, only with all event fields
+authorized, so original integrity checks still work. SQL, custom Python, Pi tools,
+search and fetch see the authorized projection. Explicit native fetch additionally
+requires `allow_native=True` and all fields; the Pi broker exposes no native fetch.
+
+A direct `EvidenceStore.search` returns full projected rows and counts returned
+rows as examined by default. The Pi broker explicitly requests `examine=False`:
+its citation policy requires a successful fetch. Inventory, search scans, returned
+hits and fetched support are distinct; failed store searches do not update coverage.
+Collection coverage and native authenticity never follow from an empty search.
+Synthetic negative findings retain their synthetic collector-inventory limitation.
+
+An agent may consume a select branch, or a findings branch as investigation context.
+Finding inputs authorize only their already-authorized supporting/counterevidence
+IDs; findings are not source events. Additional select inputs explicitly add their
+events. Prior findings enter the private prompt; the agent must still fetch its own
+cited support. An agent with `inputs: []` uses the authorized run universe, as the
+catalog templates specify.
+
+Reproducible merged checks (mocked inference is explicitly labeled):
+
+```sh
+npm ci --prefix static/agent_runtime --ignore-scripts && make -C static/agent_runtime
+npm test --prefix static/agent_runtime
+uv run --project static pytest -q static/tests/workbench/test_runtime_integration.py
+uv run --project static pytest -q static/tests/workbench static/tests/test_workbench_governance.py
+```
+
+The integration suite runs all 27 deterministic methods against 432 independently
+labeled Northstar cases through `execute_plan`, and real multi-turn Pi against real
+evidence/contracts with an explicit inference double. It checks scoped selections,
+findings context, native revisions, byte isolation, denial/revocation, ingestion and
+response budgets, deadlines, cancellation and surviving process descendants. These
+are synthetic assurance checks, not successful live DeepSeek/Tinfoil qualification.
