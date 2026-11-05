@@ -279,15 +279,10 @@ async `on_event` callback**. Callback payloads never go to HTTP. An authorizatio
 discards completion; explicit cancellation also cancels the task and wins over a late
 finish. Source authorization is not accepted from request JSON.
 
-**Exact gap:** this runtime's events include step start/end, model completion and
-tool results, but it has no callback immediately before every model inference or
-every evidence/tool access. Revocation during a pending call is only detected at the
-next event, and cannot recall data already sent. If a runner lacks `on_event`, only
-pre/post checks are available. A trusted pre-access/pre-inference hook plus resolved
-source/field/time permission intersection is still required for the full throughout-run
-claim. The API advertises this limitation, creates no runtime facts, and continues to
-block confidential audit admission unconditionally until verified sealed ingestion,
-client/runtime integration and independent output validation actually exist. Tests
-inject labelled deterministic stand-ins for HTTP lifecycle tests; they are not live
-runtime/confidential-execution evidence. Cryptographic approvals and receipts use
-real Ed25519 and durable SQLite in tests.
+The merged runtime now supplies `authorize=callback`, invoked immediately before
+evidence access, tokenization and inference. The API wires a zero-argument callback
+that checks durable cancellation state, current source grants and governance consent
+and returns exactly `True`. It retains independent admission/release checks and
+private event checkpoints. A request already sent cannot be recalled. Confidential
+UI admission remains blocked until actual measured deployment and independently
+verified sealed submission are qualified; no runtime facts are manufactured.

@@ -78,13 +78,12 @@ profile. Known MR_SEAM rejection remains a failure, with no SDK allowlist relaxa
 fallback provider, alternate model or inference retry. Real multi-turn Pi inference
 and independent security review are still required. The local demo proves neither.
 
-The existing runner exposes private event checkpoints, not a mandatory hook before
-every tool access/inference. This adapter revalidates before/after execution, every
-available event, and release. Revocation blocks release immediately once committed;
-it cannot recall data already disclosed to the runtime/model or guarantee zero
-additional reads during a pending step. **Do not approve a live deployment claiming
-instantaneous per-access revocation until the runner supplies reviewed pre-access
-and pre-inference hooks.** Signed gates cannot manufacture those missing semantics.
+The integrated runner now invokes the supervisor's independent `authorize` callback
+immediately before evidence access, tokenization and inference. This adapter checks
+profile/source expiry and current governance consent at each boundary, as well as
+before/after execution and release. Revocation cannot recall a request already sent
+or guarantee interruption of an in-flight remote inference. These implementation
+checks do not replace measured deployment and independent security review.
 
 ## Measured-image packaging (parent-owned build/deploy)
 

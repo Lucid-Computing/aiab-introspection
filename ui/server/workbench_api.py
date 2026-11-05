@@ -7,6 +7,7 @@ import base64
 import copy
 import inspect
 import json
+import os
 import secrets
 import time
 from functools import lru_cache
@@ -73,7 +74,7 @@ class WorkbenchAPI:
             # JSON mutations require an exact same-origin browser request. Neither cookies
             # nor a caller-supplied actor grants a cross-origin write capability.
             origin = request.headers.get("origin")
-            expected = str(request.base_url).rstrip("/")
+            expected = os.environ.get("RENDER_EXTERNAL_URL", str(request.base_url)).rstrip("/")
             if origin != expected:
                 raise APIError("origin_denied", "Same-origin request required.", 403)
         return user["username"]
@@ -314,7 +315,7 @@ class WorkbenchAPI:
                     "operator_prevalidation": True,
                     "live_model_verification": "required_at_execution",
                     "confidential_execution": False,
-                    "authorization_checkpoints": "private runtime events; not every access",
+                    "authorization_checkpoints": "before evidence access, tokenization and inference",
                 },
             }
 

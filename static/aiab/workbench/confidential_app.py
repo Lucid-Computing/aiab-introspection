@@ -374,8 +374,14 @@ class ConfidentialRuntime:
         async def event(_private_event):
             self.revalidate(run_id)
 
+        async def authorize_access():
+            self.revalidate(run_id)
+            return True
+
         # Private runner output never controls aggregate attribution or free-text release.
-        await self.execute_private(plan, dataset, actor=actor, on_event=event)
+        await self.execute_private(
+            plan, dataset, actor=actor, on_event=event, authorize=authorize_access
+        )
         self.revalidate(run_id)
         return subject_result(plan, dataset, self.entry_for_run(run_id)["dataset_manifest"])
 
