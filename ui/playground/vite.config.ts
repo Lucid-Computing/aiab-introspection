@@ -11,7 +11,11 @@ export default defineConfig({
   server: {
     port: 5174,
     fs: { allow: ["../assets", "../../plan"] },
-    proxy: { "/a/": "http://127.0.0.1:8090", "/login": "http://127.0.0.1:8090" },
+    proxy: {
+      "/a/": "http://127.0.0.1:8090",
+      "/api/workbench": "http://127.0.0.1:8090",
+      "/login": "http://127.0.0.1:8090",
+    },
   },
   // CodeMirror and React Flow in one bundle; fine for a prototype served locally.
   build: { chunkSizeWarningLimit: 1500 },
