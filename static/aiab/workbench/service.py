@@ -91,6 +91,9 @@ def create_app(
     sealed_inputs: SealedInputs | None = None,
     max_concurrent: int = 4,
     execute: Callable = execute_plan,
+    submission_context: bool = False,
+    authorize_release: Callable | None = None,
+    cancel_run: Callable | None = None,
 ):
     """Deploy with uvicorn using an operator-owned factory that calls this function.
 
@@ -104,6 +107,10 @@ def create_app(
     The internal encrypted result ledger is not a signed receipt. The release
     authority owns receipt signing. A single service process owns a ledger.
     execute injection is only for service tests, never an HTTP option.
+    submission_context passes decrypted submission/request_id to the admission adapter.
+    authorize_release(principal, governance_id) permits independently authenticated
+      recipients to receive their projection without granting owner/status access.
+    cancel_run(principal, governance_id) permanently revokes a cancelled reservation.
     """
     if len(result_key) != 32 or not 1 <= max_concurrent <= 32:
         raise ValueError("invalid_service_config")
@@ -243,7 +250,10 @@ def create_app(
                 (run_id, who.id, "admitting", submission),
             )
             try:
-                actor = await invoke(admit, who, plan, dataset)
+                context = (
+                    {"submission": payload, "request_id": request_id} if submission_context else {}
+                )
+                actor = await invoke(admit, who, plan, dataset, **context)
                 if not isinstance(actor, dict) or actor.get("id") != who.id:
                     raise HTTPException(403, "admission_denied")
                 db.execute(
@@ -263,7 +273,10 @@ def create_app(
         except Exception:
             raise HTTPException(400, "admission_or_payload_invalid") from None
         tasks[run_id] = asyncio.create_task(perform(run_id, plan, dataset, actor))
-        return {"run_id": run_id, "status": "queued"}
+        response = {"run_id": run_id, "status": "queued"}
+        if submission_context:
+            response["governance_run_id"] = actor["governance_run_id"]
+        return response
 
     @app.get("/v1/runs/{run_id}")
     async def status(run_id: str, request: Request):
@@ -274,17 +287,37 @@ def create_app(
     @app.post("/v1/runs/{run_id}/cancel")
     async def cancel(run_id: str, request: Request):
         who = await principal(request, "runtime:cancel")
-        owned(run_id, who)
+        row = owned(run_id, who)
+        if cancel_run is not None:
+            try:
+                await invoke(cancel_run, who, row[2])
+            except Exception:
+                raise HTTPException(403, "cancellation_denied") from None
         task = tasks.get(run_id)
         if task:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        if cancel_run is not None:
+            db.execute(
+                "UPDATE runtime_runs SET status='cancelled',result=NULL WHERE id=?", (run_id,)
+            )
         return {"run_id": run_id, "status": owned(run_id, who)[1]}
 
     @app.post("/v1/runs/{run_id}/release")
     async def release_result(run_id: str, request: Request):
         who = await principal(request, "runtime:release")
-        row = owned(run_id, who)
+        if authorize_release is None:
+            row = owned(run_id, who)
+        else:
+            row = db.execute(
+                "SELECT owner,status,governance_id,result,error FROM runtime_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            try:
+                if row is None or not await invoke(authorize_release, who, row[2]):
+                    raise ValueError
+            except Exception:
+                raise HTTPException(404, "run_not_found") from None
         if row[1] != "completed" or row[3] is None:
             raise HTTPException(409, "result_unavailable")
         try:
