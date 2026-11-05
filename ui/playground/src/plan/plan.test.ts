@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import deployedPlan from "../../../../plan/plan.json";
 import { flowToPlan, planToFlow } from "./graph";
 import { completeLayout } from "./layout";
 import { lintPlan, pythonIssues } from "./lint";
@@ -31,20 +32,10 @@ describe("samples", () => {
     expect(lintPlan(plan).filter((i) => i.severity === "error")).toEqual([]);
   });
 
-  it("the first sample is the deployed plan, every block type once, straight through", () => {
+  it("the first sample preserves the deployed plan without substituting an example", () => {
     const deployed = samplePlan("deployed");
-    expect(deployed.plan_id).toBe("destructive_commands");
-    expect(deployed.nodes.map((n) => n.type)).toEqual([
-      "input_logs",
-      "run_python",
-      "run_llm",
-      "classifier",
-      "final_report",
-    ]);
-    expect(deployed.limits.max_model_calls_per_run).toBe(128);
-    expect(lintPlan(deployed).filter((i) => i.severity === "warning").map((i) => i.message)).toEqual([
-      expect.stringContaining("proxy/coding-agents"),
-    ]);
+    expect(deployed).toEqual(deployedPlan);
+    expect(validatePlan(deployed).ok).toBe(true);
   });
 
   it("falls back to the simple sample when the baked deployed plan is not a plan", () => {
