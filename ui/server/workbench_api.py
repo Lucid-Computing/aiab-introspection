@@ -7,9 +7,11 @@ import base64
 import copy
 import inspect
 import json
+import logging
 import os
 import secrets
 import time
+import traceback
 from functools import lru_cache
 from pathlib import Path
 
@@ -284,8 +286,16 @@ class WorkbenchAPI:
         except RuntimeFailure as exc:
             # Fixed reviewed codes only; provider response bodies never enter this type.
             self.store.finish(actor, run_id, error="Investigation stopped: " + str(exc))
-        except Exception:
+        except Exception as exc:
             # Model/provider errors can contain sensitive request bodies. Keep them off HTTP.
+            logging.getLogger(__name__).error(
+                "workbench execution failed: class=%s frames=%s",
+                type(exc).__name__,
+                [
+                    (Path(f.filename).name, f.lineno, f.name)
+                    for f in traceback.extract_tb(exc.__traceback__)
+                ],
+            )
             self.store.finish(
                 actor, run_id, error="Execution failed; no completed result was released."
             )
