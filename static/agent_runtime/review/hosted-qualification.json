@@ -1,0 +1,170 @@
+{
+  "recorded_at": "2026-11-05T19:01:17.982770+00:00",
+  "environment": "https://aiab-dev-astra-one.onrender.com",
+  "service_id": "srv-dbmbeatbedkc73bp6m9g",
+  "agent_and_authoring_deployed_commit": "9c87a99981be1f9f88fbc70b4e257497e64bc108",
+  "dataset": "northstar",
+  "synthetic_evidence": true,
+  "confidential_audit_host": false,
+  "agent": {
+    "run_id": "125c125b4e5542538e0241eb57fd23de",
+    "status": "completed",
+    "plan_digest": "256d627e1e52f2048d64abbb9ea6e842a55f1bf9c97b0762061ffcb28779917e",
+    "usage": {
+      "turns": 4,
+      "tool_calls": 8,
+      "prompt_tokens": 34138,
+      "completion_tokens": 2305,
+      "total_tokens": 36443,
+      "test_model": false,
+      "cost_usd": null,
+      "model_profile": {
+        "id": "deepseek-v4-1-flash",
+        "repo": "tinfoilsh/confidential-deepseek-v4-1-flash",
+        "release_digest": "sha256:71f41a053232a06dd6ed61ca3a40502a9b972dc16dd9f04ca895ced5a7809def",
+        "artifact_digest": "sha256:6c4a2b637f7f45d9e48d1bdc38c12e0454584f48d3759851f7ee4471cd90b2e7",
+        "model_revision": "deepseek-ai/DeepSeek-V4.1-Flash-1017@1bae0e1088993b9b82de08f59de5be5a34e42170",
+        "context_tokens": 1048576,
+        "serving_image": "sha256:b98ca8cc6ace7ecc00eb08b5e550992175f46766a69a68508ca8227490101af5",
+        "tool_parser": "deepseek_v41",
+        "reasoning_parser": "deepseek_v41",
+        "inference": {
+          "temperature": 1.0,
+          "top_p": 1.0,
+          "reasoning_effort": "low",
+          "chat_template_kwargs": {
+            "enable_thinking": true,
+            "reasoning_effort": "low",
+            "drop_thinking": false
+          }
+        }
+      },
+      "model_verification": {
+        "securityVerified": true,
+        "configRepo": "tinfoilsh/confidential-deepseek-v4-1-flash",
+        "enclaveHost": "deepseek-v4-1-flash-inf16-0.tinfoil.containers.tinfoil.dev",
+        "releaseDigest": "71f41a053232a06dd6ed61ca3a40502a9b972dc16dd9f04ca895ced5a7809def",
+        "tlsPublicKey": "bd4fd6b24ad43d34041312694cd9bc6cdf83380829328eb83adf0442601c5488",
+        "verifier": {
+          "name": "tinfoil-go",
+          "version": "0.16.4"
+        },
+        "verifiedAt": "2026-11-05T18:59:57.102742343Z",
+        "freshnessExpiresAt": "2026-11-09T22:20:58Z",
+        "steps": {
+          "compareMeasurements": {
+            "status": "success"
+          },
+          "fetchDigest": {
+            "status": "success"
+          },
+          "verifyCode": {
+            "status": "success"
+          },
+          "verifyEnclave": {
+            "status": "success"
+          }
+        },
+        "codeTag": "v0.0.10+b200",
+        "attestationSHA256": "5594a4b217b865ca554f2aa3fb1c2b261bbea7765a118e14a768ef1464cb66ce",
+        "platformReference": {
+          "digest": "6a4515c3305a81136bda42aef5fc4f13a4a2c63a51c522b17883d008cfbbd472",
+          "repo": "tinfoilsh/cvmimage",
+          "tag": "platform-v0.1.10"
+        }
+      },
+      "runtime": {
+        "harness": "pi-agent-core/1.5.0",
+        "protocol": "aiab-pi-broker/v1",
+        "sandbox": "linux-x86_64-seccomp-tsync/v1",
+        "tools": "aiab-tools/v1"
+      },
+      "elapsed_seconds": 36.46735654771328
+    },
+    "validation": {
+      "references": "passed",
+      "semantic_support": "not_independently_verified",
+      "negative_claim_coverage": "not_verified"
+    },
+    "finding_outcomes": [
+      "supported"
+    ]
+  },
+  "authoring": {
+    "http_status": 200,
+    "changed_paths": [
+      "/title"
+    ],
+    "usage": {
+      "prompt_tokens": 2296,
+      "completion_tokens": 1496,
+      "total_tokens": 3792,
+      "test_model": false
+    },
+    "verification": {
+      "securityVerified": true,
+      "configRepo": "tinfoilsh/confidential-deepseek-v4-1-flash",
+      "enclaveHost": "deepseek-v4-1-flash-inf16-0.tinfoil.containers.tinfoil.dev",
+      "releaseDigest": "71f41a053232a06dd6ed61ca3a40502a9b972dc16dd9f04ca895ced5a7809def",
+      "tlsPublicKey": "bd4fd6b24ad43d34041312694cd9bc6cdf83380829328eb83adf0442601c5488",
+      "verifier": {
+        "name": "tinfoil-go",
+        "version": "0.16.4"
+      },
+      "verifiedAt": "2026-11-05T18:59:57.109935208Z",
+      "freshnessExpiresAt": "2026-11-09T22:20:58Z",
+      "steps": {
+        "compareMeasurements": {
+          "status": "success"
+        },
+        "fetchDigest": {
+          "status": "success"
+        },
+        "verifyCode": {
+          "status": "success"
+        },
+        "verifyEnclave": {
+          "status": "success"
+        }
+      },
+      "codeTag": "v0.0.10+b200",
+      "attestationSHA256": "6e1970af38c26df50b7201126a3033bb3c19090e0fc2317969f7f916765cf215",
+      "platformReference": {
+        "digest": "6a4515c3305a81136bda42aef5fc4f13a4a2c63a51c522b17883d008cfbbd472",
+        "repo": "tinfoilsh/cvmimage",
+        "tag": "platform-v0.1.10"
+      }
+    },
+    "saved_or_signed": false
+  },
+  "deterministic_evaluation": {
+    "deployed_commit": "f0806e5e8c53394c31548d9293a8d507e3efe377",
+    "evaluation_id": "a70cace44ced48febe6708128d5175aa",
+    "status": "completed",
+    "plan_digest": "e1828542189a25ff4f0d97621c3e08dcdfedb313b5794cc8bed7e6c22f0909af",
+    "metrics": {
+      "abstentions": 10,
+      "accuracy": 1.0,
+      "accuracy_denominator": 16,
+      "cases": 16,
+      "citation_errors": 0,
+      "evaluated": 16,
+      "exact_matches": 16,
+      "fn_including_unknown_and_abstention": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "precision_denominator": 2,
+      "recall": 1.0,
+      "recall_denominator": 2,
+      "tn": 4,
+      "tp": 2,
+      "unknown": 0
+    }
+  },
+  "limitations": [
+    "Synthetic development cases, not independent held-out accuracy",
+    "Finding references validated; semantic support not independently reviewed",
+    "Ordinary Render evidence host, not a measured confidential audit supervisor",
+    "Branch deployment automation needs isolated Render deploy-hook secret"
+  ]
+}

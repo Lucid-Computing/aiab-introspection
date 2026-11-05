@@ -6,6 +6,13 @@ login file is `~/.local/share/aiab-dev-astra-one/login.json`; do not commit or s
 that file in presentation materials. Use the authenticated workbench, not the
 legacy builder without `?workbench=1`.
 
+Hosted checks on November 5 passed: a real Pi/DeepSeek investigation completed
+four turns and eight tool calls in about 36 seconds; verified authoring changed
+only the requested title; a deterministic evaluation matched all 16 selected
+synthetic cases. Commit bindings and verification metadata are recorded in
+`static/agent_runtime/review/hosted-qualification.json`. These are bounded smoke
+checks, not a general accuracy or confidentiality certification.
+
 ## A presentation sequence
 
 1. Choose a catalog question about agent coordination, scope violations, or campaign
