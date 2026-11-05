@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, pollRun } from "./api";
+import { consentAccount } from "./consent";
 import Editor, { Field, TextField } from "./Editor";
 import {
   blankPlan,
@@ -67,6 +68,8 @@ export default function WorkbenchApp() {
   const [responsibility, setResponsibility] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const snapshot = pretty(plan);
+  const approvalState = useRef({ snapshot, saved, user: data?.user });
+  approvalState.current = { snapshot, saved, user: data?.user };
   const dirty = edited && (!saved || pretty(saved.plan) !== snapshot);
   const currentCheck = check?.snapshot === snapshot ? check.result : null;
   const issues = localIssues(plan);
@@ -857,7 +860,10 @@ export default function WorkbenchApp() {
             </p>
             <p>
               Approving signs the displayed saved agreement. It does not approve
-              future edits.
+              future edits. This uses a browser-held consent key, stored for this
+              account in this browser. Key loss requires administrative recovery.
+              This browser is not an independent confidential submission client
+              and provides no enclave or host resistance assurance.
             </p>
             <div className="wb-actions">
               <button
@@ -865,7 +871,26 @@ export default function WorkbenchApp() {
                 onClick={() =>
                   saved &&
                   act("Approving agreement", async () => {
-                    await api.approve(saved.plan.id, saved.digest);
+                    const expected = saved;
+                    const user = data?.user;
+                    const assertCurrent = async () => {
+                      const current = approvalState.current;
+                      if (current.saved?.digest !== expected.digest ||
+                          current.snapshot !== pretty(expected.plan) ||
+                          consentAccount(current.user) !== consentAccount(user))
+                        throw new Error("Agreement or account changed. Reload and review before approving.");
+                      const session = await api.bootstrap();
+                      if (consentAccount(session.user) !== consentAccount(user))
+                        throw new Error("Authenticated account changed. Refresh your session before approving.");
+                      const remote = await api.loadPlan(expected.plan.id);
+                      if (remote.digest !== expected.digest || pretty(remote.plan) !== pretty(expected.plan))
+                        throw new Error("Saved agreement changed. Reload and review before approving.");
+                      const latest = approvalState.current;
+                      if (latest.snapshot !== pretty(expected.plan) || latest.saved !== current.saved ||
+                          consentAccount(latest.user) !== consentAccount(user))
+                        throw new Error("Agreement or account changed during signing.");
+                    };
+                    await api.approve(expected.plan.id, expected.digest, user, assertCurrent);
                     await refreshApprovals(saved);
                     setNotice(
                       "Authorization submitted for the displayed digest. Admission checks all required approvals.",

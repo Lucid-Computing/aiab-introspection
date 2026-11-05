@@ -222,13 +222,11 @@ describe("authenticated product API", () => {
     await api.savePlan(plan, "old");
     await api.run(plan.id, "dataset-1", "rehearse");
     await api.run(plan.id, "dataset-1", "audit");
-    await api.approve(plan.id, "next");
     expect(fetch.mock.calls.map((c) => c[0])).toEqual([
       "/api/workbench/plans",
       "/api/workbench/plans/my%2Fplan",
       "/api/workbench/runs",
       "/api/workbench/runs",
-      "/api/workbench/plans/my%2Fplan/approve",
     ]);
     for (const [, init] of fetch.mock.calls) {
       expect(init.credentials).toBe("same-origin");
@@ -244,7 +242,6 @@ describe("authenticated product API", () => {
       mode: "rehearse",
     });
     expect(JSON.parse(fetch.mock.calls[3][1].body).mode).toBe("audit");
-    expect(JSON.parse(fetch.mock.calls[4][1].body)).toEqual({ digest: "next" });
   });
   it("retains typed blocked/permission errors and never converts a failed check to success", async () => {
     vi.stubGlobal(
@@ -310,12 +307,12 @@ describe("authenticated product API", () => {
 });
 
 describe("product run polling", () => {
-  it("polls serially and stops at a terminal suppressed state", async () => {
+  it.each(["suppressed", "interrupted"])("polls serially and stops at terminal %s", async (status) => {
     vi.useFakeTimers();
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(response({ status: "running" }))
-      .mockResolvedValueOnce(response({ status: "suppressed" }));
+      .mockResolvedValueOnce(response({ status }));
     vi.stubGlobal("fetch", fetch);
     const onRun = vi.fn();
     const done = pollRun("own/run", onRun, new AbortController().signal, 10);
@@ -327,7 +324,7 @@ describe("product run polling", () => {
     await vi.advanceTimersByTimeAsync(60000);
     expect(onRun.mock.calls.map((c) => c[0].status)).toEqual([
       "running",
-      "suppressed",
+      status,
     ]);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[0][0]).toBe("/api/workbench/runs/own%2Frun");
@@ -361,6 +358,7 @@ describe("product run polling", () => {
     "failed",
     "blocked",
     "cancelled",
+    "interrupted",
     "suppressed",
     "completed",
     "released",

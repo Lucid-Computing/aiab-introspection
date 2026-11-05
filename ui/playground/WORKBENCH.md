@@ -28,11 +28,15 @@ login response is shown as unavailable. IDs in URL paths are encoded.
 | Rehearse/audit       | `POST /runs` with `{plan_id,dataset_id,mode}`           | `{run_id}`; mode `rehearse` or `audit`                                     |
 | Run status           | `GET /runs/{id}`                                        | `{status,result?,...recipientSafeMetadata}`                                |
 | Cancel               | `POST /runs/{id}/cancel`, no body                       | Any JSON success; poll to confirm cancellation                             |
-| Approve/revoke       | `POST /plans/{id}/approve` or `/revoke` with `{digest}` | Any JSON success; reload exact digest and approvals                        |
+| Enrollment challenge | `POST /identities/challenge` with `{public_key}` | `{challenge_id,payload}`; base64 raw32 public key, exact base64 payload |
+| Enrollment proof | `POST /identities/enroll` with `{challenge_id,signature}` | `{enrolled:true}`; base64 Ed25519 signature |
+| Approval payload | `POST /plans/{id}/approval-payload` with `{digest,nonce,expires_at:null}` | `{payload}`; base64 exact canonical bytes |
+| Approve | `POST /plans/{id}/approve` with `{digest,nonce,expires_at:null,signature}` | Any JSON success; reload exact digest and approvals |
+| Revoke | `POST /plans/{id}/revoke` with `{digest}` | Any JSON success; reload exact digest and approvals |
 | Challenge            | `POST /runs/{id}/challenge`                             | Any JSON success; refetch run                                              |
 | Accountability       | `GET /history`                                          | `{history:[]}` or `{records:[]}`; other object shapes are displayed intact |
 
-Import wrapping (`{dataset}`), approve/revoke body (`{digest}`), and challenge
+Import wrapping (`{dataset}`), revoke body (`{digest}`), and challenge
 fields are explicit frontend assumptions where the implementation contract does
 not fix a body shape. Challenge bodies are:
 
@@ -45,6 +49,30 @@ not fix a body shape. Challenge bodies are:
   "recipients": ["authorized-auditor"]
 }
 ```
+
+Approval requires bootstrap `user` to be a stable, nonempty authenticated account
+ID string or an object with that ID in `id`. Other shapes fail closed. The ID only
+selects local key storage; it is never sent as API authority. Approval rechecks
+the session, local saved document and remote saved digest throughout signing.
+
+The browser generates an Ed25519 key pair with a **nonextractable private
+CryptoKey**, stored by account ID in IndexedDB (`aiab-workbench-consent-v1`). The
+raw public key is exportable. Concurrent tabs serialize creation without replacing
+an existing key. Every approval proves possession using a fresh server enrollment
+challenge; same-key enrollment must be idempotent. The server must bind challenge
+bytes to the authenticated account and key, enforce challenge expiry/single use,
+and reject key changes. The client signs the exact decoded server payload bytes,
+uses a fresh cryptographically random 32-byte nonce and sends no unsigned fallback.
+The server must enforce digest freshness and nonce replay protection atomically.
+There is no role assignment, key reset or automatic rotation path in this UI.
+
+This is a **browser-held consent key**, not an independent confidential submission
+client. It provides no enclave or host resistance assurance. Browser/origin code,
+account session and local storage remain trusted. Clearing storage, losing the
+browser profile or a rejected key binding requires **administrative recovery**;
+retrying must not replace an enrolled identity. Unsupported Ed25519, unavailable
+IndexedDB, invalid payloads and failed enrollment block approval. A new local key
+after storage loss cannot replace the server's immutable binding.
 
 No caller-supplied actor is sent. The server must authenticate the submitter,
 verify correction artifacts, enforce reviewer/recipient policy, and retain the
@@ -61,7 +89,7 @@ All API catalog rows are shown; the UI reports the actual count against the
 
 The run reader accepts findings/coverage/usage directly or under `result`. It
 recognizes queued/running states and terminal `completed`, `complete`, `succeeded`,
-`success`, `failed`, `blocked`, `cancelled`, `canceled`, `suppressed`, `released`,
+`success`, `failed`, `blocked`, `cancelled`, `canceled`, `interrupted`, `suppressed`, `released`,
 `insufficient_evidence`. Unknown statuses remain visible and continue polling.
 A missing status is a visible protocol error. Terminal status polling stops;
 manual refresh and challenge submission can fetch a later amendment. Polling is
@@ -140,7 +168,12 @@ scope/method/policy check invalidation, failure handling, suppression, explicit
 outcome distinctions, counterevidence and recipient-policy disclosure. Transport
 stubs are test-only; the product has no mocked response path. No live backend,
 browser interaction, attestation, or real model execution is claimed by these
-checks.
+checks. Consent tests additionally use real WebCrypto Ed25519 signatures and
+verification over arbitrary exact bytes; only HTTP transport and the signing-test
+key repository are injected. They cover enrollment per approval, nonextractability,
+random nonces, stale-document rejection, malformed payloads, rejected binding and
+missing storage. Actual IndexedDB CryptoKey persistence across browser restarts
+and live enrollment integration still require browser/backend validation.
 
 The full existing suite currently has one unrelated legacy-fixture failure:
 `src/plan/plan.test.ts` expects deployed `plan_id` `destructive-commands`, while

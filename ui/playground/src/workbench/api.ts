@@ -1,4 +1,5 @@
 import type { Bootstrap, Check, Dataset, Plan, Run, SavedPlan } from "./types";
+import { signApproval } from "./consent";
 import { runActive } from "./model";
 
 export class ApiError extends Error {
@@ -87,8 +88,8 @@ export const api = {
     return value;
   },
   cancel: (runId: string) => post<Object>(`/runs/${id(runId)}/cancel`),
-  approve: (planId: string, digest: string) =>
-    post<Object>(`/plans/${id(planId)}/approve`, { digest }),
+  approve: (planId: string, digest: string, user: unknown, assertCurrent: () => void | Promise<void>) =>
+    signApproval(post, planId, digest, user, assertCurrent),
   revoke: (planId: string, digest: string) =>
     post<Object>(`/plans/${id(planId)}/revoke`, { digest }),
   challenge: (runId: string, challenge: unknown) =>

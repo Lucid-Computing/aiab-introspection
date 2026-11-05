@@ -241,6 +241,7 @@ export const TERMINAL = new Set([
   "failed",
   "blocked",
   "cancelled",
+  "interrupted",
   "canceled",
   "suppressed",
   "released",
