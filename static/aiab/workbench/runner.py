@@ -304,7 +304,15 @@ class Supervisor:
             args = json.loads(fn["arguments"])
             if fn["name"] not in {t["name"] for t in TOOL_SPECS} or set(args) != {"request"}:
                 raise RuntimeFailure("forbidden_tool")
-            parsed = json.loads(args["request"])
+            try:
+                parsed = json.loads(args["request"])
+            except (ValueError, TypeError):
+                # Pi validates/parses the request before RPC and reports its error
+                # to the model. Reserve no capability for this malformed call;
+                # still charge the attempted tool call against the signed budget.
+                self.usage["tool_calls"] += 1
+                await self.emit("tool_arguments_rejected", {"code": "invalid_tool_json"})
+                continue
             self.pending_calls[call["id"]] = (fn["name"], parsed)
         await self.emit("model_completion", {"usage": usage, "tool_calls": len(calls)})
         return pi_completion(answer)

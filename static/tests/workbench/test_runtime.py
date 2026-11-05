@@ -155,6 +155,18 @@ async def test_malformed_search_can_be_corrected_within_budget(narrow_contracts)
     assert result["findings"][0]["counterevidence_ids"] == ["e2"]
 
 
+async def test_malformed_nested_tool_json_is_not_authorized_and_can_be_corrected(narrow_contracts):
+    model = Model()
+    malformed = call("search", {})
+    malformed["function"]["arguments"] = json.dumps({"request": "{broken"})
+    model.messages.insert(0, {"tool_calls": [malformed]})
+    result = await execute_plan(PLAN, DATASET, model=model, actor="alice")
+    assert result["usage"]["turns"] == 5
+    assert result["usage"]["tool_calls"] == 4
+    assert any(message.get("role") == "tool" for message in model.requests[1])
+    assert result["findings"][0]["counterevidence_ids"] == ["e2"]
+
+
 async def test_pi_real_multiturn_with_test_model(narrow_contracts):
     model = Model()
     result = await execute_plan(PLAN, DATASET, actor="alice", model=model)
