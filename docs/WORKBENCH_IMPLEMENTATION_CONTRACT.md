@@ -97,6 +97,10 @@ Private traces are never automatically released with findings.
   requirements, method/validity notes; `datasets.plan_for(audit_id)` returns a valid
   plan; `datasets.generate(seed=0)` returns the coherent synthetic dataset;
   evaluation ground truth is stored separately and never included in that dataset.
+- `analyzers.evaluate(rule_id, events, config)` returns findings computed only from
+  observed authorized events. The datasets/assurance workstream owns these substantive
+  deterministic domain methods. A `rules` step calls it using `config.rule` and its
+  selected events. It must not import hidden scenario labels or expected outcomes.
 
 ## HTTP integration owned by parent
 
@@ -136,7 +140,7 @@ frontend; authorization belongs to the backend/runtime. Parent owns
 3. Runtime: `static/aiab/workbench/{runner,model,tools,service}.py`, agent harness
    under `static/agent_runtime/`, runtime tests and runtime-specific dependencies.
 4. Governance: `static/aiab/workbench/governance.py`, tests and governance API notes.
-5. Datasets/assurance: `static/aiab/workbench/datasets.py`, dataset fixture resources,
+5. Datasets/assurance: `static/aiab/workbench/{datasets,analyzers}.py`, dataset fixture resources,
    generators, evaluation tests/tools and all 27 substantive audit plans.
 
 Children commit only their own changes; no pushes, PRs, deployments or additional
