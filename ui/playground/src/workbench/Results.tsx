@@ -1,3 +1,10 @@
+import {
+  ChallengeHistory,
+  ReceiptVerifier,
+  ReleasedCards,
+  ReleasedTimeline,
+} from "./ResultTools";
+import { api } from "./api";
 import { useState } from "react";
 import { Field, TextField } from "./Editor";
 import { outcomeLabel, pretty, runActive, csv } from "./model";
@@ -53,11 +60,15 @@ export function RecipientPreview({ plan }: { plan: Plan }) {
           <ul>
             <li>
               Evidence references:{" "}
-              {r.allow_evidence ? "permitted only when authorized" : "excluded"}
+              {r.allow_evidence
+                ? "agreement permits; current API does not deliver references"
+                : "excluded"}
             </li>
             <li>
               Excerpts:{" "}
-              {r.allow_excerpts ? "permitted only when approved" : "excluded"}
+              {r.allow_excerpts
+                ? "agreement permits; current API does not deliver excerpts"
+                : "excluded"}
             </li>
             <li>
               Groups smaller than {plan.disclosure.min_group_size}: suppressed,
@@ -116,20 +127,26 @@ export default function Results({
   const [recipients, setRecipients] = useState("");
   const [refs, setRefs] = useState("");
   const [sent, setSent] = useState(false);
+  const [releaseMessage, setReleaseMessage] = useState("");
+  const [releasing, setReleasing] = useState(false);
   if (!run)
     return (
-      <section className="wb-empty">
-        <span className="wb-kicker">Execution</span>
-        <h2>Test the method, then read the evidence.</h2>
-        <p>
-          Check the plan, choose an authorized dataset, and rehearse or run.
-          Findings here come only from the product API. No model result has been
-          generated locally.
-        </p>
-      </section>
+      <>
+        <ReceiptVerifier run={null} />
+        <section className="wb-empty">
+          <span className="wb-kicker">Execution</span>
+          <h2>Test the method, then read the evidence.</h2>
+          <p>
+            Check the plan, choose an authorized dataset, and rehearse or run.
+            Findings here come only from the product API. No model result has
+            been generated locally.
+          </p>
+        </section>
+      </>
     );
   const result = run.result ?? run;
-  const findings = run.result?.findings ?? run.findings ?? [];
+  const rawFindings = run.result?.findings ?? run.findings;
+  const findings = Array.isArray(rawFindings) ? rawFindings : [];
   const suppressed =
     run.status === "suppressed" ||
     result.status === "suppressed" ||
@@ -144,6 +161,15 @@ export default function Results({
       >
         <span className="wb-kicker">Run {run.run_id ?? run.id ?? ""}</span>
         <h2>{outcomeLabel(run.status)}</h2>
+        <strong>
+          {run.mode === "rehearse"
+            ? "Synthetic rehearsal · fictional evidence · not a consented audit"
+            : run.receipt
+              ? "Actual audit · signed recipient package (verify independently below)"
+              : run.mode === "audit"
+                ? "Actual audit request · no signed recipient package available"
+                : "Execution origin not supplied"}
+        </strong>
         {result.status && result.status !== run.status && (
           <p>Method result: {outcomeLabel(String(result.status))}</p>
         )}
@@ -152,7 +178,9 @@ export default function Results({
             ? "The release policy withheld this result. Suppression is not a zero count or a clean audit."
             : run.status === "blocked"
               ? "Admission was refused. This run establishes no finding."
-              : run.status === "failed"
+              : ["failed", "interrupted", "cancelled", "canceled"].includes(
+                    run.status,
+                  )
                 ? "Execution did not complete. A failure is not evidence of compliance."
                 : runActive(run)
                   ? "Executing against the saved plan and admitted dataset. Only recipient-safe progress appears here."
@@ -164,11 +192,44 @@ export default function Results({
               Cancel run
             </button>
           )}
+          {run.mode === "audit" && !runActive(run) && (
+            <button
+              disabled={busy || releasing || !hasRunId}
+              onClick={() =>
+                void (async () => {
+                  setReleasing(true);
+                  setReleaseMessage("");
+                  try {
+                    await api.release(String(run.run_id ?? run.id));
+                    setReleaseMessage(
+                      "Recipient package retrieved after authorization checks.",
+                    );
+                    onRefresh();
+                  } catch (e) {
+                    setReleaseMessage(
+                      `Release unavailable: ${(e as Error).message}`,
+                    );
+                  } finally {
+                    setReleasing(false);
+                  }
+                })()
+              }
+            >
+              Retrieve my authorized package
+            </button>
+          )}
           <button disabled={busy || !hasRunId} onClick={onRefresh}>
             Refresh status
           </button>
         </div>
-        {run.error !== undefined && (
+        {run.mode === "audit" && (
+          <p className="wb-muted">
+            Cancellation, failure and suppression do not refund an admitted
+            audit's reserved release capacity.
+          </p>
+        )}
+        <p role="status">{releaseMessage}</p>
+        {run.error != null && (
           <JsonDetails
             title="Execution or admission reason"
             value={run.error}
@@ -232,7 +293,7 @@ export default function Results({
                 Criterion {f.criterion_id} · method {f.method} ·{" "}
                 {String(f.details?.claim_type ?? "claim strength not supplied")}
               </p>
-              <div className="wb-grid2">
+              <div className="wb-grid2 wb-evidence-cards">
                 <div>
                   <h4>Supporting evidence</h4>
                   {f.evidence_ids?.length ? (
@@ -300,61 +361,60 @@ export default function Results({
           Missing coverage remains unknown. A committed hash does not prove
           source completeness.
         </p>
-        <JsonDetails
-          title="Population → selection → links → claims → released fields"
+        <ReleasedCards
+          title="Coverage"
           value={result.coverage ?? run.coverage}
-          open
         />
         <JsonDetails
-          title="Actual usage, cost and budgets"
+          title="Coverage field names & supplied values"
+          value={result.coverage ?? run.coverage}
+        />
+        {!suppressed && (
+          <ReleasedCards
+            title="Released outcome counts"
+            value={result.counts}
+          />
+        )}
+        {suppressed && (
+          <p>
+            Counts withheld, never zero. No complementary totals are
+            reconstructed.
+          </p>
+        )}
+        {!suppressed && (
+          <ReleasedCards title="Cohort analysis" value={result.cohorts} />
+        )}
+        <JsonDetails
+          title="Released accounting details"
           value={result.usage ?? run.usage}
         />
       </section>
-      <section>
-        <h3>Execution inspection</h3>
-        <p>
-          Only trace material explicitly released by the backend can appear
-          here. Full private traces are not requested.
-        </p>
-        <JsonDetails
-          title="Authorized step inputs/outputs, failed joins & tool events"
-          value={result.trace}
-        />
-        <JsonDetails
-          title="Timeline, artifact lineage & cohort analysis (when released)"
-          value={{
-            timeline: result.timeline,
-            lineage: result.lineage,
-            cohorts: result.cohorts,
-          }}
-        />
-      </section>
-      <section>
-        <h3>Verification</h3>
-        <p>
-          These are server-supplied commitments. Their presence alone does not
-          independently verify execution or evidence correctness.
-        </p>
-        <JsonDetails
-          title="Plan, dataset, approval, runtime/model & receipt bundle"
-          value={{
-            plan_digest: run.plan_digest,
-            dataset_manifest: run.dataset_manifest,
-            approvals: run.approvals,
-            runtime: run.runtime ?? result.runtime,
-            model: run.model ?? result.model,
-            receipt: run.receipt ?? result.receipt,
-            verification: run.verification ?? result.verification,
-          }}
-          open
-        />
-      </section>
+      {!suppressed && (
+        <>
+          <ReleasedTimeline value={result.timeline} />
+          <ReleasedCards
+            title="Artifact lineage · released links"
+            value={result.lineage}
+          />
+          <details>
+            <summary>Authorized execution inspection</summary>
+            <p>
+              Only supplied recipient-authorized material is shown. No private
+              trace or evidence endpoint is requested.
+            </p>
+            <JsonDetails
+              title="Released tool events and step details"
+              value={result.trace}
+            />
+          </details>
+        </>
+      )}
+      <ReceiptVerifier run={run} />
+      <ChallengeHistory run={run} onChallenge={onChallenge} busy={busy} />
       <section id="wb-challenge">
         <h3>Challenge or supply a correction</h3>
         <p>
-          The original report remains immutable. A changed method requires
-          renewed approval. The server authenticates submissions and enforces
-          recipients, deadlines, attempt limits and conflict rules.
+          The original report remains immutable. Actual audit method changes require renewed approval. The server authenticates submissions and enforces recipient and reviewer conflict rules. Notifications, deadlines and attempt limits are not implemented.
         </p>
         <form
           onSubmit={(e) => {
@@ -370,7 +430,9 @@ export default function Results({
               .catch(() => {});
           }}
         >
-          <fieldset disabled={busy || runActive(run) || !hasRunId}>
+          <fieldset
+            disabled={busy || runActive(run) || !hasRunId || !findings.length}
+          >
             <TextField
               label="Disputed finding or claim ID"
               value={claim}
@@ -386,7 +448,7 @@ export default function Results({
               label="Authenticated evidence references"
               value={refs}
               onChange={setRefs}
-              help="Reference already authorized correction artifacts; pasted text alone is not proof of authenticity."
+              help="Only owners may attach scoped evidence IDs. Recipient evidence delivery is unsupported; leave empty unless you own these authorized artifacts."
             />
             <TextField
               label="Requested remedy"
@@ -395,27 +457,40 @@ export default function Results({
             />
             <TextField
               label="Permitted recipient IDs"
+              help={run.mode === "rehearse" ? "Synthetic challenges require only your own authenticated account ID." : "Explicit agreement-authorized principals; the service checks access."}
               value={recipients}
               onChange={setRecipients}
             />
             <button
               type="submit"
-              disabled={!claim.trim() || !correction.trim() || !remedy.trim()}
+              disabled={
+                !findings.some((f) => f.id === claim) ||
+                !correction.trim() ||
+                !remedy.trim() ||
+                !recipients.trim()
+              }
             >
               Submit challenge
             </button>
           </fieldset>
         </form>
-        {sent && (
-          <p role="status">
-            Challenge submitted. Its disposition is determined by the authorized
-            reviewer.
+        {!findings.length && (
+          <p>
+            No released finding is available to challenge in this view. Existing
+            authorized challenges can still be loaded above.
           </p>
         )}
-        <JsonDetails
-          title="Challenge dispositions & linked amendments"
-          value={run.challenges ?? result.challenges}
-        />
+        {sent && (
+          <p role="status">
+            {run.mode === "rehearse" ? "Synthetic challenge stored, owner-only and unverified. No governance disposition is available." : "Challenge stored. An authorized independent reviewer may submit a disposition; the original report remains unchanged."}
+          </p>
+        )}
+        {run.mode === "rehearse" && (
+          <p>
+            Synthetic challenges are durable, owner-only and unverified; no
+            governance disposition or receipt is created.
+          </p>
+        )}
       </section>
     </div>
   );

@@ -85,6 +85,8 @@ export interface Audit extends ObjectData {
   requirements?: unknown;
   method?: string;
   validity?: string;
+  validity_notes?: string[];
+  runtime_validation?: { valid: boolean; diagnostics: string[] };
   plan?: Plan;
   plan_id?: string;
 }

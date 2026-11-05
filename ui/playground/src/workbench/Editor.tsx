@@ -341,15 +341,23 @@ export default function Editor({
               value={s.inputs.join(", ")}
               onChange={(v) => stepPatch(i, { inputs: csv(v) })}
             />
-            <JsonEditor
-              label={
-                s.kind === "sql" || s.kind === "python"
-                  ? "Custom code & explicit input/output contract (JSON)"
-                  : "Executable operator settings (JSON)"
-              }
-              value={s.config}
-              onApply={(config) => stepPatch(i, { config })}
-            />
+            <details>
+              <summary>
+                Executable settings ·{" "}
+                {s.kind === "sql" || s.kind === "python"
+                  ? "custom code"
+                  : "operator configuration"}
+              </summary>
+              <JsonEditor
+                label={
+                  s.kind === "sql" || s.kind === "python"
+                    ? "Custom code & explicit input/output contract (JSON)"
+                    : "Executable operator settings (JSON)"
+                }
+                value={s.config}
+                onApply={(config) => stepPatch(i, { config })}
+              />
+            </details>
             <div className="wb-actions">
               <button
                 type="button"

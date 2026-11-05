@@ -278,3 +278,29 @@ export function outcomeLabel(value: string): string {
     )[value] ?? value.replaceAll("_", " ")
   );
 }
+
+/** Explicit derivative, never a runtime failure fallback. */
+export function deterministicRehearsal(source: Plan): Plan {
+  const plan = structuredClone(source);
+  const agents = new Set(
+    plan.steps.filter((s) => s.kind === "agent").map((s) => s.id),
+  );
+  if (!agents.size)
+    throw new Error("This plan has no investigating agent to exclude.");
+  if (
+    plan.steps.some(
+      (s) => s.kind !== "agent" && s.inputs.some((i) => agents.has(i)),
+    )
+  )
+    throw new Error(
+      "A retained step depends on the investigating agent. Edit those dependencies explicitly first.",
+    );
+  plan.steps = plan.steps.filter((s) => s.kind !== "agent");
+  if (!plan.steps.length)
+    throw new Error(
+      "No deterministic method remains. Author a method before rehearsing.",
+    );
+  plan.id = `${plan.id}-deterministic-${Date.now().toString(36)}`;
+  plan.title += " · deterministic rehearsal";
+  return plan;
+}

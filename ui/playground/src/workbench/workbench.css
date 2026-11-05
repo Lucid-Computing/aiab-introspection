@@ -713,3 +713,39 @@
     height: 500px;
   }
 }
+
+.wb-evidence-cards > div {
+  border: 1px solid var(--wb-line, #d9ddd6);
+  padding: 1rem;
+  border-radius: 6px;
+}
+.wb-finding dl,
+.wb-note dl {
+  margin: 0;
+}
+.wb-finding dt,
+.wb-note dt {
+  font-size: 0.8rem;
+  color: var(--wb-muted, #596359);
+}
+.wb-finding dd,
+.wb-note dd {
+  margin: 0.2rem 0 0.8rem;
+  overflow-wrap: anywhere;
+}
+.wb-note small {
+  overflow-wrap: anywhere;
+}
+.wb-rail fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.wb-timeline {
+  border-left: 2px solid #a8b7a0;
+  margin-left: 1rem;
+  padding-left: 1.5rem;
+}
+.wb-timeline > li {
+  padding: 0.5rem 0 1rem 0.5rem;
+}

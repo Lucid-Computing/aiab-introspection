@@ -88,12 +88,41 @@ export const api = {
     return value;
   },
   cancel: (runId: string) => post<Object>(`/runs/${id(runId)}/cancel`),
-  approve: (planId: string, digest: string, user: unknown, assertCurrent: () => void | Promise<void>) =>
-    signApproval(post, planId, digest, user, assertCurrent),
+  approve: (
+    planId: string,
+    digest: string,
+    user: unknown,
+    assertCurrent: () => void | Promise<void>,
+  ) => signApproval(post, planId, digest, user, assertCurrent),
   revoke: (planId: string, digest: string) =>
     post<Object>(`/plans/${id(planId)}/revoke`, { digest }),
   challenge: (runId: string, challenge: unknown) =>
     post<Object>(`/runs/${id(runId)}/challenge`, challenge),
+  bind: (planId: string) =>
+    post<{ bound: boolean; digest: string }>(`/plans/${id(planId)}/bind`),
+  readiness: (planId: string) =>
+    request<{ ready: boolean }>(`/plans/${id(planId)}/readiness`),
+  reviews: (planId: string, digest: string) =>
+    request<{ reviews: Record<string, unknown>[] }>(
+      `/plans/${id(planId)}/reviews?digest=${id(digest)}`,
+    ),
+  review: (
+    planId: string,
+    body: {
+      digest: string;
+      clause: string;
+      note: string;
+      recipients?: string[];
+    },
+  ) => post<Record<string, unknown>>(`/plans/${id(planId)}/reviews`, body),
+  challenges: (runId: string) =>
+    request<{ challenges: Record<string, unknown>[] }>(
+      `/runs/${id(runId)}/challenges`,
+    ),
+  release: (runId: string) =>
+    post<{ projection: NonNullable<Run["result"]>; receipt: unknown }>(
+      `/runs/${id(runId)}/release`,
+    ),
   history: () =>
     request<{ history?: unknown[]; records?: unknown[] }>("/history"),
 };

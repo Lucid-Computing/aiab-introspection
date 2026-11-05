@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, pollRun } from "./api";
+import Reviews from "./Reviews";
+import { ReleasedCards } from "./ResultTools";
 import { consentAccount } from "./consent";
 import Editor, { Field, TextField } from "./Editor";
 import {
   blankPlan,
+  deterministicRehearsal,
   executionBlockers,
   isObject,
   localIssues,
@@ -25,14 +28,6 @@ import type {
 import "./workbench.css";
 
 type Tab = "document" | "graph" | "code" | "changes" | "results" | "activity";
-interface Note {
-  id: number;
-  clause: string;
-  author: string;
-  text: string;
-  responsibility: string;
-  resolved: boolean;
-}
 function asSaved(value: SavedPlan | Plan): SavedPlan {
   return isObject(value.plan)
     ? (value as SavedPlan)
@@ -63,9 +58,12 @@ export default function WorkbenchApp() {
   const [history, setHistory] = useState<unknown>(undefined);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState("");
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [noteText, setNoteText] = useState("");
-  const [responsibility, setResponsibility] = useState("");
+  const [unsavedNote, setUnsavedNote] = useState(false);
+  const [variantSource, setVariantSource] = useState<Plan | null>(null);
+  const [readiness, setReadiness] = useState<{
+    digest: string;
+    ready: boolean;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const snapshot = pretty(plan);
   const approvalState = useRef({ snapshot, saved, user: data?.user });
@@ -109,14 +107,14 @@ export default function WorkbenchApp() {
     return () => controller.abort();
   }, [bootstrap]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !unsavedNote) return;
     const beforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
-  }, [dirty]);
+  }, [dirty, unsavedNote]);
   useEffect(() => {
     if (!runId) return;
     const controller = new AbortController();
@@ -141,6 +139,7 @@ export default function WorkbenchApp() {
   };
   const load = (value: SavedPlan) => {
     const next = parsePlan(pretty(value.plan));
+    setVariantSource(null);
     setPlan(next);
     setSaved(value.digest ? { ...value, plan: next } : null);
     setEdited(false);
@@ -170,9 +169,9 @@ export default function WorkbenchApp() {
     void perform(label, task).catch(() => {});
   };
   const canSwitch = () => {
-    if (dirty) {
+    if (dirty || unsavedNote) {
       setError(
-        "Save the current draft or use Discard changes before opening another agreement.",
+        "Save or discard the current draft and store or clear any unsaved note before opening another agreement.",
       );
       return false;
     }
@@ -180,6 +179,7 @@ export default function WorkbenchApp() {
   };
   function newPlan() {
     if (!canSwitch()) return;
+    setVariantSource(null);
     setPlan(blankPlan());
     setSaved(null);
     setEdited(false);
@@ -237,6 +237,7 @@ export default function WorkbenchApp() {
         throw new Error(
           "Save returned no digest. Approval and execution remain unavailable.",
         );
+      setVariantSource(null);
       setSaved({ ...result, plan: validPlan });
       setPlan(validPlan);
       setEdited(false);
@@ -391,12 +392,32 @@ export default function WorkbenchApp() {
                   </summary>
                   <p>{a.question}</p>
                   {a.requirements !== undefined && (
-                    <JsonDetails
-                      title="Evidence requirements"
-                      value={a.requirements}
-                    />
+                    <details>
+                      <summary>Evidence requirements</summary>
+                      <ReleasedCards
+                        title="Required observations and validity limits"
+                        value={a.requirements}
+                      />
+                    </details>
                   )}
                   {a.method && <p>{a.method}</p>}
+                  {a.validity_notes?.map((note, i) => (
+                    <p className="wb-muted" key={i}>
+                      {note}
+                    </p>
+                  ))}
+                  {a.runtime_validation && (
+                    <p
+                      className={
+                        a.runtime_validation.valid ? "wb-muted" : "wb-error"
+                      }
+                    >
+                      {a.runtime_validation.valid
+                        ? "Operator configuration check passed; live model verification is still required during execution."
+                        : a.runtime_validation.diagnostics.join(" ") ||
+                          "Operator configuration unavailable. Review runtime setup before executing."}
+                    </p>
+                  )}
                   {a.validity && (
                     <p className="wb-muted">Validity: {a.validity}</p>
                   )}
@@ -424,7 +445,14 @@ export default function WorkbenchApp() {
           >
             Refresh catalog
           </button>
-          <h3>Saved agreements</h3>
+          <h3>Your drafts & authorized shared agreements</h3>
+          <p className="wb-muted">
+            Account-authorized discovery. Individual approval, refusal and
+            revocation states remain private.
+          </p>
+          <button disabled={!online || !!busy} onClick={() => void bootstrap()}>
+            Refresh agreements
+          </button>
           {data?.plans.map(asSaved).map((p) => (
             <button
               className="wb-saved"
@@ -444,8 +472,8 @@ export default function WorkbenchApp() {
           <div className="wb-library-foot">
             <p>Personal · Joint · Confidential</p>
             <small>
-              Authorization and source completeness are checked by the service.
-              Synthetic evidence remains labeled.
+              The service enforces authorization. Source completeness requires
+              independent validation. Synthetic evidence remains labeled.
             </small>
           </div>
         </aside>
@@ -524,6 +552,21 @@ export default function WorkbenchApp() {
             tab === "code" ||
             tab === "changes") && (
             <fieldset className="wb-editable" disabled={!!busy}>
+              {variantSource && (
+                <section className="wb-notice">
+                  <h3>Unsigned deterministic rehearsal variant</h3>
+                  <p>
+                    You explicitly excluded the investigating agent. This method
+                    omits its investigation of semantic ambiguity, alternative
+                    explanations and counterevidence. Review the semantic
+                    differences, edit, save and check before rehearsal. No
+                    approval transfers.
+                  </p>
+                  <button type="button" onClick={() => setTab("changes")}>
+                    Review semantic differences
+                  </button>
+                </section>
+              )}
               {tab === "document" && (
                 <Editor
                   plan={plan}
@@ -545,7 +588,7 @@ export default function WorkbenchApp() {
               )}
               {tab === "changes" && (
                 <Changes
-                  baseline={saved?.plan ?? null}
+                  baseline={saved?.plan ?? variantSource}
                   plan={plan}
                   onChange={update}
                 />
@@ -644,7 +687,7 @@ export default function WorkbenchApp() {
                 Load authorized history
               </button>
               <JsonDetails
-                title="Request, approval, execution, disclosure & challenge records"
+                title="Authorized plan, execution & disclosure events"
                 value={history}
                 open
               />
@@ -809,15 +852,46 @@ export default function WorkbenchApp() {
             </details>
             <button
               className="wb-wide"
-              disabled={!ready}
+              disabled={
+                !!busy ||
+                !plan.steps.some((s) => s.kind === "agent") ||
+                unsavedNote
+              }
+              onClick={() => {
+                try {
+                  const source = structuredClone(plan);
+                  const next = deterministicRehearsal(source);
+                  setVariantSource(source);
+                  setPlan(next);
+                  setSaved(null);
+                  setEdited(true);
+                  setCheck(null);
+                  setTab("changes");
+                  setNotice(
+                    "Explicit deterministic variant created as an editable unsigned plan. Review differences before saving. DeepSeek/Tinfoil remains the default agent path.",
+                  );
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }}
+            >
+              Create deterministic rehearsal variant
+            </button>
+            <p className="wb-muted">
+              Excludes the investigating agent by your choice; never an
+              automatic fallback on model failure.
+            </p>
+            <button
+              className="wb-wide"
+              disabled={!ready || dataset?.id !== "northstar"}
               onClick={() => start("rehearse")}
             >
               02 / Rehearse actual methods
             </button>
             <small>
-              {dataset?.origin === "synthetic"
+              {dataset?.id === "northstar"
                 ? "Synthetic fixture selected. Execution is real; evidence is fictional."
-                : "Rehearsal uses the selected authorized dataset; privacy rules still apply."}
+                : "Select the built-in synthetic corpus to rehearse. Imported datasets cannot rehearse."}
             </small>
             <button
               className="wb-wide wb-primary"
@@ -860,10 +934,11 @@ export default function WorkbenchApp() {
             </p>
             <p>
               Approving signs the displayed saved agreement. It does not approve
-              future edits. This uses a browser-held consent key, stored for this
-              account in this browser. Key loss requires administrative recovery.
-              This browser is not an independent confidential submission client
-              and provides no enclave or host resistance assurance.
+              future edits. This uses a browser-held consent key, stored for
+              this account in this browser. Key loss requires administrative
+              recovery. This browser is not an independent confidential
+              submission client and provides no enclave or host resistance
+              assurance.
             </p>
             <div className="wb-actions">
               <button
@@ -875,22 +950,43 @@ export default function WorkbenchApp() {
                     const user = data?.user;
                     const assertCurrent = async () => {
                       const current = approvalState.current;
-                      if (current.saved?.digest !== expected.digest ||
-                          current.snapshot !== pretty(expected.plan) ||
-                          consentAccount(current.user) !== consentAccount(user))
-                        throw new Error("Agreement or account changed. Reload and review before approving.");
+                      if (
+                        current.saved?.digest !== expected.digest ||
+                        current.snapshot !== pretty(expected.plan) ||
+                        consentAccount(current.user) !== consentAccount(user)
+                      )
+                        throw new Error(
+                          "Agreement or account changed. Reload and review before approving.",
+                        );
                       const session = await api.bootstrap();
                       if (consentAccount(session.user) !== consentAccount(user))
-                        throw new Error("Authenticated account changed. Refresh your session before approving.");
+                        throw new Error(
+                          "Authenticated account changed. Refresh your session before approving.",
+                        );
                       const remote = await api.loadPlan(expected.plan.id);
-                      if (remote.digest !== expected.digest || pretty(remote.plan) !== pretty(expected.plan))
-                        throw new Error("Saved agreement changed. Reload and review before approving.");
+                      if (
+                        remote.digest !== expected.digest ||
+                        pretty(remote.plan) !== pretty(expected.plan)
+                      )
+                        throw new Error(
+                          "Saved agreement changed. Reload and review before approving.",
+                        );
                       const latest = approvalState.current;
-                      if (latest.snapshot !== pretty(expected.plan) || latest.saved !== current.saved ||
-                          consentAccount(latest.user) !== consentAccount(user))
-                        throw new Error("Agreement or account changed during signing.");
+                      if (
+                        latest.snapshot !== pretty(expected.plan) ||
+                        latest.saved !== current.saved ||
+                        consentAccount(latest.user) !== consentAccount(user)
+                      )
+                        throw new Error(
+                          "Agreement or account changed during signing.",
+                        );
                     };
-                    await api.approve(expected.plan.id, expected.digest, user, assertCurrent);
+                    await api.approve(
+                      expected.plan.id,
+                      expected.digest,
+                      user,
+                      assertCurrent,
+                    );
                     await refreshApprovals(saved);
                     setNotice(
                       "Authorization submitted for the displayed digest. Admission checks all required approvals.",
@@ -929,86 +1025,55 @@ export default function WorkbenchApp() {
                 Discard changes
               </button>
             )}
-            <JsonDetails
-              title="Authorized approval state"
-              value={
-                dirty
-                  ? "Draft changed; previous approvals do not authorize these edits."
-                  : saved?.approvals
+            <button
+              disabled={!online || !!busy || !saved || dirty}
+              onClick={() =>
+                saved &&
+                act("Checking agreement readiness", async () => {
+                  const value = await api.readiness(saved.plan.id);
+                  setReadiness({ digest: saved.digest, ready: value.ready });
+                })
               }
-            />
+            >
+              Check shared readiness
+            </button>
+            <p>
+              {dirty
+                ? "Draft changed; previous approvals do not authorize these edits."
+                : readiness?.digest === saved?.digest
+                  ? readiness?.ready
+                    ? "Service reports ready for this version; admission rechecks authorization."
+                    : "Not ready. Required authorization or policy prerequisites are incomplete. Individual decisions remain private."
+                  : "Readiness not checked for this saved revision."}
+            </p>
+            <button
+              disabled={!online || !!busy || !saved || dirty}
+              onClick={() =>
+                saved &&
+                act("Binding authorized manifest", async () => {
+                  await api.bind(saved.plan.id);
+                  setNotice(
+                    "Operator-authorized manifest bound for shared discovery. No approval was created.",
+                  );
+                })
+              }
+            >
+              Owner: bind manifest for shared review
+            </button>
+            <small>
+              Requires owner access and an operator-provisioned source grant.
+              Missing grants, identity roles, rosters and release policies
+              require operator setup; this page cannot create them.
+            </small>
             <RecipientPreview plan={plan} />
           </section>
-          <section>
-            <h3>Review notes</h3>
-            <p className="wb-muted">
-              Local to this page; not signed, shared or persisted. Backend
-              review-thread storage is not defined.
-            </p>
-            <Field label="Clause">
-              <select
-                value={selected}
-                onChange={(e) => setSelected(e.target.value)}
-              >
-                <option value="">Whole agreement</option>
-                {plan.steps.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.title}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <TextField
-              label="Named review responsibility"
-              value={responsibility}
-              onChange={setResponsibility}
-            />
-            <TextField
-              label="Question or comment"
-              multiline
-              value={noteText}
-              onChange={setNoteText}
-            />
-            <button
-              disabled={!noteText.trim()}
-              onClick={() => {
-                setNotes((prev) => [
-                  ...prev,
-                  {
-                    id: Date.now(),
-                    clause: selected || "agreement",
-                    author: "Current reviewer",
-                    text: noteText,
-                    responsibility,
-                    resolved: false,
-                  },
-                ]);
-                setNoteText("");
-              }}
-            >
-              Add local note
-            </button>
-            {notes.map((n) => (
-              <div className="wb-note" key={n.id}>
-                <small>
-                  {n.clause} · {n.responsibility || "Unassigned"} ·{" "}
-                  {n.resolved ? "Resolved" : "Open"}
-                </small>
-                <p>{n.text}</p>
-                <button
-                  onClick={() =>
-                    setNotes((prev) =>
-                      prev.map((x) =>
-                        x.id === n.id ? { ...x, resolved: !x.resolved } : x,
-                      ),
-                    )
-                  }
-                >
-                  {n.resolved ? "Reopen" : "Resolve"}
-                </button>
-              </div>
-            ))}
-          </section>
+          <Reviews
+            plan={plan}
+            saved={saved}
+            dirty={dirty}
+            online={online}
+            onUnsaved={setUnsavedNote}
+          />
         </aside>
       </div>
     </div>
@@ -1057,7 +1122,6 @@ function DatasetSummary({
       <JsonDetails
         title="Manifest, coverage, integrity & collection gaps"
         value={dataset.manifest}
-        open
       />
       <small>Available sources: {available.join(", ") || "Not declared"}</small>
     </>

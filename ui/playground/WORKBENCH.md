@@ -1,181 +1,143 @@
 # Audit workbench frontend
 
-Entry: `/audit-plan-playground/?workbench=1`. Without this query, the existing
-builder remains the entry. The parent may route `/workbench` to the same entry.
-Development Vite proxies `/api/workbench` to the UI backend on port 8090.
+Entry: `/audit-plan-playground/?workbench=1`; the existing builder remains the default
+without the query. Vite proxies `/api/workbench` to port 8090. All product requests
+use same-origin cookies, JSON bodies and authenticated server authorization. There
+is no fabricated catalog, execution, signing, approval or model fallback.
 
-The workbench has no fabricated execution or catalog fallback. When bootstrap is
-unavailable, unsigned local document/code authoring and export still work. A
-successful HTTP response means the service replied; it is not an attestation or a
-claim that inference is configured.
+## Review and agreements
 
-## HTTP assumptions for parent integration
+Bootstrap discovers owner drafts and current authorized shared agreements. Refresh
+agreements updates discovery; the API rejects ambiguous IDs. Owner manifest binding
+uses `POST /plans/{id}/bind`, requires an operator-provisioned source grant, and
+creates no approval. Shared readiness uses `GET /plans/{id}/readiness` and displays
+only its boolean. Individual signer decisions, counts and times are never inferred
+or rendered. The page cannot provision identities, roles, source grants, rosters or
+release policies. Owner-only mutations can be denied when viewing a shared agreement;
+the API currently exposes no ownership/action-capability metadata.
 
-All requests are same-origin, use cookie credentials, and accept JSON. The base is
-`/api/workbench`. Errors use `{error:{code,message}}` and a non-2xx status. An HTML
-login response is shown as unavailable. IDs in URL paths are encoded.
+Saving retains optimistic `expected_digest` concurrency. Approval uses real
+Ed25519 signatures, a nonextractable browser-held private CryptoKey in account-scoped
+IndexedDB, fresh enrollment proof and nonce, and repeated local/server/session
+freshness checks. Revocation applies to the saved version. These keys provide
+browser-held consent, not confidential input or host resistance. Key loss requires
+administrative recovery; no replacement enrollment or unsigned approval is invented.
 
-| Action               | Request                                                 | Response used                                                              |
-| -------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Bootstrap            | `GET /bootstrap`                                        | `{user,capabilities,audits:[],datasets:[],plans:[]}`                       |
-| Refresh catalog      | `GET /catalog`                                          | `{audits:[]}`                                                              |
-| Refresh datasets     | `GET /datasets`                                         | `{datasets:[]}`; manifest metadata, not raw events                         |
-| Import               | `POST /datasets` with `{dataset}`                       | Any JSON success object; then refetch manifests                            |
-| Load saved agreement | `GET /plans/{id}`                                       | `{plan,digest,approvals?}`                                                 |
-| Create/fork          | `POST /plans` with `{plan}`                             | `{plan,digest}`                                                            |
-| Update               | `PUT /plans/{id}` with `{plan,expected_digest}`         | `{plan,digest}`                                                            |
-| Check                | `POST /check` with `{plan}`                             | `{valid,diagnostics:[],requirements}`                                      |
-| Rehearse/audit       | `POST /runs` with `{plan_id,dataset_id,mode}`           | `{run_id}`; mode `rehearse` or `audit`                                     |
-| Run status           | `GET /runs/{id}`                                        | `{status,result?,...recipientSafeMetadata}`                                |
-| Cancel               | `POST /runs/{id}/cancel`, no body                       | Any JSON success; poll to confirm cancellation                             |
-| Enrollment challenge | `POST /identities/challenge` with `{public_key}` | `{challenge_id,payload}`; base64 raw32 public key, exact base64 payload |
-| Enrollment proof | `POST /identities/enroll` with `{challenge_id,signature}` | `{enrolled:true}`; base64 Ed25519 signature |
-| Approval payload | `POST /plans/{id}/approval-payload` with `{digest,nonce,expires_at:null}` | `{payload}`; base64 exact canonical bytes |
-| Approve | `POST /plans/{id}/approve` with `{digest,nonce,expires_at:null,signature}` | Any JSON success; reload exact digest and approvals |
-| Revoke | `POST /plans/{id}/revoke` with `{digest}` | Any JSON success; reload exact digest and approvals |
-| Challenge            | `POST /runs/{id}/challenge`                             | Any JSON success; refetch run                                              |
-| Accountability       | `GET /history`                                          | `{history:[]}` or `{records:[]}`; other object shapes are displayed intact |
+Review notes now use `POST /plans/{id}/reviews` with exact saved `digest`, JSON-pointer
+`clause`, `note`, and optional explicit `recipients`. Empty sharing means author-only.
+The service stores author, full plan digest, clause commitment and recipient set.
+Current and historical notes load with `GET /plans/{id}/reviews?digest=...`.
+Historical revision digests can be entered explicitly; the API owns historical
+access. Writes require the displayed saved version, never an unsaved draft.
+Unsaved note text remains in page memory on failure, is explicitly labeled unsaved,
+blocks agreement switching and warns before navigation away. Saving a plan does
+not save a note. A revision change retains unsaved text and requires explicit
+retargeting to the displayed saved version before storage. There is no invented responsibility, resolution or consent state.
 
-Import wrapping (`{dataset}`), revoke body (`{digest}`), and challenge
-fields are explicit frontend assumptions where the implementation contract does
-not fix a body shape. Challenge bodies are:
+## Method selection and execution
 
-```json
-{
-  "finding_id": "finding-1",
-  "correction": "The external review artifact changes this conclusion.",
-  "evidence_ids": ["authorized-review-reference"],
-  "requested_remedy": "Review and amend",
-  "recipients": ["authorized-auditor"]
-}
-```
+Catalog plans retain their mixed deterministic plus investigating-agent method by
+default, using DeepSeek `deepseek-v4-1-flash` through Tinfoil. Catalog validity notes,
+operator configuration diagnostics, evidence fields, join requirements, source gaps
+and coverage limits are displayed from actual service fields. Operator validation
+is not successful live model qualification.
 
-Approval requires bootstrap `user` to be a stable, nonempty authenticated account
-ID string or an object with that ID in `id`. Other shapes fail closed. The ID only
-selects local key storage; it is never sent as API authority. Approval rechecks
-the session, local saved document and remote saved digest throughout signing.
+“Create deterministic rehearsal variant” is an explicit user action. It copies the
+currently displayed plan to a new unsigned editable identity, excludes agent steps,
+retains model settings, and displays semantic differences against the source. It
+explains the missing investigation of semantic ambiguity, alternatives and
+counterevidence. If a retained step depends on an excluded agent, or no deterministic
+method remains, creation is blocked for explicit authoring. It never strips agents
+because inference failed and never runs or signs automatically. Every derivative
+must be saved and checked anew. The API has no rehearsal-only plan type: a derivative
+is an ordinary unsigned plan, with all ordinary approval/admission requirements if
+someone later requests an audit.
 
-The browser generates an Ed25519 key pair with a **nonextractable private
-CryptoKey**, stored by account ID in IndexedDB (`aiab-workbench-consent-v1`). The
-raw public key is exportable. Concurrent tabs serialize creation without replacing
-an existing key. Every approval proves possession using a fresh server enrollment
-challenge; same-key enrollment must be idempotent. The server must bind challenge
-bytes to the authenticated account and key, enforce challenge expiry/single use,
-and reject key changes. The client signs the exact decoded server payload bytes,
-uses a fresh cryptographically random 32-byte nonce and sends no unsigned fallback.
-The server must enforce digest freshness and nonce replay protection atomically.
-There is no role assignment, key reset or automatic rotation path in this UI.
+Only the built-in `northstar` synthetic corpus can rehearse, matching the real API.
+Rehearsal runs execute actual methods against fictional observations and are clearly
+labeled as synthetic, not consented audits. Actual audit requests are labeled as
+pending a signed recipient package until a receipt exists. A receipt is described
+as signed, never independently verified until verification succeeds.
 
-This is a **browser-held consent key**, not an independent confidential submission
-client. It provides no enclave or host resistance assurance. Browser/origin code,
-account session and local storage remain trusted. Clearing storage, losing the
-browser profile or a rejected key binding requires **administrative recovery**;
-retrying must not replace an enrolled identity. Unsupported Ed25519, unavailable
-IndexedDB, invalid payloads and failed enrollment block approval. A new local key
-after storage loss cannot replace the server's immutable binding.
+Run polling is serial, abortable and bounded; network errors pause monitoring with
+an explicit resume action and leave execution state unknown. Queued/running and
+unknown statuses continue polling. Completed, failed, blocked, interrupted,
+cancelled, suppressed, released and insufficient-evidence variants stop polling.
+Failures/denials establish no compliance finding. Cancellation, failure and
+suppression do not refund admitted audit capacity. No automatic execution retry is
+performed. Admission errors are shown without inventing a run ID.
 
-No caller-supplied actor is sent. The server must authenticate the submitter,
-verify correction artifacts, enforce reviewer/recipient policy, and retain the
-original result and challenge disposition.
+## Recipient results, challenges and verification
 
-Bootstrap `plans` accepts raw plan objects or `{plan,digest,approvals?}` packages.
-Catalog descriptors support `id,title,question,requirements,method,validity`, with
-optional `plan` (full unsigned template) or `plan_id` (loadable saved template).
-A matching bootstrap plan ID is also accepted. Starting a worked template forks
-it to a new ID and drops its digest and approvals. A descriptor with no loadable
-plan becomes a clearly labeled question-only draft with **no invented method**.
-All API catalog rows are shown; the UI reports the actual count against the
-27-audit target rather than claiming missing rows exist.
+`GET /runs/{id}` provides only the caller's authorized projection and receipt for an
+audit, and owner synthetic results for rehearsal. “Retrieve my authorized package”
+uses `POST /runs/{id}/release` with no destination or authorization JSON. Included
+subjects/signers are not assumed to be result recipients. The frontend never fetches
+private traces, raw evidence, or arbitrary ID-based resources.
 
-The run reader accepts findings/coverage/usage directly or under `result`. It
-recognizes queued/running states and terminal `completed`, `complete`, `succeeded`,
-`success`, `failed`, `blocked`, `cancelled`, `canceled`, `interrupted`, `suppressed`, `released`,
-`insufficient_evidence`. Unknown statuses remain visible and continue polling.
-A missing status is a visible protocol error. Terminal status polling stops;
-manual refresh and challenge submission can fetch a later amendment. Polling is
-serial, abortable on unmount or run switch, with 1.5–5 second backoff. A network
-error pauses polling with an explicit resume action and never changes execution
-to a successful or clean state.
+Results show finding prose, supporting and counterevidence reference cards,
+limitations, coverage, released outcome counts, and supplied timeline/cohort/lineage
+records as readable cards. Optional fields are omitted when absent. No chronology,
+causal links, totals, populations or coverage values are synthesized. The current
+governed audit projection does not supply timeline, lineage, trace or evidence IDs;
+those views therefore remain absent or explain that references were not released.
+An agreement's evidence/excerpt flags are upper bounds; the current API delivers
+neither to audit recipients. Full suppression also hides findings, counts, cohorts,
+timeline and trace even if accidentally supplied. Actual suppressed findings
+objects (`{state:'suppressed',value:null}`) are handled without array crashes.
+Suppression and unknown coverage never become zero or a clean audit.
 
-Optional recipient-safe fields rendered when supplied: `summary`, `scope`,
-`unresolved_questions`, `trace`, `timeline`, `lineage`, `cohorts`, `challenges`,
-`plan_digest`, `dataset_manifest`, `approvals`, `runtime`, `model`, `receipt`,
-`verification`. These are not separate fetches for private raw data. A run or
-result status/release state of `suppressed` withholds the findings panel, even if
-the service accidentally also supplied a findings array. Trace authorization
-and all other field projection remain mandatory backend responsibilities.
+Challenge submission uses the actual finding/correction/evidence/remedy/recipient
+shape. At least one explicit recipient and an available released finding are
+required. Only owners can attach scoped evidence IDs; recipient evidence delivery
+is unsupported. `GET /runs/{id}/challenges` loads only caller-authorized immutable
+history with correction text/commitments and parent/amendment links. A reviewer
+request form sends `parent_id`, disposition and optional existing corrected release
+ID, with no fabricated role or approval metadata. The service must authorize the
+independently enrolled role, inclusion, conflicts, narrowed recipients and corrected
+release linkage. No role/capability endpoint exists to pre-certify eligibility;
+the UI explicitly calls this a request, not an authorized status. Synthetic
+challenges are owner-only, durable, unverified and have no governance disposition.
 
-## Implemented behavior and boundaries
+Receipt verification runs locally in WebCrypto with an independently supplied,
+base64 raw Ed25519 public key. It never fetches `/receipts/public-key` or trusts an
+embedded/self-published key. It verifies RFC8785 canonical signed payload bytes,
+the domain-separated SHA256 projection commitment, receipt version, and optional
+user-supplied expected bindings. An exported `{projection,receipt}` package can be
+verified without any run lookup or account data. The receipt run ID is the internal
+governance ID, not the UI route ID. Without independently expected bindings,
+verification only authenticates the supplied package. It proves issuer/bytes/bindings,
+not factual correctness, completeness, voluntary consent or confidential execution.
 
-- Six editable agreement sections; criteria, exact scope, ordered operators,
-  preceding-step links, complete JSON config, disclosure recipients and limits,
-  participant/signing roster, expiry, budgets and extensible operation policies.
-- Graph and JSON views edit the same document. Graph selection highlights its
-  clause and selected JSON ID. Custom SQL/Python is explicitly custom code;
-  descriptions do not pretend to interpret it. Empty operator configs remain
-  incomplete until backend Check plan validates them.
-- Saved-versus-draft semantic differences cover all top-level executable fields.
-  Counterproposals support independent acceptance; question, criteria, scope and
-  method changes are accepted as one dependent group. Any resulting combination
-  needs backend validation. Applying suggestions never approves or executes.
-- Exact-draft checks, optimistic save concurrency, saved-digest approval/revocation,
-  one admitted dataset per run, and real rehearsal/audit calls. Any saved/check
-  snapshot mismatch disables execution. The backend must bind the frozen plan,
-  dataset/coverage commitments and all authoritative approvals at admission.
-- Dataset manifests, source requirements and gaps, clearly labeled synthetic
-  origin, JSON/file import, coverage/result/receipt inspection, evidence and
-  counterevidence references, cancellation, authorized existing-run loading,
-  challenge submission, and account-scoped accountability history.
-- Backend admission denials with HTTP 403 or typed consent/approval/admission
-  codes are explicitly displayed as blocked, without inventing a run ID.
-- Local review notes have clause links, responsibilities and resolved states;
-  they are labeled unshared/unpersisted and excluded from the signed plan.
-- No browser storage of plan or evidence; drafts and notes remain in page memory.
-  Unsaved executable edits warn on navigation away. Export is explicit.
+## Current remaining gaps
 
-No new dependencies or legacy schema changes are required.
-
-## Gaps requiring additional service contracts
-
-- **Labeled evaluation:** no evaluation HTTP endpoint is defined. The separate
-  Evaluate with DeepSeek control is visibly unavailable and makes no rehearsal
-  accuracy claim. Hidden labels must remain server-side.
-- **Evidence-aware authoring assistant:** no workbench suggestion endpoint is
-  defined. Counterproposal import works locally; it makes no model calls and
-  sends no evidence to the legacy Anthropic authoring path.
-- **Sealed confidential submission:** ordinary JSON import is explicitly not a
-  verified submission client and is disabled in confidential mode. The parent
-  must integrate a verified collector before confidential evidence upload.
-- **Durable review discussions:** local notes work, but shared review threads
-  need storage/API authorization. They are deliberately not claimed as saved.
-- **Detailed visualization/data navigation:** timeline, cohort, lineage, runtime
-  receipts and step trace objects are inspectable when released; dedicated
-  interactive visualizations, evidence fetch links, per-step rerun and independent
-  receipt verification need richer released-resource/action contracts. No
-  arbitrary private-evidence URL or full-trace request is generated.
-- **Runtime compatibility/privacy:** UI validation is advisory. The service owns
-  operator semantics, verified inference, admission, consent invalidation,
-  release suppression/accounting, schedule/retention enforcement and confidential
-  trace policy. Additional approval/disclosure fields can be authored as JSON,
-  but are not claimed as supported until the backend check accepts them.
+- Live DeepSeek/Tinfoil transport qualification, measured confidential execution,
+  sealed input, encrypted deployment and independent key distribution remain parent
+  integration work. This page supplies no runtime-fact assertions or attestation.
+- Evidence-aware authoring and labeled evaluation have no HTTP service endpoints.
+  The existing evaluation control remains disabled; counterproposal import is local,
+  with no model call or mock result. Rehearsal does not measure model effectiveness.
+- The API exposes no reviewer-role or per-action authorization capabilities. Owner
+  binding and disposition requests rely on service authorization and report denials.
+- Native audit evidence references/excerpts, raw step drill-down, per-step rerun,
+  recipient correction evidence delivery and richer timeline/cohort/lineage packages
+  have no release/resource contract. No unauthorized fetch path is added.
+- Challenge delivery notifications, deadlines, attempt limits, independent anti-coercion
+  process and numerical correction budget exemptions are absent. Original packages
+  remain immutable; overlapping corrected analyses remain governed by normal limits.
+- Notes are append-only. No resolve/delete/edit endpoint or revision-list endpoint is
+  invented. Historical notes require a known authorized revision digest.
+- Browser IndexedDB persistence across real profile restarts, live enrollment and
+  end-to-end backend/browser operation still require integration qualification.
 
 ## Verification
 
-Run `corepack pnpm test`, `corepack pnpm typecheck`, `corepack pnpm build` in this
-directory. Workbench tests use v1 fixtures, HTTP transport stubs, fake-timer
-product polling, and static React rendering. They verify contract bodies,
-scope/method/policy check invalidation, failure handling, suppression, explicit
-outcome distinctions, counterevidence and recipient-policy disclosure. Transport
-stubs are test-only; the product has no mocked response path. No live backend,
-browser interaction, attestation, or real model execution is claimed by these
-checks. Consent tests additionally use real WebCrypto Ed25519 signatures and
-verification over arbitrary exact bytes; only HTTP transport and the signing-test
-key repository are injected. They cover enrollment per approval, nonextractability,
-random nonces, stale-document rejection, malformed payloads, rejected binding and
-missing storage. Actual IndexedDB CryptoKey persistence across browser restarts
-and live enrollment integration still require browser/backend validation.
-
-The full existing suite currently has one unrelated legacy-fixture failure:
-`src/plan/plan.test.ts` expects deployed `plan_id` `destructive-commands`, while
-the checked-in deployed fixture supplies `destructive_commands`. The legacy test
-and fixture are unchanged by this workbench implementation.
+Run `corepack pnpm test`, `corepack pnpm typecheck`, `corepack pnpm build` here.
+The original 99 tests remain. Additional mounted React tests exercise actual note
+forms and API bodies, persisted-note reload, failure honesty, authorized shared
+readiness, explicit derivative creation, challenge/disposition lineage and self-only
+release requests. Receipt tests use real WebCrypto Ed25519/SHA256 and cover altered
+projections, foreign keys, wrong governance run bindings and UI verification of an
+exported package without network calls. HTTP responses are test-only transport
+fixtures; there is no product mock path. React test renderer is a development-only
+dependency. These checks do not claim live browser, backend, model or enclave execution.
