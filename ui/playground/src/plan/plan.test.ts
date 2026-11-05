@@ -33,7 +33,7 @@ describe("samples", () => {
 
   it("the first sample is the deployed plan, every block type once, straight through", () => {
     const deployed = samplePlan("deployed");
-    expect(deployed.plan_id).toBe("destructive-commands");
+    expect(deployed.plan_id).toBe("destructive_commands");
     expect(deployed.nodes.map((n) => n.type)).toEqual([
       "input_logs",
       "run_python",
