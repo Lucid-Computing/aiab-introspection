@@ -644,6 +644,27 @@ class WorkbenchAPI:
                 "verification": {"origin": "synthetic", "consented_audit": False},
             }
 
+        @router.get("/runs/{ident}/evidence/{event_id}")
+        async def evidence(request: Request, ident: str, event_id: str):
+            actor = self.actor(request)
+            job = self.store.job(actor, ident)
+            if job["mode"] != "rehearse" or job["dataset_id"] != "northstar":
+                raise APIError(
+                    "release_required", "Evidence needs a separate authorized release.", 403
+                )
+            references = {
+                ref
+                for finding in (job["result"] or {}).get("findings", [])
+                for ref in finding.get("evidence_ids", []) + finding.get("counterevidence_ids", [])
+            }
+            if event_id not in references:
+                raise KeyError("Evidence not found")
+            store = EvidenceStore(self.dataset(actor, "northstar"), job["plan"]["scope"])
+            try:
+                return {"event": store.fetch([event_id])[0], "origin": "synthetic"}
+            finally:
+                store.close()
+
         @router.post("/runs/{ident}/cancel")
         async def cancel(request: Request, ident: str):
             actor = self.actor(request)

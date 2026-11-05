@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import copy
+import json
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -21,6 +22,24 @@ def api(tmp_path):
     with TestClient(app) as client:
         client.headers.update({"test-user": "alice", "origin": "http://testserver"})
         yield service, client
+
+
+def test_rehearsal_source_drilldown_is_owner_scoped_and_reference_bound(api):
+    service, client = api
+    plan = service.catalog()[0]["plan"]
+    event = service.dataset("alice", "northstar")["events"][0]
+    run = service.store.enqueue("alice", plan, "digest", "northstar", "rehearse")
+    assert service.store.claim("alice", run)
+    service.store.finish("alice", run, result={"findings": [{"evidence_ids": [event["id"]]}]})
+    endpoint = f"/api/workbench/runs/{run}/evidence/{event['id']}"
+    response = client.get(endpoint)
+    assert response.status_code == 200
+    assert response.json()["event"]["id"] == event["id"]
+    assert "native_bytes" not in json.dumps(response.json())
+    assert client.get(endpoint, headers={"test-user": "bob"}).status_code == 404
+    assert client.get(f"/api/workbench/runs/{run}/evidence/not-cited").status_code == 404
+    audit = service.store.enqueue("alice", plan, "digest", "northstar", "audit")
+    assert client.get(f"/api/workbench/runs/{audit}/evidence/{event['id']}").status_code == 403
 
 
 def test_hosted_origin_is_configured_not_forwarded_by_caller(api, monkeypatch):

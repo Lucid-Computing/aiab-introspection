@@ -26,6 +26,26 @@ export function JsonDetails({
     </details>
   );
 }
+
+function EvidenceReference({ run, eventId }: { run: Run; eventId: string }) {
+  const [event, setEvent] = useState<Record<string, unknown> | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  if (run.mode !== "rehearse") return <code>{eventId}</code>;
+  return <div><button disabled={loading} onClick={async () => {
+    setLoading(true); setError("");
+    try { setEvent((await api.evidence(String(run.run_id ?? run.id), eventId)).event); }
+    catch (e) { setError((e as Error).message); }
+    finally { setLoading(false); }
+  }}>{loading ? "Loading source…" : eventId}</button>
+    {error && <p role="alert">{error}</p>}
+    {event && <article className="wb-card"><strong>Synthetic source record</strong>
+      <p>{String(event.source ?? "")} · {String(event.actor ?? "Unknown actor")} · {String(event.occurred_at ?? "Unknown time")}</p>
+      <p>{String(event.content ?? "No text content")}</p>
+      <JsonDetails title="Authorized fields and provenance" value={event} />
+    </article>}
+  </div>;
+}
 export function RecipientPreview({ plan }: { plan: Plan }) {
   const [index, setIndex] = useState(0);
   const r = plan.disclosure.recipients[index] ?? plan.disclosure.recipients[0];
@@ -300,7 +320,7 @@ export default function Results({
                     <ul>
                       {f.evidence_ids.map((id) => (
                         <li key={id}>
-                          <code>{id}</code>
+                          <EvidenceReference run={run} eventId={id} />
                         </li>
                       ))}
                     </ul>
@@ -314,7 +334,7 @@ export default function Results({
                     <ul>
                       {f.counterevidence_ids.map((id) => (
                         <li key={id}>
-                          <code>{id}</code>
+                          <EvidenceReference run={run} eventId={id} />
                         </li>
                       ))}
                     </ul>

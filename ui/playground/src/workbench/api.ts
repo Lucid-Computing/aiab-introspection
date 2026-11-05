@@ -56,6 +56,7 @@ const post = <T>(path: string, body?: unknown) =>
   });
 const id = encodeURIComponent;
 export const api = {
+  evidence: (runId: string, eventId: string) => request<{event: Record<string, unknown>; origin: string}>(`/runs/${id(runId)}/evidence/${id(eventId)}`),
   suggest: (plan: Plan, instruction: string) => post<Suggestion>("/suggestions", { plan, instruction }),
   evaluate: (plan_id: string, include_agent: boolean, case_limit: number, seed: number) =>
     post<{ evaluation_id: string }>("/evaluations", { plan_id, include_agent, case_limit, seed }),

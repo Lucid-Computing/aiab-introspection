@@ -111,12 +111,12 @@ not factual correctness, completeness, voluntary consent or confidential executi
 
 ## Current remaining gaps
 
-- Live DeepSeek/Tinfoil transport qualification, measured confidential execution,
-  sealed input, encrypted deployment and independent key distribution remain parent
-  integration work. This page supplies no runtime-fact assertions or attestation.
-- Evidence-aware authoring and labeled evaluation have no HTTP service endpoints.
-  The existing evaluation control remains disabled; counterproposal import is local,
-  with no model call or mock result. Rehearsal does not measure model effectiveness.
+- Live DeepSeek/Pi transport qualification passed using the pinned official Go broker.
+  Measured confidential deployment and independent key distribution still require
+  qualification. This page supplies no runtime-fact assertions or attestation.
+- Verified draft-only authoring and labeled synthetic evaluations are integrated.
+  Suggestions are unsigned counterproposals, never automatic approvals. Rehearsal
+  alone does not measure model effectiveness.
 - The API exposes no reviewer-role or per-action authorization capabilities. Owner
   binding and disposition requests rely on service authorization and report denials.
 - Native audit evidence references/excerpts, raw step drill-down, per-step rerun,
@@ -162,8 +162,15 @@ the committed report, including any partial cases.
 
 Reports show both digests, exact evaluated plan/diff, selection and exclusion
 counts, aggregate metric denominators, case outcomes/failures, usage and coverage.
-The current API provides no per-family hidden-label scoring metrics; the UI
-reports per-family evaluated/unknown/abstention/failure counts with committed-case
-denominators and explicitly marks family precision/recall/exact-match unavailable.
+The API provides aggregate scenario-family precision, recall and exact-match scores
+with explicit denominators. Per-case answer labels stay private. Older saved reports
+without family scores retain an explicit unavailable state.
 No model accuracy or real-world representativeness is inferred. Test-model flags
 from the service are labeled explicitly; the UI never selects a fixture model.
+
+### Synthetic source drill-down
+
+Completed rehearsal findings link to their actual cited source records through an
+owner-only, scope-checked endpoint. Uncited IDs and other owners are denied; native
+bytes remain stripped. This does not create a raw-evidence release path for real
+consented audits.
