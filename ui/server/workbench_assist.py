@@ -397,10 +397,33 @@ async def evaluate(plan, owner, case_limit, seed, include_agent, *, on_case=None
     # No truth or world ledger is ever passed to execute_plan or its model/tools.
     hidden = {(c["audit_id"], c["investigation_id"]): c for c in truth["cases"]}
     tp = fp = fn = tn = correct = abstentions = unknown = citation_errors = positives = 0
+    family_counts = {}
     for key in selected:
         case, prediction = hidden[key], predictions.get(key)
         expected = case["expected_supportable"]
         outcome = prediction["outcome"] if prediction else None
+        family_key = (case["audit_id"], case["family"])
+        family = family_counts.setdefault(
+            family_key,
+            {
+                "criterion_id": case["audit_id"],
+                "family": case["family"],
+                "cases": 0,
+                "exact_matches": 0,
+                "tp": 0,
+                "fp": 0,
+                "positives": 0,
+                "unknown": 0,
+                "abstentions": 0,
+            },
+        )
+        family["cases"] += 1
+        family["exact_matches"] += outcome == expected
+        family["tp"] += outcome == "supported" and expected == "supported"
+        family["fp"] += outcome == "supported" and expected != "supported"
+        family["positives"] += expected == "supported"
+        family["unknown"] += prediction is None
+        family["abstentions"] += outcome == "insufficient_evidence"
         positives += expected == "supported"
         tp += outcome == "supported" and expected == "supported"
         fp += outcome == "supported" and expected != "supported"
@@ -434,6 +457,18 @@ async def evaluate(plan, owner, case_limit, seed, include_agent, *, on_case=None
         "citation_errors": citation_errors,
     }
     report = {
+        "family_metrics": [
+            {
+                **f,
+                "accuracy": f["exact_matches"] / f["cases"],
+                "accuracy_denominator": f["cases"],
+                "precision": f["tp"] / (f["tp"] + f["fp"]) if f["tp"] + f["fp"] else None,
+                "precision_denominator": f["tp"] + f["fp"],
+                "recall": f["tp"] / f["positives"] if f["positives"] else None,
+                "recall_denominator": f["positives"],
+            }
+            for _, f in sorted(family_counts.items())
+        ],
         "execution": "reviewed_deepseek_and_plan_tools"
         if include_agent
         else "deterministic_derived_plan",

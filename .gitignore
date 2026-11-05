@@ -25,3 +25,4 @@ context/
 coding-plan/
 # Agreement drafts live on the UI server; only a deployed plan reaches git (plan/).
 agreements/
+ui/workbench/

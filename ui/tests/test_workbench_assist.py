@@ -195,6 +195,10 @@ def test_real_deterministic_api_durable_derived_scope_and_metrics(api, observed)
     assert result["status"] == "completed", result
     assert result["metrics"]["cases"] == result["metrics"]["exact_matches"] == 16, result
     assert result["metrics"]["accuracy_denominator"] == 16
+    families = result["report"]["family_metrics"]
+    assert len(families) == 2
+    assert sum(f["accuracy_denominator"] for f in families) == 16
+    assert all(f["accuracy"] == 1 for f in families)
     assert result["metrics"]["unknown"] == result["metrics"]["citation_errors"] == 0
     assert result["evaluated_plan"]["steps"] == value["steps"][:1]
     assert result["evaluated_plan"]["scope"] == value["scope"]
@@ -206,9 +210,10 @@ def test_real_deterministic_api_durable_derived_scope_and_metrics(api, observed)
         "expected_supportable",
         "scripted_intervention",
         '"variant"',
-        '"family"',
     ]:
         assert forbidden not in json.dumps(result)
+    # Aggregate family scores are public evaluation summaries; per-case labels stay private.
+    assert '"family"' not in json.dumps(result["report"]["cases"])
     assert assist.EvaluationJobs(workbench).get("alice", ident)["metrics"] == result["metrics"]
     for suffix in ["", "/cancel"]:
         endpoint = "/api/workbench/evaluations/" + ident + suffix

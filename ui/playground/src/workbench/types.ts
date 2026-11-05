@@ -126,6 +126,10 @@ export interface Evaluation {
   error?: string;
   metrics: Record<string, number | null> | null;
   report: {
+    family_metrics?: Array<{ criterion_id: string; family: string; cases: number;
+      accuracy: number; accuracy_denominator: number; precision: number | null;
+      precision_denominator: number; recall: number | null; recall_denominator: number;
+      unknown: number; abstentions: number }>;
     cases: EvaluationCase[];
     partial?: boolean;
     execution?: string;

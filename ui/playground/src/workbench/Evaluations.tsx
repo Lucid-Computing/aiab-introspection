@@ -35,7 +35,13 @@ export function EvaluationReport({ value }: { value: Evaluation }) {
     </>}
     <p>Unknown cases have no predicted outcome and remain in the selected-case denominator. Abstention is not a clean negative. This bounded synthetic cohort makes no real-world or model accuracy claim.</p>
     <h4>Per-family execution coverage</h4>
-    <p>Family precision, recall and exact-match metrics are not supplied by this API; hidden labels are unavailable to this page.</p>
+    {value.report?.family_metrics ? <table><thead><tr><th>Scenario family</th><th>Exact match / cases</th><th>Precision / predicted positives</th><th>Recall / supportable positives</th><th>Unknown / abstained</th></tr></thead><tbody>
+      {value.report.family_metrics.map((f) => <tr key={`${f.criterion_id}:${f.family}`}><th>{f.criterion_id} · {f.family}</th>
+        <td>{(f.accuracy * 100).toFixed(1)}% / {f.accuracy_denominator}</td>
+        <td>{f.precision == null ? "Undefined" : `${(f.precision * 100).toFixed(1)}%`} / {f.precision_denominator}</td>
+        <td>{f.recall == null ? "Undefined" : `${(f.recall * 100).toFixed(1)}%`} / {f.recall_denominator}</td>
+        <td>{f.unknown} / {f.abstentions}</td></tr>)}
+    </tbody></table> : <p>Family precision, recall and exact-match metrics are not supplied by this API; hidden labels are unavailable to this page.</p>}
     <table><thead><tr><th>Criterion family</th><th>Evaluated / committed</th><th>Unknown / committed</th><th>Abstentions / committed</th><th>Failures / committed</th></tr></thead><tbody>
       {families.map((family) => { const cases = rows.filter((r) => r.criterion_id === family); return <tr key={family}><th>{family}</th>{[cases.filter((r) => r.status === "evaluated").length, cases.filter((r) => r.status === "unknown").length, cases.filter((r) => r.outcome === "insufficient_evidence").length, cases.filter((r) => r.failure).length].map((n, i) => <td key={i}>{n} / {cases.length}</td>)}</tr>; })}
     </tbody></table>
