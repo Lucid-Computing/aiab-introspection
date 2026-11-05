@@ -20,7 +20,10 @@ their locks are kept per source, so a slow production download never holds up th
 Slack Logs is a source of another kind: the public-channel export, a static copy that this
 server never updates. Nothing is fetched; ``load_index`` hands its files to
 ``server.slacklogs``, which reads one ``SlackMessage`` per message, grouped into a session
-per thread (or per channel and day for messages outside threads). The session layer below
+per thread (or per channel and day for messages outside threads). GitHub Logs, the
+organisation's public repositories, is read the same way by ``server.githublogs``: one
+``GitHubPost`` per issue, pull request, comment, review or commit, a session per thread
+(or per repository and day for commits). The session layer below
 (``Session``, ``sessions``, ``to_box_records``) takes either kind of record.
 
 The pages work from a light index (``load_index``): one ``Request`` per call with the
@@ -46,8 +49,9 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from server import slacklogs
+from server import githublogs, slacklogs
 from server.config import LogSource, Settings
+from server.githublogs import GitHubPost
 from server.slacklogs import SlackMessage
 
 SESSION_GAP_SECONDS = 30 * 60  # records from one person this close together form one session
@@ -315,7 +319,7 @@ class Request:
         return f"{self.size / 1024:.1f} KB"
 
 
-Record = Request | SlackMessage  # what a session holds: proxied calls, or Slack messages
+Record = Request | SlackMessage | GitHubPost  # proxied calls, Slack messages or GitHub posts
 
 
 @dataclass
@@ -328,7 +332,7 @@ class Session:
     def title(self) -> str:
         """The first thing the person said. For proxied calls that is taken from the fullest
         request first: side requests (a quota check, a title request) share the session id
-        but are not the conversation. A Slack session is titled by its first message."""
+        but are not the conversation. A Slack or GitHub session is titled by its first post."""
         ordered = list(self.records)
         if isinstance(ordered[0], Request):
             calls = [r for r in ordered if isinstance(r, Request)]
@@ -355,7 +359,7 @@ def _paths(settings: Settings, source: LogSource) -> list[Path]:
     out = source.path(settings)
     if not out.is_dir():
         return []
-    if source.kind == "slack":
+    if source.chat:
         return sorted(p for p in out.glob("*.jsonl") if p.is_file())
     return [p for p in sorted(out.glob("*.jsonl.zst")) + [out / "live.jsonl"] if p.is_file()]
 
@@ -389,7 +393,7 @@ def load_index(settings: Settings, source: LogSource) -> list[Record]:
     """Every recorded call of one source on disk as a light Request, oldest first,
     de-duplicated by id (a later file wins). Rebuilt when a file changes; a line already
     indexed is not parsed again, since the live part is re-downloaded whole on every sync.
-    A Slack source gives its messages instead (``slacklogs.load_index``)."""
+    A Slack or GitHub source gives its posts instead (``slacklogs``, ``githublogs``)."""
     state = _state(source)
     with state["index_lock"]:
         index = state["index"]
@@ -401,6 +405,10 @@ def load_index(settings: Settings, source: LogSource) -> list[Record]:
             messages = slacklogs.load_index(paths)
             index.update(stamp=stamp, requests=messages, by_line={})
             return messages
+        if source.kind == "github":
+            posts = githublogs.load_index(paths)
+            index.update(stamp=stamp, requests=posts, by_line={})
+            return posts
         known, by_line = index["by_line"], {}
         seen: dict[str, Request] = {}
         for path in paths:
@@ -579,7 +587,7 @@ def call_parts(r: Request) -> list[tuple[str, str]]:
 
 def to_box_records(records: list[Record]) -> list[dict]:
     """The box's record format, one record per part of each call (see ``call_parts``), or
-    one per Slack message (its text, as a request).
+    one per Slack message or GitHub post (its text, as a request).
 
     agent_id is who sent it (the proxy's "who", the message's author), session_id the
     grouping above, content what the model saw and said, or what the person wrote. The box

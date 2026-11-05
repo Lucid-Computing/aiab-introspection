@@ -203,7 +203,7 @@ def test_each_source_has_its_own_index_and_sync_state(tmp_path, monkeypatch):
 
 def test_settings_default_to_dev_and_both_sources_can_be_configured(tmp_path):
     settings = _settings(tmp_path, prod_key="p", dev_key="tester:t,other:o")
-    assert [s.id for s in settings.log_sources] == ["prod", "dev", "slack"]
+    assert [s.id for s in settings.log_sources] == ["prod", "dev", "slack", "github"]
     assert settings.log_source(None).id == "dev" and settings.log_source("nope").id == "dev"
     assert settings.log_source("prod").key == "p" and settings.log_source("dev").key == "t"
     assert settings.log_source("prod").header == "x-log-key"
@@ -442,7 +442,7 @@ def test_slack_bundle_round_trips_only_the_channel_files(tmp_path):
     assert S.unpack(out, key, dest) == ["eng.jsonl"]
     assert sorted(p.name for p in dest.iterdir()) == ["eng.jsonl"]  # replaced whole
     assert (dest / "eng.jsonl").read_bytes() == (scrape / "eng.jsonl").read_bytes()
-    assert not list(dest.parent.glob(".slack-*")) and not dest.with_name("opened.old").exists()
+    assert not list(dest.parent.glob(".opened-*")) and not dest.with_name("opened.old").exists()
 
     with pytest.raises(S.BundleError, match="does not open"):
         S.unpack(out, S.new_key(), dest)
@@ -492,3 +492,227 @@ def test_slack_source_opens_the_bundle_at_start_when_it_holds_the_key(tmp_path, 
     missing = _bundle_settings(tmp_path / "elsewhere", key)
     assert S.unpack_at_start(missing) == []
     assert log_sources_from_env({"AIAB_SLACK_EXPORT_KEY": key})[2].configured
+
+
+# ---- the GitHub export -----------------------------------------------------------------
+
+
+def _github_export(folder):
+    """One repository: a pull request with a comment and a review, two commits a day apart."""
+    folder.mkdir(parents=True, exist_ok=True)
+    base = {"repo": "aiab", "meta": []}
+    rows = [
+        {
+            **base,
+            "kind": "pull",
+            "id": 1,
+            "number": 7,
+            "title": "Add GitHub Logs",
+            "time": "2026-11-01T10:00:00Z",
+            "author": "ada",
+            "url": "https://github.com/x/aiab/pull/7",
+            "text": "A new source.",
+            "meta": ["state: merged"],
+        },
+        {
+            **base,
+            "kind": "comment",
+            "id": 2,
+            "number": 7,
+            "title": "Add GitHub Logs",
+            "time": "2026-11-01T11:00:00Z",
+            "author": "bob",
+            "url": "u",
+            "text": "looks fine",
+        },
+        {
+            **base,
+            "kind": "review",
+            "id": 3,
+            "number": 7,
+            "title": "Add GitHub Logs",
+            "time": "2026-11-01T12:00:00Z",
+            "author": "bob",
+            "url": "u",
+            "text": "",
+            "meta": ["review: approved"],
+        },
+        {
+            **base,
+            "kind": "commit",
+            "id": "abc1234def",
+            "sha": "abc1234def",
+            "time": "2026-11-01T09:00:00Z",
+            "author": "ada",
+            "url": "u",
+            "text": "Fix the index\n\nlonger body",
+            "meta": ["1 file changed, +2 −1"],
+        },
+        {
+            **base,
+            "kind": "commit",
+            "id": "fff0000aaa",
+            "sha": "fff0000aaa",
+            "time": "2026-11-02T09:00:00Z",
+            "author": "cy",
+            "url": "u",
+            "text": "Next day",
+        },
+    ]
+    (folder / "aiab.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def _github_settings(tmp_path):
+    from dataclasses import replace
+
+    from server.config import load_settings, log_sources_from_env
+
+    env = {"AIAB_PROXY_KEY": "k", "AIAB_GITHUB_EXPORT": str(tmp_path / "github-export")}
+    return replace(load_settings(), logs_dir=tmp_path, log_sources=log_sources_from_env(env))
+
+
+def test_github_export_is_a_source_of_posts_grouped_by_thread_and_commit_day(tmp_path):
+    from server.githublogs import GitHubPost
+
+    settings = _github_settings(tmp_path)
+    gh = settings.log_source("github")
+    assert (
+        gh.configured and gh.chat and not gh.fetches and gh.path(settings).name == "github-export"
+    )
+    _github_export(gh.path(settings))
+    index = P.load_index(settings, gh)
+    assert all(isinstance(m, GitHubPost) for m in index)
+    assert [m.kind for m in index] == ["commit", "pull", "comment", "review", "commit"]
+    sessions = {s.id: s for s in P.sessions(index)}
+    assert set(sessions) == {"aiab#7", "aiab · commits · 2026-11-01", "aiab · commits · 2026-11-02"}
+    thread = sessions["aiab#7"]
+    assert thread.title == "Add GitHub Logs" and [m.who for m in thread.records] == [
+        "ada",
+        "bob",
+        "bob",
+    ]
+    assert thread.records[0].action == "opened pull request #7"
+    commits = sessions["aiab · commits · 2026-11-01"]
+    assert commits.title == "Fix the index" and commits.records[0].action == "committed abc1234"
+    assert P.load_full(settings, gh, thread.records[0]) is thread.records[0]
+    assert P.raw_entry(settings, gh, thread.records[0]) is None
+    records = P.to_box_records(thread.records)
+    assert [(r["agent_id"], r["content"]) for r in records] == [
+        ("ada", "Add GitHub Logs\n\nA new source."),
+        ("bob", "looks fine"),
+    ]  # the empty review sends nothing
+    assert not _settings(tmp_path).log_source("github").configured
+
+
+def test_logs_and_runs_pages_show_github_threads_as_posts(tmp_path, monkeypatch):
+    settings = _github_settings(tmp_path)
+    _github_export(settings.log_source("github").path(settings))
+    client = _client(monkeypatch, settings)
+    page = client.get("/logs?logs=github&session=aiab%237").text
+    assert "GitHub Logs · 5 posts on disk" in page and "a static copy" in page
+    assert 'href="/logs?session=aiab%237&amp;logs=github&amp;' in page
+    detail = page.split('class="logs-detail"')[1]
+    assert "A new source." in detail and "looks fine" in detail and "Next day" not in detail
+    assert "aiab#7 · 3 posts" in detail and "opened pull request #7" in detail
+    assert "review: approved" in detail and 'href="https://github.com/x/aiab/pull/7"' in detail
+    for proxy_only in ("raw JSON", "System prompt", "this reply"):
+        assert proxy_only not in detail, proxy_only
+    assert "3 post" in page.split('class="logs-detail"')[0]
+    assert client.get("/logs/raw/aiab:pull:1?logs=github").status_code == 404
+    runs = client.get("/runs?logs=github").text
+    assert "Add GitHub Logs" in runs and "3 post · 2 records" in runs and "from GitHub Logs" in runs
+
+
+def test_github_source_opens_its_bundle_at_start(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from server import githubexport as G
+    from server import slackexport as S
+    from server.config import load_settings, log_sources_from_env
+
+    scrape = tmp_path / "scrape"
+    _github_export(scrape)
+    key = G.new_key()
+    env = {"AIAB_PROXY_KEY": "k", "AIAB_GITHUB_EXPORT_KEY": key}
+    settings = replace(
+        load_settings(),
+        logs_dir=tmp_path / "logs",
+        log_sources=log_sources_from_env(env),
+        github_bundle=tmp_path / "bundle" / "github-export.enc",
+    )
+    G.pack(scrape, key, settings.github_bundle, G.MAGIC, G.KEY_ENV)
+    data = settings.github_bundle.read_bytes()
+    assert data.startswith(G.MAGIC) and b"A new source." not in data
+    with pytest.raises(S.BundleError, match="not a Slack export bundle"):
+        S.unpack(settings.github_bundle, key, tmp_path / "x")  # one kind is not the other
+
+    gh = settings.log_source("github")
+    assert gh.configured and gh.key_env == "AIAB_GITHUB_EXPORT_KEY"
+    assert G.unpack_at_start(settings) == ["aiab.jsonl"]
+    monkeypatch.setattr(P, "_states", {})
+    assert len(P.load_index(settings, gh)) == 5
+    assert G.unpack_at_start(replace(settings, github_bundle=tmp_path / "none.enc")) == []
+    plain = replace(settings, log_sources=log_sources_from_env({"AIAB_PROXY_KEY": "k"}))
+    assert G.unpack_at_start(plain) is None
+    off = _client(monkeypatch, plain).get("/logs?logs=github").text
+    assert "no export configured" in off and "AIAB_GITHUB_EXPORT_KEY" in off
+
+
+def test_github_fetch_reads_only_public_repositories(tmp_path, monkeypatch):
+    from server import githubexport as G
+
+    repos = [
+        {"name": "b", "full_name": "o/b", "private": False, "visibility": "public", "fork": False},
+        {"name": "a", "full_name": "o/a", "private": False, "visibility": "public", "fork": True},
+        {"name": "c", "full_name": "o/c", "private": True, "visibility": "private", "fork": False},
+    ]
+    asked = []
+
+    def gh(path):
+        asked.append(path)
+        if path.startswith("orgs/"):
+            return repos
+        if path == "repos/o/b":
+            return {"private": False, "visibility": "public"}
+        if path.startswith("repos/o/b/issues?"):
+            return [
+                {
+                    "number": 1,
+                    "id": 10,
+                    "title": "T",
+                    "state": "open",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "user": {"login": "ada"},
+                    "html_url": "h",
+                    "body": "b",
+                    "labels": [],
+                }
+            ]
+        if path.startswith("repos/o/b/commits?"):
+            return [
+                {
+                    "sha": "s1",
+                    "html_url": "h",
+                    "author": None,
+                    "commit": {
+                        "message": "m",
+                        "author": {"name": "Ada", "date": "2026-01-02T00:00:00Z"},
+                    },
+                }
+            ]
+        if path == "repos/o/b/commits/s1":
+            return {"files": [{"filename": "x.py"}], "stats": {"additions": 1, "deletions": 0}}
+        return []
+
+    monkeypatch.setattr(G, "_gh", gh)
+    (tmp_path / "gone.jsonl").write_text("{}\n")
+    assert G.fetch(tmp_path, "o", log=lambda _: None) == ["b.jsonl"]
+    assert not any("o/a" in p or "o/c" in p for p in asked)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["b.jsonl"]
+    rows = [json.loads(line) for line in (tmp_path / "b.jsonl").read_text().splitlines()]
+    assert [(r["kind"], r["author"]) for r in rows] == [("issue", "ada"), ("commit", "Ada")]
+    assert rows[1]["meta"] == ["1 file changed, +1 −0", "files: x.py"]
+
+    monkeypatch.setattr(G, "_gh", lambda path: {"private": True} if path == "repos/o/b" else [])
+    with pytest.raises(G.FetchError, match="not public"):
+        G.repo_rows(repos[0])

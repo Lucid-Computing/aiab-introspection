@@ -30,10 +30,10 @@ class LogSource:
     label: str  # on the selector button
     url: str  # the proxy's address (its /_logs download API); "" for a local copy
     header: str  # the header the key is sent in
-    key: str | None  # a proxy: nothing is fetched without one; Slack: opens the bundle
+    key: str | None  # a proxy: nothing is fetched without one; Slack, GitHub: opens the bundle
     key_env: str  # the environment variable the key or folder comes from, for messages
     folder: str  # under settings.logs_dir, unless ``root`` names the folder outright
-    kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack": the Slack export
+    kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack", "github": an export
     root: Path | None = None  # a folder kept elsewhere (the Slack export, a static copy)
 
     def path(self, settings: Settings) -> Path:
@@ -41,9 +41,14 @@ class LogSource:
 
     @property
     def configured(self) -> bool:
-        """Whether the pages can offer this source: a proxy needs its key; the Slack export
-        needs its folder named, or the key that opens the committed bundle."""
+        """Whether the pages can offer this source: a proxy needs its key; an export (Slack,
+        GitHub) needs its folder named, or the key that opens the committed bundle."""
         return bool(self.key) or self.root is not None
+
+    @property
+    def chat(self) -> bool:
+        """Whether the records are posts people wrote (an export), not calls a model answered."""
+        return self.kind in ("slack", "github")
 
     @property
     def fetches(self) -> bool:
@@ -68,10 +73,13 @@ class Settings:
     push_drafts: bool  # push agreement folders to the checkout's branch after each save
     auto_pull: bool  # fast-forward the checkout to its remote branch every minute when clean
     logs_dir: Path  # downloaded proxy log segments, one subfolder per log source
-    log_sources: tuple[LogSource, ...]  # Prod Agent Logs, Dev Agent Logs, in selector order
+    log_sources: tuple[LogSource, ...]  # Prod, Dev, Slack, GitHub, in selector order
     # The Slack export, committed sealed (server.slackexport); opened into logs_dir/slack at
     # start when AIAB_SLACK_EXPORT_KEY is set and no export folder is named.
     slack_bundle: Path = UI_ROOT / "data" / "slack-export.enc"
+    # The GitHub export (server.githubexport), the same way: AIAB_GITHUB_EXPORT_KEY opens it
+    # into logs_dir/github unless AIAB_GITHUB_EXPORT names a folder.
+    github_bundle: Path = UI_ROOT / "data" / "github-export.enc"
 
     anthropic_api_key: str | None = field(default=None, repr=False)
     # AIAB_LAB_KEY: the lab's private key (base64 raw Ed25519, the format of lab.key from
@@ -184,6 +192,9 @@ def load_settings() -> Settings:
         slack_bundle=Path(
             env.get("AIAB_SLACK_BUNDLE", UI_ROOT / "data" / "slack-export.enc")
         ).resolve(),
+        github_bundle=Path(
+            env.get("AIAB_GITHUB_BUNDLE", UI_ROOT / "data" / "github-export.enc")
+        ).resolve(),
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
         lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
@@ -203,9 +214,13 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
     x-proxy-key (AIAB_PROXY_KEY); each has its own folder under AIAB_LOGS_DIR. Slack Logs
     is the public-channel export, a static copy: read in place from the folder
     AIAB_SLACK_EXPORT names, or, without one, opened from the committed bundle with
-    AIAB_SLACK_EXPORT_KEY into AIAB_LOGS_DIR/slack at start (server.slackexport)."""
+    AIAB_SLACK_EXPORT_KEY into AIAB_LOGS_DIR/slack at start (server.slackexport). GitHub
+    Logs, the organisation's public repositories, works the same way with AIAB_GITHUB_EXPORT
+    and AIAB_GITHUB_EXPORT_KEY (server.githubexport)."""
     slack = env.get("AIAB_SLACK_EXPORT", "").strip()
     slack_key = env.get("AIAB_SLACK_EXPORT_KEY", "").strip() or None
+    github = env.get("AIAB_GITHUB_EXPORT", "").strip()
+    github_key = env.get("AIAB_GITHUB_EXPORT_KEY", "").strip() or None
     return (
         LogSource(
             id="prod",
@@ -235,6 +250,17 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
             folder="slack",
             kind="slack",
             root=Path(slack).resolve() if slack else None,
+        ),
+        LogSource(
+            id="github",
+            label="GitHub Logs",
+            url="",
+            header="",
+            key=None if github else github_key,
+            key_env="AIAB_GITHUB_EXPORT" if github else "AIAB_GITHUB_EXPORT_KEY",
+            folder="github",
+            kind="github",
+            root=Path(github).resolve() if github else None,
         ),
     )
 
