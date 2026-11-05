@@ -141,3 +141,29 @@ projections, foreign keys, wrong governance run bindings and UI verification of 
 exported package without network calls. HTTP responses are test-only transport
 fixtures; there is no product mock path. React test renderer is a development-only
 dependency. These checks do not claim live browser, backend, model or enclave execution.
+
+### Authoring and durable evaluation integration
+
+Changes → Request unsigned proposal sends exactly `{plan,instruction}` to the
+mounted suggestions service. Use synthetic/public plan text; evidence records are
+never included by the UI. The returned verification document, token usage and
+exact pointer diff are available for review. Scope, question, criteria, steps and
+agent settings form an explicit dependent acceptance group. Other groups are
+optional. A changed draft invalidates the proposal. Acceptance edits only the
+local draft and requires fresh save/check/consent before execution.
+
+Evaluations offers deterministic derived-plan and live DeepSeek modes. A saved,
+checked current draft is required; the saved snapshot is re-read before submit.
+The service remains authoritative over admission and limits. IDs are retained
+in browser storage per account, with owner-only reopen controls after reload.
+Serial abortable polling stops at completed/failed/cancelled/interrupted; errors
+require explicit refresh. Cancel calls the durable service endpoint and refreshes
+the committed report, including any partial cases.
+
+Reports show both digests, exact evaluated plan/diff, selection and exclusion
+counts, aggregate metric denominators, case outcomes/failures, usage and coverage.
+The current API provides no per-family hidden-label scoring metrics; the UI
+reports per-family evaluated/unknown/abstention/failure counts with committed-case
+denominators and explicitly marks family precision/recall/exact-match unavailable.
+No model accuracy or real-world representativeness is inferred. Test-model flags
+from the service are labeled explicitly; the UI never selects a fixture model.

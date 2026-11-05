@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, pollRun } from "./api";
 import Reviews from "./Reviews";
+import Evaluations from "./Evaluations";
 import { ReleasedCards } from "./ResultTools";
 import { consentAccount } from "./consent";
 import Editor, { Field, TextField } from "./Editor";
@@ -27,7 +28,7 @@ import type {
 } from "./types";
 import "./workbench.css";
 
-type Tab = "document" | "graph" | "code" | "changes" | "results" | "activity";
+type Tab = "evaluations" | "document" | "graph" | "code" | "changes" | "results" | "activity";
 function asSaved(value: SavedPlan | Plan): SavedPlan {
   return isObject(value.plan)
     ? (value as SavedPlan)
@@ -334,6 +335,7 @@ export default function WorkbenchApp() {
   const blockers = executionBlockers(plan, saved, check, !!dataset);
   const ready = online && !blockers.length && !active && !busy;
   const tabs: [Tab, string][] = [
+    ["evaluations", "Evaluations"],
     ["document", "Agreement"],
     ["graph", "Graph"],
     ["code", "Code"],
@@ -588,6 +590,7 @@ export default function WorkbenchApp() {
               )}
               {tab === "changes" && (
                 <Changes
+                  online={online}
                   baseline={saved?.plan ?? variantSource}
                   plan={plan}
                   onChange={update}
@@ -595,6 +598,9 @@ export default function WorkbenchApp() {
               )}
             </fieldset>
           )}
+          <div hidden={tab !== "evaluations"}>
+            <Evaluations saved={saved} eligible={!!saved && !dirty && !!currentCheck?.valid && !busy} online={online} account={data?.user ? consentAccount(data.user) : "signed-out"} />
+          </div>
           {tab === "results" && (
             <>
               <form
@@ -907,17 +913,12 @@ export default function WorkbenchApp() {
                 checks approvals and permissions.
               </p>
             )}
-            <button
-              className="wb-wide"
-              disabled
-              title="No evaluation endpoint is defined in the v1 HTTP contract."
-            >
-              Evaluate with DeepSeek · unavailable
+            <button className="wb-wide" disabled={!online || !!busy} onClick={() => setTab("evaluations")}>
+              Evaluate with DeepSeek · or deterministic
             </button>
-            <small>
-              Labeled-case evaluation requires a backend evaluation API and
-              verified inference. Rehearsal is not an evaluation score.
-            </small>
+            <button className="wb-wide" disabled={!!busy} onClick={() => setTab("changes")}>
+              Ask DeepSeek for a counterproposal
+            </button>
             {active && (
               <button className="wb-wide" onClick={() => setTab("results")}>
                 Inspect active run →

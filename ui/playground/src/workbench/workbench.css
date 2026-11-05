@@ -749,3 +749,11 @@
 .wb-timeline > li {
   padding: 0.5rem 0 1rem 0.5rem;
 }
+
+.wb-evaluations { padding: 24px; }
+.wb-evaluations fieldset { border: 1px solid var(--rule-strong); padding: 18px; margin-bottom: 20px; }
+.wb-evaluations table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+.wb-evaluations th, .wb-evaluations td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--rule-strong); overflow-wrap: anywhere; }
+.wb-evaluations code, .wb-evaluations .wb-digest { overflow-wrap: anywhere; }
+.wb-evaluation-report { margin-top: 24px; }
+.wb-evaluations > button { margin: 4px 8px 4px 0; }

@@ -95,6 +95,47 @@ export interface SavedPlan {
   digest: string;
   approvals?: unknown[];
 }
+export interface ExactChange { path: string; before: unknown; after: unknown }
+export interface Suggestion {
+  plan: Plan;
+  changes: ExactChange[];
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; test_model: boolean };
+  verification: ObjectData;
+}
+export interface EvaluationCase {
+  investigation_id: string;
+  criterion_id: string;
+  observed_events: number;
+  status: string;
+  outcome: string | null;
+  failure?: string;
+  usage?: ObjectData;
+  coverage?: ObjectData;
+}
+export interface Evaluation {
+  evaluation_id: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  plan_digest: string;
+  evaluated_plan: Plan;
+  evaluated_digest: string;
+  changes: ExactChange[];
+  include_agent: boolean;
+  case_limit: number;
+  seed: number;
+  evidence_mode: string;
+  error?: string;
+  metrics: Record<string, number | null> | null;
+  report: {
+    cases: EvaluationCase[];
+    partial?: boolean;
+    execution?: string;
+    available_cases?: number;
+    selected_cases?: number;
+    excluded_by_limit?: number;
+    limitations?: string[];
+    test_model?: boolean;
+  } | null;
+}
 export interface Bootstrap {
   user: unknown;
   capabilities: ObjectData;

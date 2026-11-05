@@ -1,4 +1,4 @@
-import type { Bootstrap, Check, Dataset, Plan, Run, SavedPlan } from "./types";
+import type { Bootstrap, Check, Dataset, Evaluation, Plan, Run, SavedPlan, Suggestion } from "./types";
 import { signApproval } from "./consent";
 import { runActive } from "./model";
 
@@ -56,6 +56,16 @@ const post = <T>(path: string, body?: unknown) =>
   });
 const id = encodeURIComponent;
 export const api = {
+  suggest: (plan: Plan, instruction: string) => post<Suggestion>("/suggestions", { plan, instruction }),
+  evaluate: (plan_id: string, include_agent: boolean, case_limit: number, seed: number) =>
+    post<{ evaluation_id: string }>("/evaluations", { plan_id, include_agent, case_limit, seed }),
+  getEvaluation: async (evaluationId: string, signal?: AbortSignal) => {
+    const value = await request<Evaluation>(`/evaluations/${id(evaluationId)}`, { signal });
+    if (!EVALUATION_STATUSES.has(value.status) || value.evaluation_id !== evaluationId)
+      throw new ApiError(200, "invalid_response", "Evaluation response is invalid; state is unknown.");
+    return value;
+  },
+  cancelEvaluation: (evaluationId: string) => post<{ evaluation_id: string; status: Evaluation["status"] }>(`/evaluations/${id(evaluationId)}/cancel`, {}),
   bootstrap: (signal?: AbortSignal) =>
     request<Bootstrap>("/bootstrap", { signal }),
   catalog: () => request<{ audits: Bootstrap["audits"] }>("/catalog"),
@@ -126,6 +136,24 @@ export const api = {
   history: () =>
     request<{ history?: unknown[]; records?: unknown[] }>("/history"),
 };
+
+const EVALUATION_STATUSES = new Set(["queued", "running", "completed", "failed", "cancelled", "interrupted"]);
+export const evaluationActive = (value: Evaluation) => value.status === "queued" || value.status === "running";
+export async function pollEvaluation(evaluationId: string, onValue: (value: Evaluation) => void, signal: AbortSignal, interval = 1500) {
+  let delay = interval;
+  while (!signal.aborted) {
+    const value = await api.getEvaluation(evaluationId, signal);
+    if (signal.aborted) return;
+    onValue(value);
+    if (!evaluationActive(value)) return;
+    await new Promise<void>((resolve) => {
+      const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); };
+      const timer = setTimeout(done, delay);
+      signal.addEventListener("abort", done, { once: true });
+    });
+    delay = Math.min(delay * 1.2, 5000);
+  }
+}
 
 /** Poll only the product endpoint, serially, with cancellation and bounded backoff. */
 export async function pollRun(

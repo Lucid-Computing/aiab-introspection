@@ -9,7 +9,9 @@ import {
 } from "@xyflow/react";
 import { JsonEditor, TextField } from "./Editor";
 import { describeStep, parsePlan, pretty, semanticDiff } from "./model";
-import type { Plan } from "./types";
+import type { Plan, Suggestion } from "./types";
+import { api } from "./api";
+import { JsonDetails } from "./Results";
 
 export function GraphView({
   plan,
@@ -201,11 +203,17 @@ export function Changes({
   baseline,
   plan,
   onChange,
+  online = false,
 }: {
+  online?: boolean;
   baseline: Plan | null;
   plan: Plan;
   onChange: (p: Plan) => void;
 }) {
+  const [instruction, setInstruction] = useState("");
+  const [pending, setPending] = useState(false);
+  const [source, setSource] = useState("");
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [text, setText] = useState("");
   const [proposal, setProposal] = useState<Plan | null>(null);
   const [error, setError] = useState("");
@@ -213,7 +221,8 @@ export function Changes({
   const changes = baseline ? semanticDiff(baseline, plan) : [];
   const proposed = proposal ? semanticDiff(plan, proposal) : [];
   // Method and evidence changes may depend on one another; accept this group atomically.
-  const dependent = ["scope", "steps", "criteria", "question"];
+  const dependent = ["scope", "steps", "criteria", "question", "agent"];
+  const stale = !!proposal && source !== pretty(plan);
   const toggle = (path: string) =>
     setAccepted((prev) => {
       const next = new Set(prev);
@@ -255,10 +264,26 @@ export function Changes({
       ) : (
         <p>This is an unsigned draft with no saved baseline.</p>
       )}
+      <h3>Ask DeepSeek for an unsigned counterproposal</h3>
+      <p>Use synthetic or public scope. Only the draft plan and your instruction are sent to the service and model; no dataset records are retrieved. Keep private data out of plan text and instructions.</p>
+      <p>One verified completion · up to 24,000 input / 8,192 output tokens · 180 seconds. Provider failures are shown without fallback.</p>
+      <TextField label="Authoring instruction" multiline value={instruction} onChange={setInstruction} />
+      <button disabled={!online || pending || !instruction.trim() || instruction.length > 4000}
+        onClick={async () => {
+          const base = pretty(plan);
+          setPending(true); setError(""); setProposal(null); setSuggestion(null); setAccepted(new Set());
+          try {
+            const result = await api.suggest(plan, instruction);
+            const candidate = parsePlan(pretty(result.plan));
+            if (candidate.id !== plan.id || candidate.version !== plan.version || !Array.isArray(result.changes)) throw new Error("Invalid counterproposal response.");
+            setSource(base); setProposal(candidate); setSuggestion(result);
+          } catch (e) { setError((e as Error).message); }
+          finally { setPending(false); }
+        }}>{pending ? "Requesting verified proposal…" : "Request unsigned proposal"}</button>
       <h3>Review a counterproposal</h3>
       <p>
         Paste a full proposed v1 plan from an authorized collaborator. This is a
-        local editing tool; no authoring-model endpoint is configured. Evidence,
+        local editing tool. Evidence,
         question, criteria and method changes travel together.
       </p>
       <TextField
@@ -271,6 +296,8 @@ export function Changes({
         onClick={() => {
           try {
             setProposal(parsePlan(text));
+            setSource(pretty(plan));
+            setSuggestion(null);
             setAccepted(new Set());
             setError("");
           } catch (e) {
@@ -287,6 +314,13 @@ export function Changes({
       )}
       {proposal && (
         <>
+          {suggestion && <>
+            <p>{suggestion.usage.test_model || suggestion.verification.test_model ? "TEST MODEL · server fixture, not live DeepSeek" : "Verified DeepSeek counterproposal"} · {suggestion.usage.total_tokens} tokens ({suggestion.usage.prompt_tokens} input / {suggestion.usage.completion_tokens} output)</p>
+            <JsonDetails title="Verification document" value={suggestion.verification} />
+            <JsonDetails title="Exact server JSON-pointer diff" value={suggestion.changes} />
+          </>}
+          {stale && <p role="alert" className="wb-error">The draft changed while this proposal was pending. Request or compare again before accepting.</p>}
+          {!proposed.length && <p>No proposed changes.</p>}
           <div className="wb-notice">
             Review dependent changes together. Applying a proposal never signs
             or runs it; Check plan validates the resulting combination.
@@ -296,6 +330,7 @@ export function Changes({
               <label className="wb-toggle">
                 <input
                   type="checkbox"
+                  disabled={stale}
                   checked={accepted.has(d.path)}
                   onChange={() => toggle(d.path)}
                 />
@@ -308,11 +343,13 @@ export function Changes({
             </article>
           ))}
           <button
-            disabled={!accepted.size}
+            disabled={stale || !accepted.size}
             onClick={() => {
+              if (stale) return;
               const next = { ...plan };
               accepted.forEach((k) => {
-                next[k] = proposal[k];
+                if (Object.hasOwn(proposal, k)) next[k] = proposal[k];
+                else delete next[k];
               });
               onChange(parsePlan(pretty(next)));
               setProposal(null);
