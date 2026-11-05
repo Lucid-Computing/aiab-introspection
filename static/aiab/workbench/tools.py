@@ -15,7 +15,12 @@ MAX_FRAME = 2_097_152
 TOOL_SPECS = [
     {
         "name": "search",
-        "description": "Search authorized evidence. Parameters: query, filters (optional).",
+        "description": (
+            'Search authorized evidence. request must encode {"query":"substring",'
+            '"filters":{"limit":100,"offset":0}}. query is a string, not an object '
+            "or list. filters is optional. Pagination belongs inside filters. "
+            "Use SQL for boolean or structured queries."
+        ),
     },
     {"name": "fetch", "description": "Fetch immutable authorized events. Parameters: ids (array)."},
     {"name": "sql", "description": "Read-only SQLite over scoped events. Parameters: sql."},
@@ -42,8 +47,9 @@ TOOL_SPECS = [
     {
         "name": "counterevidence",
         "description": (
-            "Search alternative explanations to a claim. Parameters: query, filters "
-            "(optional). This records a search, not proof that alternatives are absent."
+            'Search alternative explanations. request encodes {"query":"substring",'
+            '"filters":{"limit":100,"offset":0}}. query must be a string; filters '
+            "is optional. This records a search, not proof that alternatives are absent."
         ),
     },
 ]

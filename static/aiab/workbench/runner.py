@@ -394,7 +394,28 @@ class Supervisor:
                         raise RuntimeFailure("unapproved_tool_call")
                     self.pending_calls.pop(key)
                     self.usage["tool_calls"] += 1
-                    response = await self.broker.call(*requested)
+                    try:
+                        response = await self.broker.call(*requested)
+                    except RuntimeFailure as exc:
+                        # A malformed argument is correctable within the same signed
+                        # capability and budget. Authorization and resource denials
+                        # still terminate the investigation.
+                        if str(exc) not in {
+                            "invalid_search",
+                            "invalid_fetch",
+                            "invalid_sql",
+                            "invalid_python",
+                            "invalid_join",
+                            "invalid_coverage",
+                            "invalid_tool_arguments",
+                        }:
+                            raise
+                        response = {
+                            "error": {"code": str(exc), "retryable": True},
+                            "parameters": next(
+                                t["description"] for t in TOOL_SPECS if t["name"] == frame["name"]
+                            ),
+                        }
                     await self.emit("tool_result", {"name": frame["name"], "result": response})
                 else:
                     raise RuntimeFailure("agent_protocol_error")
