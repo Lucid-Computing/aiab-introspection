@@ -1,0 +1,36 @@
+name: Deploy isolated audit workbench
+
+on:
+  push:
+    branches: [dev-astra-one]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dev-astra-one
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/dev-astra-one'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the isolated Render service
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEV_ASTRA_ONE_DEPLOY_HOOK }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEPLOY_HOOK" ]]; then
+            echo 'Missing RENDER_DEV_ASTRA_ONE_DEPLOY_HOOK; configure the isolated service hook.' >&2
+            exit 1
+          fi
+          case "$DEPLOY_HOOK" in
+            https://api.render.com/deploy/srv-dbmbeatbedkc73bp6m9g?*) ;;
+            *) echo 'Deploy hook must belong to the isolated astra service.' >&2; exit 1 ;;
+          esac
+          curl --fail --silent --show-error --max-time 60 --request POST \
+            "$DEPLOY_HOOK&ref=$GITHUB_SHA" --output "$RUNNER_TEMP/astra-deploy.json"
+          echo 'Requested deployment of this branch commit.'
