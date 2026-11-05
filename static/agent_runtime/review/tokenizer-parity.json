@@ -1,0 +1,44 @@
+{
+  "synthetic": true,
+  "verified_remote_tokenizer": true,
+  "comparisons": [
+    {
+      "chat_count": 295,
+      "released_prompt_count": 295,
+      "equal": true
+    },
+    {
+      "chat_count": 306,
+      "released_prompt_count": 306,
+      "equal": true
+    }
+  ],
+  "passed": true,
+  "verification": {
+    "securityVerified": true,
+    "configRepo": "tinfoilsh/confidential-deepseek-v4-1-flash",
+    "enclaveHost": "deepseek-v4-1-flash-inf16-0.tinfoil.containers.tinfoil.dev",
+    "releaseDigest": "71f41a053232a06dd6ed61ca3a40502a9b972dc16dd9f04ca895ced5a7809def",
+    "tlsPublicKey": "bd4fd6b24ad43d34041312694cd9bc6cdf83380829328eb83adf0442601c5488",
+    "verifier": {
+      "name": "tinfoil-go",
+      "version": "0.16.4"
+    },
+    "verifiedAt": "2026-11-05T17:45:11.864111313Z",
+    "freshnessExpiresAt": "2026-11-09T22:20:58Z",
+    "steps": {
+      "compareMeasurements": {
+        "status": "success"
+      },
+      "fetchDigest": {
+        "status": "success"
+      },
+      "verifyCode": {
+        "status": "success"
+      },
+      "verifyEnclave": {
+        "status": "success"
+      }
+    }
+  }
+}

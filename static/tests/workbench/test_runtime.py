@@ -308,7 +308,7 @@ def test_deepseek_reasoning_tool_roundtrip():
     }
     pi = pi_completion(validate_completion(answer))
     messages = wire_messages([{"role": "assistant", **pi}], "fixed")
-    assert messages[-1]["reasoning_content"] == "private"
+    assert messages[-1]["reasoning"] == "private"
     assert messages[-1]["tool_calls"][0]["function"]["name"] == "coverage"
     answer["model"] = "some-other-model"
     with pytest.raises(RuntimeFailure, match="invalid_deepseek"):

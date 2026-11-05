@@ -1,0 +1,30 @@
+{
+  "go_toolchain": {
+    "version": "go1.27.3",
+    "platform": "linux/amd64",
+    "archive_sha256": "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
+  },
+  "sdk": {
+    "module": "github.com/tinfoilsh/tinfoil-go",
+    "version": "v0.16.4",
+    "commit": "e1381b71ac15f152b2ab9b2d0f2e2a1805e7e777",
+    "sum": "h1:xR7MMH2wA2FxXOQtuA3L20sMhHnBtYOPxmdkG74mZTk=",
+    "go_mod_sum": "h1:4nG8uu39T3JiPrh96Q4qsa/6D2gQyLdjx6NJF92iwXQ="
+  },
+  "encoder": {
+    "upstream": "https://github.com/vllm-project/vllm/blob/db9527a46873454610df6dbedf79a36d6bf1a7f6/vllm/tokenizers/deepseek_v41_encoding.py",
+    "release_patch": "https://github.com/tinfoilsh/confidential-deepseek-v4-1-flash/blob/v0.0.10%2Bb200/patches/0009-released-reasoning.patch",
+    "sha256": "081382cb953a1c8041fdfc82a6001cf0c932553171436625c89fe5b9fbcda464"
+  },
+  "build_command": "make -C static/agent_runtime/verified_transport all verify test GO=/path/to/go1.27.3/bin/go",
+  "files": {
+    "main.go": "5642966edef25a6c92d744e707353571f1bb5cd5f2c111e05422884b5cfb88a2",
+    "go.mod": "870d4feb8fdcd990faa81c23df5173d8b557c78318c05021f23846490061d692",
+    "go.sum": "5a0d366aac2861be62747ea08740bbfd42e0c093c5907fe2e7a2f4cb68af69dc",
+    "__init__.py": "a96e39dd87e1ba8b910f39f513e7206228a741ab774ffafc4be06a728ec49359",
+    "deepseek_v41_encoding.py": "081382cb953a1c8041fdfc82a6001cf0c932553171436625c89fe5b9fbcda464",
+    "Makefile": "00b3f074cf565ee6fbd132ce5701acb824519ab49726dfd07b2895af8d0638a4"
+  },
+  "security_policy": "Official v0.16.4 defaults; no overrides, alternate roots, replacements or ignored freshness. Exact release and TLS key before each send.",
+  "qualified_broker_sha256": "437a648d172eb60cc761a1a611a0eb97bdc5b95e08fb99f16e1a3b2d3ae0043e"
+}

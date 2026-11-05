@@ -1,5 +1,10 @@
 # DeepSeek serving binding review — 2026-11-05
 
+**Historical Python transport review.** The default Python compatibility failure
+below remains valid. The official Go v0.16.4 transport and subsequent real inference
+qualification are reviewed in [VERIFIED_TRANSPORT_REVIEW.md](VERIFIED_TRANSPORT_REVIEW.md);
+its live artifact supersedes the earlier failed attempt described here.
+
 This is implementation-source review, not third-party security approval or evidence
 that live inference succeeded. Existing GPTOSS bindings were neither reused nor
 modified. Candidate: `tinfoilsh/confidential-deepseek-v4-1-flash`, **v0.0.10+b200**.

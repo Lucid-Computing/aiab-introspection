@@ -1,5 +1,12 @@
 # Confidential workbench runtime
 
+**DeepSeek transport update:** An opt-in official Go v0.16.4 verified stdio broker
+is now available. See [build and qualification instructions](verified_transport/README.md)
+and [the source/live review](review/VERIFIED_TRANSPORT_REVIEW.md). The historical
+Python-only failure discussion below does not describe the new Go transport.
+The current [live qualification artifact](review/live-qualification.json) records
+actual results; unit doubles remain separate.
+
 This is a new runtime path. The legacy signed-plan worker, its seccomp allowlist,
 its model bindings and its Python dependency lock are unchanged. Do not put Node
 inside that worker or relax its sandbox. Run this service **inside the measured
@@ -168,18 +175,15 @@ real Pi and OS sandboxes with explicitly mocked inference. They also test read-o
 SQL, process timeout/cancellation, provider/identity failure, scope/reference denial,
 sealed payload authentication, ownership, private result encryption and release denial.
 
-The opt-in real test is `agent_runtime/qualify.py`. It does not mock inference and
-requires all seven tools across multiple turns. The retained
-`review/live-qualification.json` is a **failed** live attempt before inference.
-The reachable B200 enclave's MR_SEAM is rejected by both official tinfoil 0.14.0 and
-0.15.0 defaults. Two other matching B200 hosts timed out. No allowlist was changed,
-no alternative provider was used, and the credential's inference entitlement remains
-unknown because attestation prevented a credentialed request. Model listing and
-attestation discovery are not successful inference.
+The opt-in real test is `agent_runtime/qualify.py --transport go`. It now uses the
+real Northstar evidence/contracts projection and requires all seven tools across
+multiple real DeepSeek/Pi turns. The retained `review/live-qualification.json`
+records a **passed** run: two turns, seven tools and 13,574 total tokens. See the
+transport review for exact SDK/release/key/platform pins, tokenizer interoperability
+and separate failed-attempt artifacts. Python 0.14.0 remains the default and still
+rejects this B200 platform; explicitly select and prebuild the Go transport.
 
-Hard gates: working officially supported attestation for an approved DeepSeek host;
-real multi-turn inference/tokenizer/reasoning/usage qualification; merged real
-contracts/evidence/analyzers/governance integration; measured runtime image and
+Remaining hard gates: measured runtime image and
 client attestation/key distribution; parent-owned approval/release/receipt adapters;
 independent sandbox/security and semantic-evidence review. Local unit tests do not
 satisfy these live/deployment/assurance gates.

@@ -1,0 +1,132 @@
+{
+  "timestamp": "2026-11-05T17:49:25.135511+00:00",
+  "live_inference": true,
+  "synthetic_evidence": true,
+  "profile": {
+    "id": "deepseek-v4-1-flash",
+    "repo": "tinfoilsh/confidential-deepseek-v4-1-flash",
+    "release_digest": "sha256:71f41a053232a06dd6ed61ca3a40502a9b972dc16dd9f04ca895ced5a7809def",
+    "artifact_digest": "sha256:6c4a2b637f7f45d9e48d1bdc38c12e0454584f48d3759851f7ee4471cd90b2e7",
+    "model_revision": "deepseek-ai/DeepSeek-V4.1-Flash-1017@1bae0e1088993b9b82de08f59de5be5a34e42170",
+    "context_tokens": 1048576,
+    "serving_image": "sha256:b98ca8cc6ace7ecc00eb08b5e550992175f46766a69a68508ca8227490101af5",
+    "tool_parser": "deepseek_v41",
+    "reasoning_parser": "deepseek_v41",
+    "inference": {
+      "temperature": 1.0,
+      "top_p": 1.0,
+      "reasoning_effort": "low",
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "reasoning_effort": "low",
+        "drop_thinking": false
+      }
+    }
+  },
+  "host": "deepseek-v4-1-flash-inf16-0.tinfoil.containers.tinfoil.dev",
+  "transport": "go",
+  "scenario": "northstar-agent-reconciliation-seed17",
+  "inference_attempted": true,
+  "status": "passed",
+  "stage": "multi_turn_agent",
+  "broker_sha256": "7eeee63fa8adcefe53c842d8829729afa58234b52e683e63c7a0386dd30e3032",
+  "scenario_events": 5,
+  "attestation_verified": true,
+  "verification": {
+    "securityVerified": true,
+    "configRepo": "tinfoilsh/confidential-deepseek-v4-1-flash",
+    "enclaveHost": "deepseek-v4-1-flash-inf16-0.tinfoil.containers.tinfoil.dev",
+    "releaseDigest": "71f41a053232a06dd6ed61ca3a40502a9b972dc16dd9f04ca895ced5a7809def",
+    "tlsPublicKey": "bd4fd6b24ad43d34041312694cd9bc6cdf83380829328eb83adf0442601c5488",
+    "verifier": {
+      "name": "tinfoil-go",
+      "version": "0.16.4"
+    },
+    "verifiedAt": "2026-11-05T17:49:30.371109473Z",
+    "freshnessExpiresAt": "2026-11-09T22:20:58Z",
+    "steps": {
+      "compareMeasurements": {
+        "status": "success"
+      },
+      "fetchDigest": {
+        "status": "success"
+      },
+      "verifyCode": {
+        "status": "success"
+      },
+      "verifyEnclave": {
+        "status": "success"
+      }
+    },
+    "codeTag": "v0.0.10+b200",
+    "attestationSHA256": "2e0176e31cadf9f5db78adc263d5965bea67596699bcfffa2866bc3e61a40cc0",
+    "platformReference": {
+      "digest": "6a4515c3305a81136bda42aef5fc4f13a4a2c63a51c522b17883d008cfbbd472",
+      "repo": "tinfoilsh/cvmimage",
+      "tag": "platform-v0.1.10"
+    }
+  },
+  "tokenizer_parity": [
+    {
+      "chat_count": 702,
+      "released_prompt_count": 702,
+      "equal": true
+    },
+    {
+      "chat_count": 713,
+      "released_prompt_count": 713,
+      "equal": true
+    }
+  ],
+  "findings_count": 1,
+  "verification_at_completion": {
+    "securityVerified": true,
+    "configRepo": "tinfoilsh/confidential-deepseek-v4-1-flash",
+    "enclaveHost": "deepseek-v4-1-flash-inf16-0.tinfoil.containers.tinfoil.dev",
+    "releaseDigest": "71f41a053232a06dd6ed61ca3a40502a9b972dc16dd9f04ca895ced5a7809def",
+    "tlsPublicKey": "bd4fd6b24ad43d34041312694cd9bc6cdf83380829328eb83adf0442601c5488",
+    "verifier": {
+      "name": "tinfoil-go",
+      "version": "0.16.4"
+    },
+    "verifiedAt": "2026-11-05T17:49:47.394161663Z",
+    "freshnessExpiresAt": "2026-11-09T22:20:58Z",
+    "steps": {
+      "compareMeasurements": {
+        "status": "success"
+      },
+      "fetchDigest": {
+        "status": "success"
+      },
+      "verifyCode": {
+        "status": "success"
+      },
+      "verifyEnclave": {
+        "status": "success"
+      }
+    },
+    "codeTag": "v0.0.10+b200",
+    "attestationSHA256": "f560c15b0a1ebf8d4419bfb1b3ecc05e4360addd34da5fa3c1bf8c5a7b3e97f9",
+    "platformReference": {
+      "digest": "6a4515c3305a81136bda42aef5fc4f13a4a2c63a51c522b17883d008cfbbd472",
+      "repo": "tinfoilsh/cvmimage",
+      "tag": "platform-v0.1.10"
+    }
+  },
+  "usage": {
+    "turns": 2,
+    "tool_calls": 7,
+    "total_tokens": 13447,
+    "prompt_tokens": 11294,
+    "completion_tokens": 2153
+  },
+  "tools_exercised": [
+    "counterevidence",
+    "coverage",
+    "fetch",
+    "join",
+    "python",
+    "search",
+    "sql"
+  ]
+}
