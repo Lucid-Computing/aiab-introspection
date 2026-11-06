@@ -159,7 +159,11 @@ def test_the_whole_flow_issues_the_ui_cookie_with_the_party_from_the_group(okta,
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
     assert response.status_code == 303 and response.headers["location"] == "/a/bio/plan"
     user = web.signer.read(response.cookies[web.COOKIE])
-    assert user == {"username": "teddy", "party": "lab", "display_name": "Teddy Lab"}
+    assert user == {
+        "username": auth.principal_id("oidc", ISSUER, "00u-teddy"),
+        "party": "lab",
+        "display_name": "Teddy Lab",
+    }
     assert response.cookies.get(web.ID_TOKEN_COOKIE)
     # The code went to the token endpoint with PKCE and the client secret, not in the URL.
     [asked] = okta.issued
@@ -172,7 +176,9 @@ def test_anyone_not_on_the_admin_list_is_the_auditor(okta, client):
     q = start(client, okta)
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
     assert web.signer.read(response.cookies[web.COOKIE])["party"] == "auditor"
-    assert web.signer.read(response.cookies[web.COOKIE])["username"] == "caleb"
+    assert web.signer.read(response.cookies[web.COOKIE])["username"] == auth.principal_id(
+        "oidc", ISSUER, "00u-teddy"
+    )
 
 
 def test_not_in_the_group_is_refused_and_a_stranger_is_the_auditor(okta, client):
@@ -270,9 +276,15 @@ def test_id_token_for_another_client_issuer_nonce_or_expired_is_refused(okta, cl
 
 
 def test_local_accounts_work_next_to_okta(okta, client):
-    bad = client.post("/login", data={"username": "demo", "password": "whatever-1234"})
+    bad = client.post(
+        "/login", headers={"origin": ORIGIN}, data={"username": "demo", "password": "whatever-1234"}
+    )
     assert bad.status_code == 200 and web.COOKIE not in bad.cookies
-    good = client.post("/login", data={"username": "demo", "password": "demo-pass-1234"})
+    good = client.post(
+        "/login",
+        headers={"origin": ORIGIN},
+        data={"username": "demo", "password": "demo-pass-1234"},
+    )
     assert good.status_code == 303
     assert web.signer.read(good.cookies[web.COOKIE])["party"] == "auditor"
     assert client.post("/logout").headers["location"] == "/login"  # no Okta session to end
@@ -333,9 +345,15 @@ def test_without_okta_the_local_accounts_still_work(tmp_path, monkeypatch, clien
     )
     assert 'name="password"' in client.get("/login").text
     assert client.get("/login/start").status_code == 303  # back to /login with an error
-    bad = client.post("/login", data={"username": "caleb", "password": "wrong-pass-1"})
+    bad = client.post(
+        "/login", headers={"origin": ORIGIN}, data={"username": "caleb", "password": "wrong-pass-1"}
+    )
     assert bad.status_code == 200 and web.COOKIE not in bad.cookies
-    good = client.post("/login", data={"username": "caleb", "password": "auditor-pass-1"})
+    good = client.post(
+        "/login",
+        headers={"origin": ORIGIN},
+        data={"username": "caleb", "password": "auditor-pass-1"},
+    )
     assert good.status_code == 303
     assert web.signer.read(good.cookies[web.COOKIE])["party"] == "auditor"
     assert client.post("/logout").headers["location"] == "/login"
@@ -350,3 +368,137 @@ def test_bootstrap_adds_new_accounts_and_keeps_existing_passwords(tmp_path, monk
     assert auth.authenticate(path, "lab@lab.com", "kept-1") is not None  # not overwritten
     assert auth.authenticate(path, "auditor@auditor.com", "auditor123").party == "auditor"
     assert "skipping x" in capsys.readouterr().err
+
+
+def test_principal_binds_issuer_subject_and_separates_local_accounts(tmp_path):
+    login = auth.OidcLogin(ISSUER, CLIENT_ID, CLIENT_SECRET, admins_file=tmp_path / "admins")
+    signer = auth.SessionSigner(b"synthetic-session-key")
+    claims = {"sub": "stable-subject", "email": "alice@one.example", "name": "Alice"}
+    first = signer.read(signer.issue(login.account(claims)))
+    renamed = signer.read(signer.issue(login.account(dict(claims, email="new@two.example"))))
+    assert first["username"] == renamed["username"]
+    assert first["display_name"] == "Alice"
+    same_email = signer.read(signer.issue(login.account(dict(claims, sub="another-subject"))))
+    other_issuer = auth.OidcLogin(
+        "https://other-issuer.test", CLIENT_ID, CLIENT_SECRET, admins_file=tmp_path / "admins"
+    )
+    other = signer.read(signer.issue(other_issuer.account(claims)))
+    local = signer.read(signer.issue(auth.Account("alice", "auditor", "Alice", "")))
+    # Even a local login whose literal name is an OIDC principal cannot choose that authority.
+    spoof = signer.read(signer.issue(auth.Account(first["username"], "auditor", "Alice", "")))
+    assert len({u["username"] for u in (first, same_email, other, local, spoof)}) == 5
+    assert first["username"].startswith("oidc:") and local["username"].startswith("local:")
+    assert (
+        signer.read(signer.issue(auth.Account("alice", "lab", "Renamed", "")))["username"]
+        == local["username"]
+    )
+
+
+@pytest.mark.parametrize("sub", [None, "", " ", 42])
+def test_oidc_mapping_refuses_invalid_subject(tmp_path, sub):
+    login = auth.OidcLogin(ISSUER, CLIENT_ID, CLIENT_SECRET, admins_file=tmp_path / "admins")
+    with pytest.raises(auth.LoginError, match="subject"):
+        login.account({"sub": sub, "email": "alice@one.example"})
+    with pytest.raises(auth.LoginError, match="issuer"):
+        login.account({"sub": "valid", "iss": "https://foreign.test"})
+
+
+@pytest.mark.parametrize("legacy_version", [None, 1])
+def test_legacy_signed_session_is_rejected(legacy_version):
+    signer = auth.SessionSigner(b"synthetic-session-key")
+    body = {"u": "alice", "p": "auditor", "n": "Alice", "exp": int(time.time()) + 300}
+    if legacy_version is not None:
+        body["v"] = legacy_version
+    payload = auth._b64(json.dumps(body).encode())
+    token = f"{payload}.{signer._mac(payload)}"
+    assert signer.read(token) is None
+    fresh = signer.issue(auth.Account("alice", "auditor", "Alice", ""))
+    assert signer.read(fresh)["username"] == auth.principal_id("local", "alice")
+    assert signer.read(fresh + "tampered") is None
+    assert (
+        auth.SessionSigner(b"synthetic-session-key", ttl=-1).read(
+            auth.SessionSigner(b"synthetic-session-key", ttl=-1).issue(
+                auth.Account("alice", "auditor", "Alice", "")
+            )
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("scheme,secure", [("https", True), ("http", False)])
+def test_all_oidc_auth_cookies_follow_public_https(okta, scheme, secure):
+    with TestClient(web.app, base_url=f"{scheme}://testserver", follow_redirects=False) as client:
+        response = client.get("/login/start")
+        okta.nonce = parse_qs(urlsplit(response.headers["location"]).query)["nonce"][0]
+        state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+        assert response.cookies[web.LOGIN_COOKIE]
+        for cookie in response.cookies.jar:
+            assert cookie.secure is secure
+            assert cookie.has_nonstandard_attr("HttpOnly")
+        response = client.get("/login/callback", params={"code": "good-code", "state": state})
+        assert response.status_code == 303
+        assert response.cookies[web.COOKIE] and response.cookies[web.ID_TOKEN_COOKIE]
+        for cookie in response.cookies.jar:
+            assert cookie.secure is secure
+            assert cookie.has_nonstandard_attr("HttpOnly")
+        response = client.post("/logout")
+        for header in response.headers.get_list("set-cookie"):
+            assert ("secure" in header.lower().split("; ")) is secure
+
+
+def test_trusted_public_origin_overrides_caller_headers(okta, client, monkeypatch):
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://trusted.example/")
+    malicious = {
+        "host": "attacker.example",
+        "x-forwarded-proto": "http",
+        "x-forwarded-host": "attacker.example",
+    }
+    response = client.get("/login/start", headers=malicious)
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert query["redirect_uri"] == ["https://trusted.example/login/callback"]
+    assert all(cookie.secure for cookie in response.cookies.jar)
+    for origin in [
+        None,
+        "null",
+        "http://trusted.example",
+        "https://attacker.example",
+        "https://trusted.example/",
+    ]:
+        response = client.post(
+            "/login",
+            data={"username": "demo", "password": "demo-pass-1234"},
+            headers=malicious | ({"origin": origin} if origin is not None else {}),
+        )
+        assert response.status_code == 403 and not response.cookies
+    response = client.post(
+        "/login",
+        data={"username": "demo", "password": "demo-pass-1234"},
+        headers=malicious | {"origin": "https://trusted.example"},
+    )
+    assert response.status_code == 303
+    assert all(cookie.secure for cookie in response.cookies.jar)
+
+
+def test_local_account_file_cannot_override_namespace(tmp_path):
+    path = tmp_path / "accounts.json"
+    fake_oidc_id = auth.principal_id("oidc", ISSUER, "subject")
+    account = auth.Account(
+        "alice", "auditor", "Alice", auth.hash_password("synthetic-pass"), fake_oidc_id
+    )
+    # Both normal account writes and pre-existing account JSON retain only local authority.
+    auth.save_account(path, account)
+    assert "principal_id" not in json.loads(path.read_text())["accounts"][0]
+    payload = json.loads(path.read_text())
+    payload["accounts"][0]["principal_id"] = fake_oidc_id
+    path.write_text(json.dumps(payload))
+    signed = auth.SessionSigner(b"synthetic-key")
+    user = signed.read(signed.issue(auth.authenticate(path, "alice", "synthetic-pass")))
+    assert user["username"] == auth.principal_id("local", "alice")
+    assert user["username"] != fake_oidc_id
+
+
+def test_exact_issuer_is_part_of_principal(tmp_path):
+    claims = {"sub": "subject", "email": "same@example.test"}
+    no_slash = auth.OidcLogin(ISSUER, CLIENT_ID, CLIENT_SECRET, admins_file=tmp_path / "admins")
+    slash = auth.OidcLogin(ISSUER + "/", CLIENT_ID, CLIENT_SECRET, admins_file=tmp_path / "admins")
+    assert no_slash.account(claims).principal_id != slash.account(claims).principal_id

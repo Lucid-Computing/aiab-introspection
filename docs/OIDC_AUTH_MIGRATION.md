@@ -163,3 +163,80 @@ group, *Sign On › Groups claim filter*: `groups` equals `aiab`); the org URL i
 issuer. On the UI: `OIDC_ISSUER=https://<org>.okta.com`, the client ID and secret,
 `OIDC_GROUP=aiab` and `OIDC_SCOPES="openid profile email groups"`. Then only members of
 the group pass, before `admins.json` is consulted.
+
+## AUTH-01/02/03 security transition (session protocol v2)
+
+This section supersedes the earlier username attribution, redirect URI and rollback
+instructions above. Session `username` is now an opaque authority identifier:
+`oidc:` plus SHA-256 of the canonical JSON array `["oidc", issuer, subject]`, or
+`local:` plus SHA-256 of `["local", exact_local_username]`. Email, preferred username,
+name, party and client ID do not select ownership. A changed email keeps the same
+OIDC authority; a different issuer or subject creates a different authority. Local
+accounts remain a separate namespace even when their login name equals an OIDC ID.
+`display_name` remains readable. Workbench bootstrap keeps its existing field names;
+`user.username` and `user.id` carry this authority ID. Display the name, and compare
+IDs for ownership and consent. Subjects inside source datasets are a separate domain;
+they are not automatically relabeled to authentication IDs.
+
+All pre-v2 `aiab_ui` cookies are rejected even with a valid signature and unexpired
+expiry. Everyone must log in again. This does not revoke valid v2 sessions server-side;
+the existing 12-hour expiry contract remains. Local POST `/login` requires an exact
+Origin match, including scheme and authority; missing, foreign, `null` and trailing
+slash Origins are rejected before credential checks or cookie issuance.
+`RENDER_EXTERNAL_URL`, when set, supplies the trusted public origin ahead of caller
+Host and forwarded headers, including callback/logout URLs and Secure decisions.
+Without it, the existing proxy scheme/Host behavior supports local development.
+All authentication cookies (pending login, UI session, ID token, and their deletion
+responses) use Secure for a public HTTPS origin and HttpOnly/SameSite=Lax. Local HTTP
+development remains supported. Operators must set the trusted public URL on hosted
+services; proxy headers are not a substitute for that trust configuration.
+
+### Legacy quarantine and independently verified re-enrollment
+
+The production composition root opens **`<data>/workbench/principal-v2/`** for new
+workbench/governance databases, source grants, signing material and evaluation jobs.
+The old `<data>/workbench/` records are retained in place and never opened as active
+authority. There is no username-to-principal fallback or automatic ownership transfer.
+This intentionally quarantines all legacy ownership/enrollment, even seemingly unique
+usernames: uniqueness does not establish who authenticated historically. Old receipts,
+signatures, immutable revisions, runs and source records remain historical artifacts;
+the server does not rewrite their bindings. Old receipt signing keys are not copied
+into the new active store. Previously issued receipts retain their historical key
+verification requirements; new receipts require the new store's public key.
+
+Deployment and migration are operator decisions, not performed by this patch. Before
+activating this version:
+
+1. Stop writes and take a consistent SQLite backup (including WAL state), plus all
+   workbench source files and key material. Preserve a read-only copy with file hashes.
+   Inventory old identities, plans, runs, rosters, grants, releases and signing keys.
+2. Verify each intended person's issuer and immutable subject independently through
+   the trusted provider/operator records and their authenticated new-session ID. For
+   local accounts, independently verify the named account's authorized custodian.
+   Email, matching local parts, possession of an old UI cookie, or a claimant's new
+   signature alone do not prove historical ownership. If ownership cannot be resolved,
+   leave the records quarantined. Do not expose them to the claimant for verification.
+3. In the fresh `principal-v2` store, have verified people enroll keys with the normal
+   signed enrollment challenge. Trusted operators must separately verify and provision
+   source/release/roster authorities using the existing offline workbench admin tooling
+   with `--directory <data>/workbench/principal-v2`. Its trust acknowledgement records
+   an operator assertion; it is not independent verification by the application.
+4. After independently establishing rights to each input, deliberately import only
+   authorized unsigned plan/data content as new objects for the verified principal.
+   Rebuild source authorization, frozen rosters and release policies with current IDs;
+   verify source commitments and release history/budgets, including prior releases, so
+   re-enrollment does not reset a privacy limit. Obtain fresh exact-digest binding and
+   consent from every participant. Never relabel signed agreements, enrollment
+   challenges, approvals, receipts or historical ledger entries. Old runs/results
+   remain quarantined; do not replay or serve them under a newly inferred owner.
+5. Check cross-principal private reads fail, legacy cookies get 401, fresh signed
+   enrollment/consent succeeds, and trusted HTTPS login sets Secure on every auth
+   cookie. Keep unresolved ownership or release accounting disabled. Preserve the
+   inventory, independent evidence and explicit operator decisions as migration audit
+   records.
+
+Do not roll back to the legacy username authority or point new code at an old store:
+that reopens the alias defect. If activation must be paused, stop authenticated
+workbench access while retaining both stores. Hosted deployment, provider validation,
+legacy verification and privacy-accounting reconciliation remain gates for the parent
+operator; no production migration or provider changes were performed here.

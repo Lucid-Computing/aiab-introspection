@@ -203,3 +203,42 @@ Validation results:
   72 passes, all 81 selected static cases passed across the two runs. This is a
   targeted rerun, not a claim of a fresh 81-case full green execution.
 - No frontend changes were made; no frontend build/browser checks were run.
+
+## AUTH-01/02/03 implementation follow-up (2026-11-06)
+
+The preserved five strict-xfail cases for AUTH-01/02/03 now pass and their markers
+have been removed. AUTH-04's already-integrated behavior is unchanged.
+
+- Session protocol v2 uses namespaced authority IDs derived from exact OIDC
+  issuer+subject or the exact local account name. Readable `display_name` remains;
+  changing email does not change authority. Legacy signed cookies are rejected.
+- Production workbench/governance/evaluation storage now uses the isolated
+  `workbench/principal-v2` directory. Legacy ownership and enrollment remain
+  quarantined in the original store, with no record or signature relabeling.
+- Local password login requires the exact public Origin. Missing/foreign Origin
+  is denied without cookies. Trusted `RENDER_EXTERNAL_URL` takes precedence over
+  caller Host/forwarded headers. All auth cookies use Secure on public HTTPS;
+  local HTTP remains available.
+- New regressions cover same-email/different-subject isolation, issuer isolation
+  (including exact issuer spelling), changed-email continuity, local/OIDC namespace
+  separation, rejection of old cookies at authenticated endpoints, byte-preserved
+  legacy database quarantine, and pending/session/ID-token cookie attributes.
+
+Local validation (no provider requests, hosted changes or real inference):
+
+- Latest OIDC and tester suites: **47 passed**, no xfails (102.69 seconds).
+- Earlier combined OIDC, tester and workbench API suites: **54 passed**
+  (219.00 seconds), including all 14 workbench API cases. The later run above
+  adds/finalizes identity and quarantine regressions; these totals overlap.
+- Remaining UI suite (excluding those three files): **158 passed** (261.20 seconds).
+  Together the runs cover all **219 collected UI cases**; this is coverage across
+  separate runs, not a claim of a fresh single full-suite execution.
+- Final strengthened login-rejection and quarantine checks: **3 passed**, 16
+  deselected (6.15 seconds).
+- Ruff check/format on changed Python files and `git diff --check`: passed.
+
+See the session-v2 transition section in [OIDC_AUTH_MIGRATION.md](../OIDC_AUTH_MIGRATION.md)
+for the explicit independently verified re-enrollment procedure. Hosted deployment,
+provider callback validation, legacy ownership verification, privacy release-budget
+reconciliation, new receipt-key distribution and frontend display integration remain
+parent/operator gates. This implementation performed none of those hosted actions.

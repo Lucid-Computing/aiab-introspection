@@ -1,6 +1,6 @@
-"""Independent authorization probes; strict xfails preserve reproducible security findings.
+"""Independent authorization probes preserving the secure behavior for reported findings.
 
-No provider requests, inference, hosted writes or application fixes. All storage is tmp_path.
+No provider requests, inference or hosted writes. All storage is tmp_path.
 Shared fixtures provision synthetic authority in a disposable local FastAPI app.
 """
 
@@ -47,11 +47,6 @@ def session_app(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("other_kind", ["oidc-other-domain", "local-password"])
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="AUTH-01: email local-part aliases independent principals",
-)
 def test_independent_principals_cannot_read_each_others_private_plan(
     session_app, tmp_path, other_kind
 ):
@@ -84,11 +79,6 @@ def test_independent_principals_cannot_read_each_others_private_plan(
 
 
 @pytest.mark.parametrize("origin", [None, "https://attacker.example"])
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="AUTH-02: local password login accepts cross-origin/absent Origin",
-)
 def test_login_rejects_cross_site_session_replacement(session_app, origin):
     web, _, client = session_app
     client.cookies.set(
@@ -103,11 +93,9 @@ def test_login_rejects_cross_site_session_replacement(session_app, origin):
     assert response.status_code == 403, (
         f"Cross-site login replaced browser identity: HTTP {response.status_code}"
     )
+    assert not response.cookies
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="AUTH-03: hosted HTTPS session cookie omits Secure"
-)
 def test_https_session_cookie_is_secure(session_app):
     _, _, client = session_app
     response = client.post(
@@ -248,3 +236,79 @@ def test_reader_copy_cannot_hide_owner_agreement_from_other_participants(joint):
     assert response.status_code == 200, (
         f"Reader's private copy hid owner's agreement: HTTP {response.status_code}"
     )
+
+
+@pytest.mark.parametrize(
+    "other_kind", ["same-email-new-subject", "same-subject-new-issuer", "same-subject-new-email"]
+)
+def test_stable_principal_private_access(session_app, tmp_path, other_kind):
+    web, service, client = session_app
+    issuer = "https://issuer.test"
+    claims = {"sub": "stable-owner", "email": "owner@one.example"}
+    owner_login = auth.OidcLogin(issuer, "client", "unused", admins_file=tmp_path / "admins")
+    owner = owner_login.account(claims)
+    client.cookies.set(web.COOKIE, web.signer.issue(owner))
+    plan = copy.deepcopy(service.catalog()[0]["plan"])
+    plan["id"] = "stable-private-" + uuid4().hex
+    assert (
+        client.post(
+            "/api/workbench/plans", json={"plan": plan}, headers={"origin": "https://testserver"}
+        ).status_code
+        == 200
+    )
+    if other_kind == "same-email-new-subject":
+        claims["sub"] = "independent-subject"
+    elif other_kind == "same-subject-new-issuer":
+        issuer = "https://other-issuer.test"
+    else:
+        claims["email"] = "renamed@two.example"
+    new_login = auth.OidcLogin(issuer, "client", "unused", admins_file=tmp_path / "admins")
+    client.cookies.clear()
+    client.cookies.set(web.COOKIE, web.signer.issue(new_login.account(claims)))
+    response = client.get("/api/workbench/plans/" + plan["id"])
+    assert response.status_code == (200 if other_kind == "same-subject-new-email" else 404)
+
+
+def test_legacy_cookie_cannot_access_private_records(session_app):
+    import json
+    import time
+
+    web, service, client = session_app
+    body = {"u": "tester-local", "p": "auditor", "n": "Legacy", "exp": int(time.time()) + 300}
+    payload = auth._b64(json.dumps(body).encode())
+    client.cookies.set(web.COOKIE, f"{payload}.{web.signer._mac(payload)}")
+    assert client.get("/api/workbench/bootstrap").status_code == 401
+    assert (
+        client.post(
+            "/api/workbench/identities/challenge", json={}, headers={"origin": "https://testserver"}
+        ).status_code
+        == 401
+    )
+
+
+def test_production_namespace_quarantines_legacy_authority(tmp_path):
+    import base64
+    import hashlib
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from server import app as web
+
+    # Production's composition root must never open the legacy root as active storage.
+    assert web.workbench.directory.name == auth.WORKBENCH_AUTH_NAMESPACE
+    legacy = WorkbenchAPI(tmp_path, lambda r: {"username": "tester-local"})
+    plan = copy.deepcopy(legacy.catalog()[0]["plan"])
+    legacy.store.save_plan("tester-local", plan, "legacy-digest", create=True)
+    public = base64.b64encode(Ed25519PrivateKey.generate().public_key().public_bytes_raw()).decode()
+    legacy.governance.enroll_identity("tester-local", public)
+    # Retain the raw legacy database files, including any signed payloads, byte-for-byte.
+    before = {p: hashlib.sha256(p.read_bytes()).digest() for p in tmp_path.iterdir() if p.is_file()}
+    current = WorkbenchAPI(tmp_path / auth.WORKBENCH_AUTH_NAMESPACE, legacy.user_of)
+    app = FastAPI()
+    app.include_router(current.router)
+    with TestClient(app) as client:
+        assert client.get("/api/workbench/plans/" + plan["id"]).status_code == 404
+        assert client.get("/api/workbench/bootstrap").json()["plans"] == []
+    with current.governance._db() as db:
+        assert current.governance._get(db, "identity", "tester-local", False) is None
+    assert {p: hashlib.sha256(p.read_bytes()).digest() for p in before} == before

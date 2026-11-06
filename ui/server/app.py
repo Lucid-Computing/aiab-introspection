@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import secrets
 import time
@@ -30,7 +31,15 @@ from server import (
     slackexport,
 )
 from server import plan_view as pv
-from server.auth import LoginError, OidcLogin, SessionSigner, Stamp, authenticate, pkce_pair
+from server.auth import (
+    WORKBENCH_AUTH_NAMESPACE,
+    LoginError,
+    OidcLogin,
+    SessionSigner,
+    Stamp,
+    authenticate,
+    pkce_pair,
+)
 from server.box import box_status
 from server.config import UI_ROOT, LogSource, Settings, load_settings
 from server.plan_view import PARTIES
@@ -219,7 +228,9 @@ def user_of(request: Request) -> dict[str, str] | None:
     return signer.read(request.cookies.get(COOKIE))
 
 
-workbench = WorkbenchAPI(settings.runs_dir.parent / "workbench", user_of)
+# Quarantine ambiguous legacy ownership and signed bindings without rewriting them.
+# Re-enrollment requires fresh authorization; see docs/OIDC_AUTH_MIGRATION.md.
+workbench = WorkbenchAPI(settings.runs_dir.parent / "workbench" / WORKBENCH_AUTH_NAMESPACE, user_of)
 app.include_router(workbench.router)
 app.include_router(workbench_assist_router(workbench))
 
@@ -316,8 +327,13 @@ def agreement(
 
 
 def public_origin(request: Request) -> str:
-    """The address this UI is reached at, as the provider must see it in redirect URIs:
-    X-Forwarded-Proto and Host behind Render's proxy, the request's own otherwise."""
+    """Trusted deployment origin first; proxy/request address for local development."""
+    configured = os.environ.get("RENDER_EXTERNAL_URL")
+    if configured:
+        parsed = urlsplit(configured)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("RENDER_EXTERNAL_URL must be an absolute HTTP(S) URL")
+        return f"{parsed.scheme}://{parsed.netloc}"
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
     host = request.headers.get("host") or request.url.netloc
     return f"{scheme}://{host}"
@@ -349,7 +365,14 @@ async def login_start(request: Request) -> Response:
     sealed = stamp.seal(
         {"s": state, "n": nonce, "v": verifier, "next": safe_next(request.query_params.get("next"))}
     )
-    response.set_cookie(LOGIN_COOKIE, sealed, httponly=True, samesite="lax", max_age=600)
+    response.set_cookie(
+        LOGIN_COOKIE,
+        sealed,
+        httponly=True,
+        secure=public_origin(request).startswith("https://"),
+        samesite="lax",
+        max_age=600,
+    )
     return response
 
 
@@ -382,12 +405,34 @@ async def login_callback(request: Request) -> Response:
         )
     except LoginError as exc:
         response = render(request, "login.html", next=pending["next"], err=str(exc))
-        response.delete_cookie(LOGIN_COOKIE)
+        response.delete_cookie(
+            LOGIN_COOKIE,
+            secure=public_origin(request).startswith("https://"),
+            httponly=True,
+            samesite="lax",
+        )
         return response
     response = RedirectResponse(pending["next"], status_code=303)
-    response.delete_cookie(LOGIN_COOKIE)
-    response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
-    response.set_cookie(ID_TOKEN_COOKIE, id_token, httponly=True, samesite="lax")
+    response.delete_cookie(
+        LOGIN_COOKIE,
+        secure=public_origin(request).startswith("https://"),
+        httponly=True,
+        samesite="lax",
+    )
+    response.set_cookie(
+        COOKIE,
+        signer.issue(account),
+        httponly=True,
+        secure=public_origin(request).startswith("https://"),
+        samesite="lax",
+    )
+    response.set_cookie(
+        ID_TOKEN_COOKIE,
+        id_token,
+        httponly=True,
+        secure=public_origin(request).startswith("https://"),
+        samesite="lax",
+    )
     return response
 
 
@@ -400,12 +445,20 @@ async def login(
 ) -> Response:
     """The local accounts' password form. Works with or without the provider: local accounts are
     the operator's own (demo users, a way in when the provider is down)."""
+    if request.headers.get("origin") != public_origin(request):
+        return Response("Same-origin request required.", status_code=403)
     target = safe_next(next)
     account = authenticate(settings.accounts_file, username.strip(), password)
     if account is None:
         return render(request, "login.html", next=target, err="Unknown account or wrong password.")
     response = RedirectResponse(target, status_code=303)
-    response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
+    response.set_cookie(
+        COOKIE,
+        signer.issue(account),
+        httponly=True,
+        secure=public_origin(request).startswith("https://"),
+        samesite="lax",
+    )
     return response
 
 
@@ -420,8 +473,15 @@ async def logout(request: Request) -> Response:
         if url:
             target = url
     response = RedirectResponse(target, status_code=303)
-    response.delete_cookie(COOKIE)
-    response.delete_cookie(ID_TOKEN_COOKIE)
+    response.delete_cookie(
+        COOKIE, secure=public_origin(request).startswith("https://"), httponly=True, samesite="lax"
+    )
+    response.delete_cookie(
+        ID_TOKEN_COOKIE,
+        secure=public_origin(request).startswith("https://"),
+        httponly=True,
+        samesite="lax",
+    )
     return response
 
 

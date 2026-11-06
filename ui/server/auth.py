@@ -5,8 +5,8 @@ The identity provider authenticates; the UI's own cookie authorises. ``GET /logi
 sends the browser to the provider's authorization endpoint (authorization code flow with
 PKCE, state and nonce kept in a short-lived signed cookie). ``GET /login/callback``
 exchanges the code, checks the ID token against the provider's key set, and the app
-issues the same ``SessionSigner`` cookie as before, carrying the party. Which party they
-are is the UI's own business: the emails in ``admins.json`` are the lab, everyone else the
+issues a versioned ``SessionSigner`` cookie carrying the stable principal and party. Their
+party is the UI's own business: the emails in ``admins.json`` are the lab, everyone else the
 provider signs in is the auditor; ``python -m server.auth admin EMAIL`` edits the list. A
 provider group can gate access as well (``group=``, read from the ID token's groups claim;
 Okta puts one there, WorkOS does not).
@@ -31,7 +31,7 @@ import secrets
 import sys
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -43,6 +43,8 @@ MIN_PASSWORD = 6  # demo accounts such as lab123; real people sign in through th
 PBKDF2_ITERATIONS = 600_000
 PARTIES = ("lab", "auditor")
 SESSION_TTL_SECONDS = 12 * 3600
+SESSION_VERSION = 2
+WORKBENCH_AUTH_NAMESPACE = "principal-v2"
 
 
 def _b64(data: bytes) -> str:
@@ -78,19 +80,35 @@ class Account:
     party: str
     display_name: str
     password_hash: str
+    # Only verified OIDC mapping sets this; local account files keep login usernames.
+    principal_id: str | None = None
+
+
+def principal_id(namespace: str, *identity: str) -> str:
+    """Unambiguous, domain-separated authority key, independent of display metadata."""
+    encoded = json.dumps([namespace, *identity], ensure_ascii=True, separators=(",", ":"))
+    return f"{namespace}:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def load_accounts(path: Path) -> dict[str, Account]:
     if not path.is_file():
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    return {row["username"]: Account(**row) for row in data.get("accounts", [])}
+    return {
+        row["username"]: replace(Account(**row), principal_id=None)
+        for row in data.get("accounts", [])
+    }
 
 
 def save_account(path: Path, account: Account) -> None:
     accounts = load_accounts(path)
     accounts[account.username] = account
-    payload = {"accounts": [asdict(a) for a in accounts.values()]}
+    payload = {
+        "accounts": [
+            {key: value for key, value in asdict(a).items() if key != "principal_id"}
+            for a in accounts.values()
+        ]
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -116,7 +134,8 @@ class SessionSigner:
 
     def issue(self, account: Account) -> str:
         body = {
-            "u": account.username,
+            "v": SESSION_VERSION,
+            "u": account.principal_id or principal_id("local", account.username),
             "p": account.party,
             "n": account.display_name,
             "exp": int(time.time()) + self._ttl,
@@ -134,7 +153,23 @@ class SessionSigner:
             body = json.loads(_unb64(payload))
         except ValueError:
             return None
-        if body.get("exp", 0) < time.time() or body.get("p") not in PARTIES:
+        if not isinstance(body, dict) or body.get("v") != SESSION_VERSION:
+            return None
+        expires = body.get("exp")
+        actor = body.get("u")
+        if (
+            not isinstance(expires, (int, float))
+            or expires < time.time()
+            or body.get("p") not in PARTIES
+            or not isinstance(actor, str)
+            or not any(
+                actor.startswith(prefix)
+                and len(actor) == len(prefix) + 64
+                and all(c in "0123456789abcdef" for c in actor[len(prefix) :])
+                for prefix in ("oidc:", "local:")
+            )
+            or not isinstance(body.get("n"), str)
+        ):
             return None
         return {"username": body["u"], "party": body["p"], "display_name": body.get("n", body["u"])}
 
@@ -223,7 +258,7 @@ class OidcLogin:
         transport: Any | None = None,
         leeway: int = 10,
     ) -> None:
-        self.issuer = issuer.rstrip("/")
+        self.issuer = issuer
         self.client_id = client_id
         self._secret = client_secret
         self.admins_file = admins_file
@@ -248,7 +283,9 @@ class OidcLogin:
             if self._metadata is None:
                 try:
                     with self._client() as client:
-                        response = client.get(f"{self.issuer}/.well-known/openid-configuration")
+                        response = client.get(
+                            f"{self.issuer.rstrip('/')}/.well-known/openid-configuration"
+                        )
                         response.raise_for_status()
                         data = response.json()
                 except (httpx.HTTPError, ValueError) as exc:
@@ -350,7 +387,13 @@ class OidcLogin:
 
     def account(self, claims: dict[str, Any]) -> Account:
         """The ID token's holder as an Account: in the group (when one is set); lab when the
-        email is in admins.json, auditor otherwise; the username is the login's local part."""
+        email is in admins.json, auditor otherwise. Authority binds issuer and subject;
+        the login and name remain display metadata."""
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject.strip():
+            raise LoginError("The ID token has no valid subject.")
+        if claims.get("iss", self.issuer) != self.issuer:
+            raise LoginError("The ID token has the wrong issuer.")
         login = claims.get("preferred_username") or claims.get("email") or claims["sub"]
         email = (claims.get("email") or login).strip().lower()
         if self.group:
@@ -368,7 +411,11 @@ class OidcLogin:
             filter(None, [claims.get("given_name"), claims.get("family_name")])
         )
         return Account(
-            username=username, party=party, display_name=name or username, password_hash=""
+            username=username,
+            party=party,
+            display_name=name or login,
+            password_hash="",
+            principal_id=principal_id("oidc", self.issuer, subject),
         )
 
     def login(self, code: str, redirect_uri: str, verifier: str, nonce: str) -> tuple[Account, str]:
