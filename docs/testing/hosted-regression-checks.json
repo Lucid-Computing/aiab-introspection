@@ -1,0 +1,50 @@
+{
+  "deployed_commit": "0dd3cecbbb2a15e2c4f2a16d3a40dc3db1d6794a",
+  "plan_id": "revision-security-check-a01594b226a6",
+  "missing_digest_status": 400,
+  "stale_digest_status": 409,
+  "results": {
+    "runs": {
+      "id": "a0e284a6efd346e29282b392a00e88f0",
+      "status": "completed",
+      "plan_digest": "4da0744d1a5e6919ee70a5fe1db38fe541c1934437e9d87ea76ee6bf36621d3b",
+      "metrics": null
+    },
+    "evaluations": {
+      "id": "e1a7a4a5b5b748d989ed1f8d02ef81cd",
+      "status": "completed",
+      "plan_digest": "4da0744d1a5e6919ee70a5fe1db38fe541c1934437e9d87ea76ee6bf36621d3b",
+      "metrics": {
+        "abstentions": 10,
+        "accuracy": 1.0,
+        "accuracy_denominator": 16,
+        "cases": 16,
+        "citation_errors": 0,
+        "evaluated": 16,
+        "exact_matches": 16,
+        "fn_including_unknown_and_abstention": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "precision_denominator": 2,
+        "recall": 1.0,
+        "recall_denominator": 2,
+        "tn": 4,
+        "tp": 2,
+        "unknown": 0
+      }
+    }
+  },
+  "security": {
+    "status": "passed",
+    "foreign_origin_denied": true,
+    "missing_origin_denied": true,
+    "secure_pending_cookie": true,
+    "secure_session_cookie": true,
+    "principal_namespaced": true,
+    "catalog_count": 27
+  },
+  "security_checked_commit": "8eb9999f209b017e3d9e28a49964b3e230c297b4",
+  "recorded_at": "2026-11-06T05:29:37.666356+00:00",
+  "synthetic_evidence": true,
+  "browser_human_testing": false
+}
