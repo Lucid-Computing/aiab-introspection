@@ -15,8 +15,6 @@ vi.mock("@xyflow/react", () => ({
   ReactFlow: () => null, Background: () => null, Controls: () => null,
 }));
 
-// it.fails records a known defect using the desired behavior as the assertion.
-// An unexpected pass means the marker should be removed after a fix.
 const mounted: ReactTestRenderer[] = [];
 const text = (n: ReactTestInstance): string => n.children.map(c => typeof c === "string" ? c : text(c)).join("");
 const button = (t: ReactTestRenderer, label: string) => t.root.findAllByType("button").find(n => text(n) === label)!;
@@ -34,7 +32,7 @@ async function app() {
 }
 afterEach(() => { act(() => mounted.splice(0).forEach(t => t.unmount())); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it.fails("WB-B02: retains unapplied code across Agreement/Code navigation", async () => {
+it("WB-B02: retains unapplied code across Agreement/Code navigation", async () => {
   const { t } = await app(); await click(t, "Code");
   const code = t.root.findByProps({ id: "wb-plan-code" });
   const edited = JSON.stringify({ ...JSON.parse(code.props.value), title: "Keep my code draft" });
@@ -43,14 +41,14 @@ it.fails("WB-B02: retains unapplied code across Agreement/Code navigation", asyn
   await click(t, "Agreement"); await click(t, "Code");
   expect(t.root.findByProps({ id: "wb-plan-code" }).props.value).toBe(edited);
 });
-it.fails("WB-B02: prevents agreement replacement when only the code buffer is dirty", async () => {
+it("WB-B02: prevents agreement replacement when only the code buffer is dirty", async () => {
   const { t } = await app(); await click(t, "Code");
   const code = t.root.findByProps({ id: "wb-plan-code" });
   await act(async () => code.props.onChange({ target: { value: "{ unfinished code" } }));
   await click(t, "+ New agreement");
   expect(t.root.findAllByProps({ id: "wb-plan-code" })).toHaveLength(1);
 });
-it.fails("WB-B02: retains unapplied scope settings across tabs", async () => {
+it("WB-B02: retains unapplied scope settings across tabs", async () => {
   const { t } = await app(); const edited = '{"subjects":["synthetic-person"]}';
   await change(t, "Complete scope contract", edited);
   await click(t, "Code"); await click(t, "Agreement");
@@ -60,7 +58,8 @@ it("excludes unapplied code from save, as explicitly documented in the interface
   const { t } = await app(); const save = vi.spyOn(api, "savePlan").mockImplementation(async p => ({ plan: p, digest: "saved" }));
   await click(t, "Code"); const code = t.root.findByProps({ id: "wb-plan-code" }); const original = JSON.parse(code.props.value);
   await act(async () => code.props.onChange({ target: { value: JSON.stringify({ ...original, title: "Unapplied" }) } }));
-  await click(t, "Save agreement"); expect(save).toHaveBeenCalledWith(original, undefined);
+  expect(button(t, "Save agreement").props.disabled).toBe(true);
+  await click(t, "Save agreement"); expect(save).not.toHaveBeenCalled();
 });
 it("preserves edits and shows a conflict when optimistic save is rejected", async () => {
   const { t } = await app(); vi.spyOn(api, "savePlan").mockRejectedValue(new Error("Version conflict: reload required"));
@@ -84,14 +83,13 @@ it("graph inspector edits the same plan and preserves config and extension field
   const onChange = vi.fn(); const t = await mount(createElement(GraphView, { plan: p, selected: "read", onSelect: vi.fn(), onChange }));
   await change(t, "Step title", "Readable step"); expect(onChange).toHaveBeenCalledWith({ ...p, steps: [{ ...p.steps[0], title: "Readable step" }] });
 });
-it.fails("WB-B01: binds run and evaluation requests to a reviewed saved digest", async () => {
+it("WB-B01: binds run and evaluation requests to a reviewed saved digest", async () => {
   const fetcher = vi.fn(async (_url: string, _options?: RequestInit) => new Response(JSON.stringify({ run_id: "run", evaluation_id: "evaluation" }))); vi.stubGlobal("fetch", fetcher);
-  // Supply a prospective final digest argument through JavaScript so this test
-  // remains typecheckable against the current API, which has no digest input.
-  await Reflect.apply(api.run, api, ["saved-plan", "northstar", "rehearse", "reviewed-A"]);
-  await Reflect.apply(api.evaluate, api, ["saved-plan", false, 1, 0, "reviewed-A"]);
+  await api.run("saved-plan", "northstar", "rehearse", "reviewed-A");
+  await api.run("saved-plan", "northstar", "audit", "reviewed-A");
+  await api.evaluate("saved-plan", false, 1, 0, "reviewed-A");
   const bodies = fetcher.mock.calls.map(c => JSON.parse(String(c[1]?.body)));
-  expect(bodies.map(b => b.expected_digest)).toEqual(["reviewed-A", "reviewed-A"]);
+  expect(bodies.map(b => b.expected_digest)).toEqual(["reviewed-A", "reviewed-A", "reviewed-A"]);
 });
 
 
@@ -125,4 +123,87 @@ it("source lookup failure retains distinct counterevidence and insufficient-evid
   await click(t, "counter");
   for (const phrase of ["Scoped record unavailable", "Insufficient evidence", "Counterevidence", "Missing interval", "synthetic-source"]) expect(text(t.root)).toContain(phrase);
   expect(button(t, "support")).toBeDefined(); expect(button(t, "counter").props.disabled).toBe(false);
+});
+
+it("retains invalid code after failed apply and requires explicit reset before a new agreement", async () => {
+  const { t } = await app(); await click(t, "Code");
+  await act(async () => t.root.findByProps({ id: "wb-plan-code" }).props.onChange({ target: { value: "{ incomplete" } }));
+  await click(t, "Apply code to document");
+  expect(t.root.findByProps({ id: "wb-plan-code" }).props.value).toBe("{ incomplete");
+  await click(t, "+ New agreement");
+  expect(text(t.root)).toContain("Save or discard");
+  await click(t, "Reset code buffer");
+  expect(button(t, "Save agreement").props.disabled).toBe(false);
+  await click(t, "+ New agreement");
+  expect(t.root.findAllByProps({ id: "wb-plan-code" })).toHaveLength(0);
+});
+
+it("retains rejected settings across tabs, blocks save and clears them on explicit discard", async () => {
+  const { t } = await app(); const save = vi.spyOn(api, "savePlan");
+  await change(t, "Complete scope contract", "{ invalid");
+  const scope = t.root.findAllByProps({ className: "wb-json-editor" }).find(n => text(n).includes("Complete scope contract"))!;
+  await act(async () => scope.findAllByType("button").find(n => text(n) === "Apply settings")!.props.onClick());
+  await click(t, "Code"); await click(t, "Agreement");
+  expect(input(t, "Complete scope contract").props.value).toBe("{ invalid");
+  expect(button(t, "Save agreement").props.disabled).toBe(true);
+  expect(button(t, "02 / Rehearse actual methods").props.disabled).toBe(true);
+  await click(t, "Save agreement"); expect(save).not.toHaveBeenCalled();
+  await click(t, "Discard changes");
+  expect(() => JSON.parse(input(t, "Complete scope contract").props.value)).not.toThrow();
+  expect(button(t, "Save agreement").props.disabled).toBe(false);
+});
+
+it("preserves code bytes on parent edits and requires explicit conflict resolution", async () => {
+  const { t } = await app(); await click(t, "Code");
+  const initial = t.root.findByProps({ id: "wb-plan-code" }).props.value;
+  const typed = JSON.stringify({ ...JSON.parse(initial), title: "Typed title" });
+  await act(async () => t.root.findByProps({ id: "wb-plan-code" }).props.onChange({ target: { value: typed } }));
+  await click(t, "Agreement"); await change(t, "Agreement title", "Parent title"); await click(t, "Code");
+  expect(t.root.findByProps({ id: "wb-plan-code" }).props.value).toBe(typed);
+  expect(text(t.root)).toContain("Document changed beneath this code buffer");
+  expect(button(t, "Apply code to document").props.disabled).toBe(true);
+  await click(t, "Keep code buffer against current document");
+  await click(t, "Apply code to document"); await click(t, "Agreement");
+  expect(input(t, "Agreement title").props.value).toBe("Typed title");
+});
+
+it("protects unload for buffer-only edits and removes the guard after reset", async () => {
+  const { t } = await app(); await click(t, "Code");
+  await act(async () => t.root.findByProps({ id: "wb-plan-code" }).props.onChange({ target: { value: "{" } }));
+  const event = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  await click(t, "Reset code buffer");
+  const clean = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(clean);
+  expect(clean.defaultPrevented).toBe(false);
+});
+
+it("does not repopulate a new agreement with a late proposal from the previous agreement", async () => {
+  const { t } = await app(); await click(t, "Changes");
+  const source = t.root.findByType(Changes).props.plan;
+  const request = deferred<Awaited<ReturnType<typeof api.suggest>>>();
+  vi.spyOn(api, "suggest").mockReturnValue(request.promise);
+  await change(t, "Authoring instruction", "Change title");
+  let pending!: Promise<void>;
+  await act(async () => { pending = button(t, "Request unsigned proposal").props.onClick(); });
+  await click(t, "+ New agreement");
+  const title = input(t, "Agreement title").props.value;
+  await act(async () => {
+    request.resolve({ plan: { ...source, title: "Old late proposal" }, changes: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, test_model: true }, verification: {} });
+    await pending;
+  });
+  expect(input(t, "Agreement title").props.value).toBe(title);
+  await click(t, "Changes");
+  expect(button(t, "Apply selected changes to draft")).toBeUndefined();
+});
+
+it("requires explicit settings reconciliation after a parent scope edit and supports buffer reset", async () => {
+  const { t } = await app();
+  await change(t, "Complete scope contract", '{"subjects":["typed"]}');
+  await change(t, "Subjects / identity-map references", "parent");
+  const scope = t.root.findAllByProps({ className: "wb-json-editor" }).find(n => text(n).includes("Complete scope contract"))!;
+  expect(text(scope)).toContain("Document changed beneath this settings buffer");
+  expect(scope.findAllByType("button").find(n => text(n) === "Apply settings")!.props.disabled).toBe(true);
+  await act(async () => scope.findAllByType("button").find(n => text(n) === "Reset settings buffer")!.props.onClick());
+  expect(JSON.parse(input(t, "Complete scope contract").props.value).subjects).toEqual(["parent"]);
+  expect(button(t, "Save agreement").props.disabled).toBe(false);
 });

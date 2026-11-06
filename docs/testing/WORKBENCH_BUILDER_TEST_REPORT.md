@@ -1,5 +1,7 @@
 # Builder tester findings
 
+**Resolution:** WB-B01/B02 are fixed locally; see [implementation resolution](#implementation-resolution--2026-11-06). Original evidence follows unchanged.
+
 Tested 2026-11-06 UTC by the independent Sol tester in worktree
 `t3-0b9da043`, baseline `f3aec71` (application code `e404703`). Hosted target:
 https://aiab-dev-astra-one.onrender.com/workbench, deployed commit supplied by
@@ -174,3 +176,76 @@ Backend result: **74 passed in 362.42 seconds**.
 No standalone static-suite run or real-model qualification was performed by this
 tester. Backend tests use their declared fixtures/test models and real local
 sandbox paths; these are not hosted inference checks.
+
+## Implementation resolution — 2026-11-06
+
+WB-B01 and WB-B02 are resolved in this implementation worktree. The original
+baseline findings, hosted artifact IDs/digests and limitations above are retained
+as historical evidence; this resolution is local verification, not a claim that
+the hosted deployment has changed.
+
+**WB-B01:** Both execution POSTs now require `expected_digest`. The run client
+sends the saved digest whose plan matches the current successful check for both
+rehearsal and audit; the evaluation client sends that digest in its POST as well
+as retaining its local/preflight safeguards. Missing/empty/non-string values
+return `400 expected_digest_required` with an explicit message. A stale digest
+returns `409 conflict` before runtime checks, governance admission/reservations,
+queue creation or inference. `WorkbenchStore.execution_snapshot` obtains the
+body and digest from one SQLite SELECT, compares the supplied digest and returns
+a detached snapshot. Both queues persist that snapshot rather than looking up
+the mutable plan ID again. A save after that read can either supersede governance
+authority (which execution still rechecks) or coexist with a queued rehearsal;
+it cannot silently replace the queued revision. Actor, login, authentication and
+principal handling were not changed.
+
+Sequential backend reproductions save/check/read A, save B with A's digest, then
+POST the old digest. Both run modes and evaluation explicitly reject the request;
+spies forbid reaching runtime/admission/queue submission and database assertions
+confirm no job rows. Separate tests save B after snapshot selection but before
+queue persistence/submission and verify the queued run/evaluation retains A.
+All existing affected callers supply the required field. Frontend exact-wire
+assertions cover rehearsal, audit and evaluation.
+
+**WB-B02:** Unapplied code and JSON settings now live in a shared draft registry,
+keyed by editor/step, and survive view unmounts. They count as dirty for agreement
+navigation, unload protection, save, consent and execution gates. Opening another
+agreement is blocked with an explanation until the operator applies/resets the
+buffers or explicitly uses Discard changes. Reset code buffer and Reset settings
+buffer discard only the relevant typed buffer; Discard changes clears all typed
+and applied changes. Invalid JSON is retained after failed Apply and is never
+automatically applied. If the underlying document changes while a buffer exists,
+Apply is disabled until the operator resets it or explicitly chooses to keep the
+buffer against the current document. Applying still validates the JSON/plan.
+Buffers are session memory, not persistent recovery after closing the page.
+
+All four builder tester `it.fails` assertions are now ordinary passing
+regressions. Normal `pnpm test` includes `.test.tsx`; the custom baseline invocation
+above is no longer needed. Additional component tests cover failed Apply,
+individual reset, explicit discard/new agreement, unload protection, code and
+settings divergence, and a late proposal after switching to a new agreement.
+The existing concurrent-edit/late-proposal regression remains passing. The former
+save-exclusion control now asserts that unapplied buffers block saving entirely.
+Authorization tester markers were not modified.
+
+No live inference, browser preview, provider changes, PR, push or deployment was
+performed. Backend tests use their existing local sandbox and labeled fixtures;
+snapshot-specific tests stub execution/admission to assert ordering and data.
+
+Final local verification:
+
+```sh
+cd ui/playground
+pnpm test
+pnpm typecheck
+pnpm build
+# From repository root:
+PYTHONPATH=ui uv run --project ui pytest ui/tests/test_workbench_assist.py ui/tests/test_workbench_api.py ui/tests/test_workbench_store.py ui/tests/test_tester_workbench_authorization.py -q
+uv run --project ui ruff check ui/server/workbench_api.py ui/server/workbench_assist.py ui/server/workbench_store.py ui/tests/test_workbench_api.py ui/tests/test_workbench_assist.py
+```
+
+- Frontend: **145 passed, six files**, including **17 builder tester regressions**;
+  no expected failures in that file. Typecheck and production build pass.
+- Backend digest/snapshot reproductions alone: **6 passed**.
+- Backend combined verification: **89 passed, 5 existing authorization xfails**.
+  The authorization tester file and its strict markers are unchanged.
+- Backend lint and `git diff --check` pass.

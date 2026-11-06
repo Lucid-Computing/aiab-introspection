@@ -1,3 +1,4 @@
+import { useDraft } from "./drafts";
 import { useEffect, useRef, useState } from "react";
 import {
   Background,
@@ -103,6 +104,7 @@ export function GraphView({
             />
             <JsonEditor
               label="Executable settings"
+              draftKey={`step:${step.id}`}
               value={step.config}
               onApply={(config) =>
                 onChange({
@@ -133,13 +135,9 @@ export function CodeView({
   selected: string;
   onApply: (plan: Plan) => void;
 }) {
-  const [code, setCode] = useState(pretty(plan));
+  const { text: code, setText: setCode, reset, rebase, conflict } = useDraft("plan-code", pretty(plan));
   const [error, setError] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    setCode(pretty(plan));
-    setError("");
-  }, [plan]);
   useEffect(() => {
     if (!selected || !ref.current) return;
     const text = pretty(plan);
@@ -167,10 +165,11 @@ export function CodeView({
       />
       <div className="wb-actions">
         <button
-          disabled={code === pretty(plan)}
+          disabled={conflict || code === pretty(plan)}
           onClick={() => {
             try {
               onApply(parsePlan(code));
+              reset();
               setError("");
             } catch (e) {
               setError((e as Error).message);
@@ -181,12 +180,13 @@ export function CodeView({
         </button>
         <button
           onClick={() => {
-            setCode(pretty(plan));
+            reset();
             setError("");
           }}
         >
           Reset code buffer
         </button>
+        {conflict && <p role="alert">Document changed beneath this code buffer. Reset it or <button onClick={rebase}>Keep code buffer against current document</button> before applying.</p>}
         {code !== pretty(plan) && (
           <small>Unapplied code is excluded from saving and execution.</small>
         )}

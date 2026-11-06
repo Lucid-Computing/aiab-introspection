@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useDraft } from "./drafts";
+import { useState, type ReactNode } from "react";
 import { csv, describeStep, isObject, parsePlan, pretty } from "./model";
 import { STEP_KINDS, type Plan, type Step, type StepKind } from "./types";
 
@@ -66,17 +67,15 @@ export function JsonEditor({
   label,
   value,
   onApply,
+  draftKey,
 }: {
+  draftKey?: string;
   label: string;
   value: unknown;
   onApply: (value: Record<string, unknown>) => void;
 }) {
-  const [text, setText] = useState(pretty(value));
+  const { text, setText, reset, rebase, conflict } = useDraft(draftKey ?? label, pretty(value));
   const [error, setError] = useState("");
-  useEffect(() => {
-    setText(pretty(value));
-    setError("");
-  }, [value]);
   return (
     <div className="wb-json-editor">
       <Field label={label}>
@@ -90,12 +89,13 @@ export function JsonEditor({
       </Field>
       <button
         type="button"
-        disabled={text === pretty(value)}
+        disabled={conflict || text === pretty(value)}
         onClick={() => {
           try {
             const v: unknown = JSON.parse(text);
             if (!isObject(v)) throw new Error("Expected a JSON object.");
             onApply(v);
+            reset();
             setError("");
           } catch (e) {
             setError((e as Error).message);
@@ -104,6 +104,8 @@ export function JsonEditor({
       >
         Apply settings
       </button>
+      <button type="button" onClick={() => { reset(); setError(""); }}>Reset settings buffer</button>
+      {conflict && <p role="alert">Document changed beneath this settings buffer. Reset it or <button type="button" onClick={rebase}>Keep settings buffer against current document</button> before applying.</p>}
       {text !== pretty(value) && (
         <small>
           Unapplied settings are excluded from saving and execution.
@@ -354,6 +356,7 @@ export default function Editor({
                     ? "Custom code & explicit input/output contract (JSON)"
                     : "Executable operator settings (JSON)"
                 }
+                draftKey={`step:${s.id}`}
                 value={s.config}
                 onApply={(config) => stepPatch(i, { config })}
               />

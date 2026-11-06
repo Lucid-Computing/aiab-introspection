@@ -661,7 +661,7 @@ def create_router(workbench: WorkbenchAPI):
     async def evaluations(request: Request):
         owner = workbench.actor(request)
         body = await workbench.body(request)
-        if set(body) - {"plan_id", "include_agent", "case_limit", "seed"}:
+        if set(body) - {"plan_id", "include_agent", "case_limit", "seed", "expected_digest"}:
             raise ValueError("Unexpected evaluation input")
         if not isinstance(body.get("plan_id"), str) or not body["plan_id"]:
             raise ValueError("Invalid plan ID")
@@ -675,7 +675,13 @@ def create_router(workbench: WorkbenchAPI):
             or not 1 <= limit <= (MAX_AGENT_CASES if agent else MAX_CASES)
         ):
             raise ValueError("Invalid evaluation bounds")
-        package = workbench.store.plan(owner, body["plan_id"])
+        if not isinstance(body.get("expected_digest"), str) or not body["expected_digest"].strip():
+            raise APIError(
+                "expected_digest_required", "expected_digest is required for execution.", 400
+            )
+        package = workbench.store.execution_snapshot(
+            owner, body["plan_id"], body.get("expected_digest")
+        )
         return {"evaluation_id": jobs.submit(owner, package, agent, limit, seed)}
 
     @router.get("/evaluations/{ident}")

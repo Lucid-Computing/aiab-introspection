@@ -220,8 +220,8 @@ describe("authenticated product API", () => {
     plan.id = "my/plan";
     await api.savePlan(plan);
     await api.savePlan(plan, "old");
-    await api.run(plan.id, "dataset-1", "rehearse");
-    await api.run(plan.id, "dataset-1", "audit");
+    await api.run(plan.id, "dataset-1", "rehearse", "checked");
+    await api.run(plan.id, "dataset-1", "audit", "checked");
     expect(fetch.mock.calls.map((c) => c[0])).toEqual([
       "/api/workbench/plans",
       "/api/workbench/plans/my%2Fplan",
@@ -240,6 +240,7 @@ describe("authenticated product API", () => {
       plan_id: plan.id,
       dataset_id: "dataset-1",
       mode: "rehearse",
+      expected_digest: "checked",
     });
     expect(JSON.parse(fetch.mock.calls[3][1].body).mode).toBe("audit");
   });
@@ -260,7 +261,7 @@ describe("authenticated product API", () => {
         ),
       ),
     );
-    await expect(api.run("p", "d", "audit")).rejects.toMatchObject({
+    await expect(api.run("p", "d", "audit", "checked")).rejects.toMatchObject({
       status: 403,
       code: "consent_required",
       message: "All participants must approve.",

@@ -578,7 +578,16 @@ class WorkbenchAPI:
         @router.post("/runs")
         async def run(request: Request):
             actor, body = self.actor(request), await self.body(request)
-            package = self.store.plan(actor, body["plan_id"])
+            if (
+                not isinstance(body.get("expected_digest"), str)
+                or not body["expected_digest"].strip()
+            ):
+                raise APIError(
+                    "expected_digest_required", "expected_digest is required for execution.", 400
+                )
+            package = self.store.execution_snapshot(
+                actor, body["plan_id"], body.get("expected_digest")
+            )
             plan, mode = package["plan"], body["mode"]
             data = self.dataset(actor, body["dataset_id"])
             EvidenceStore(data, plan["scope"])

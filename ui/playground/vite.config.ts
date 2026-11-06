@@ -19,5 +19,5 @@ export default defineConfig({
   },
   // CodeMirror and React Flow in one bundle; fine for a prototype served locally.
   build: { chunkSizeWarningLimit: 1500 },
-  test: { environment: "node", include: ["src/**/*.test.ts"] },
+  test: { environment: "node", include: ["src/**/*.test.{ts,tsx}"] },
 });

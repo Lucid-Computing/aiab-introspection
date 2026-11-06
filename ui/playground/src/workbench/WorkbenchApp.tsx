@@ -1,3 +1,4 @@
+import { DraftContext, type Drafts } from "./drafts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, pollRun } from "./api";
 import Reviews from "./Reviews";
@@ -35,6 +36,8 @@ function asSaved(value: SavedPlan | Plan): SavedPlan {
     : { plan: value as Plan, digest: "" };
 }
 export default function WorkbenchApp() {
+  const [drafts, setDrafts] = useState<Drafts>({});
+  const bufferDirty = Object.keys(drafts).length > 0;
   const [plan, setPlan] = useState<Plan>(blankPlan);
   const [saved, setSaved] = useState<SavedPlan | null>(null);
   const [edited, setEdited] = useState(false);
@@ -69,7 +72,7 @@ export default function WorkbenchApp() {
   const snapshot = pretty(plan);
   const approvalState = useRef({ snapshot, saved, user: data?.user });
   approvalState.current = { snapshot, saved, user: data?.user };
-  const dirty = edited && (!saved || pretty(saved.plan) !== snapshot);
+  const dirty = bufferDirty || (edited && (!saved || pretty(saved.plan) !== snapshot));
   const currentCheck = check?.snapshot === snapshot ? check.result : null;
   const issues = localIssues(plan);
   const dataset = data?.datasets.find(
@@ -172,7 +175,7 @@ export default function WorkbenchApp() {
   const canSwitch = () => {
     if (dirty || unsavedNote) {
       setError(
-        "Save or discard the current draft and store or clear any unsaved note before opening another agreement.",
+        "Save or discard the current draft, apply or reset unapplied buffers, and store or clear any unsaved note before opening another agreement.",
       );
       return false;
     }
@@ -230,6 +233,7 @@ export default function WorkbenchApp() {
     });
   }
   function save() {
+    if (bufferDirty) { setError("Apply or reset unapplied code/settings buffers before saving."); return; }
     act("Saving agreement", async () => {
       const priorDigest = saved?.plan.id === plan.id ? saved.digest : undefined;
       const result = await api.savePlan(plan, priorDigest);
@@ -271,6 +275,7 @@ export default function WorkbenchApp() {
             saved.plan.id,
             plan.scope.dataset_ids[0],
             mode,
+            saved.digest,
           );
         } catch (e) {
           if (
@@ -333,6 +338,7 @@ export default function WorkbenchApp() {
     );
   }
   const blockers = executionBlockers(plan, saved, check, !!dataset);
+  if (bufferDirty) blockers.push("Apply or reset unapplied code/settings buffers first.");
   const ready = online && !blockers.length && !active && !busy;
   const tabs: [Tab, string][] = [
     ["evaluations", "Evaluations"],
@@ -344,6 +350,7 @@ export default function WorkbenchApp() {
     ["activity", "Accountability"],
   ];
   return (
+    <DraftContext.Provider value={{ drafts, setDrafts }}>
     <div className="wb">
       <header className="wb-header">
         <div className="wb-wordmark">
@@ -513,7 +520,7 @@ export default function WorkbenchApp() {
               </button>
               <button
                 className="wb-primary"
-                disabled={!online || !!busy}
+                disabled={!online || !!busy || bufferDirty}
                 onClick={save}
               >
                 {busy === "Saving agreement" ? "Saving…" : "Save agreement"}
@@ -861,7 +868,7 @@ export default function WorkbenchApp() {
               disabled={
                 !!busy ||
                 !plan.steps.some((s) => s.kind === "agent") ||
-                unsavedNote
+                unsavedNote || bufferDirty
               }
               onClick={() => {
                 try {
@@ -1017,6 +1024,7 @@ export default function WorkbenchApp() {
               <button
                 disabled={!!busy}
                 onClick={() => {
+                  setDrafts({});
                   setPlan(saved?.plan ?? blankPlan());
                   setEdited(false);
                   setCheck(null);
@@ -1078,6 +1086,7 @@ export default function WorkbenchApp() {
         </aside>
       </div>
     </div>
+    </DraftContext.Provider>
   );
 }
 

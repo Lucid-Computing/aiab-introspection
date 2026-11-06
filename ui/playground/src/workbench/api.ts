@@ -58,8 +58,8 @@ const id = encodeURIComponent;
 export const api = {
   evidence: (runId: string, eventId: string) => request<{event: Record<string, unknown>; origin: string}>(`/runs/${id(runId)}/evidence/${id(eventId)}`),
   suggest: (plan: Plan, instruction: string) => post<Suggestion>("/suggestions", { plan, instruction }),
-  evaluate: (plan_id: string, include_agent: boolean, case_limit: number, seed: number) =>
-    post<{ evaluation_id: string }>("/evaluations", { plan_id, include_agent, case_limit, seed }),
+  evaluate: (plan_id: string, include_agent: boolean, case_limit: number, seed: number, expected_digest: string) =>
+    post<{ evaluation_id: string }>("/evaluations", { plan_id, include_agent, case_limit, seed, expected_digest }),
   getEvaluation: async (evaluationId: string, signal?: AbortSignal) => {
     const value = await request<Evaluation>(`/evaluations/${id(evaluationId)}`, { signal });
     if (!EVALUATION_STATUSES.has(value.status) || value.evaluation_id !== evaluationId)
@@ -82,11 +82,12 @@ export const api = {
         })
       : post<SavedPlan>("/plans", { plan }),
   check: (plan: Plan) => post<Check>("/check", { plan }),
-  run: (planId: string, datasetId: string, mode: "audit" | "rehearse") =>
+  run: (planId: string, datasetId: string, mode: "audit" | "rehearse", expected_digest: string) =>
     post<{ run_id: string }>("/runs", {
       plan_id: planId,
       dataset_id: datasetId,
       mode,
+      expected_digest,
     }),
   getRun: async (runId: string, signal?: AbortSignal) => {
     const value = await request<Run>(`/runs/${id(runId)}`, { signal });

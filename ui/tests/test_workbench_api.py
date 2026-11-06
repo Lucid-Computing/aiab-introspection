@@ -4,6 +4,7 @@ import copy
 import json
 
 import pytest
+from aiab.workbench import contracts
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -115,7 +116,12 @@ def test_catalog_scope_checks_and_import_cannot_bypass_consent(api):
     assert (
         client.post(
             "/api/workbench/runs",
-            json={"plan_id": plan["id"], "dataset_id": "northstar", "mode": "audit"},
+            json={
+                "plan_id": plan["id"],
+                "expected_digest": contracts.plan_digest(plan),
+                "dataset_id": "northstar",
+                "mode": "audit",
+            },
         ).status_code
         == 403
     )
@@ -128,7 +134,12 @@ def test_catalog_scope_checks_and_import_cannot_bypass_consent(api):
     client.post("/api/workbench/plans", json={"plan": changed})
     result = client.post(
         "/api/workbench/runs",
-        json={"plan_id": changed["id"], "dataset_id": dataset["id"], "mode": "rehearse"},
+        json={
+            "plan_id": changed["id"],
+            "expected_digest": contracts.plan_digest(changed),
+            "dataset_id": dataset["id"],
+            "mode": "rehearse",
+        },
     )
     assert result.status_code == 403
     assert result.json()["error"]["code"] == "consent_required"
@@ -300,6 +311,7 @@ def start_joint(joint, request_id="request-1"):
         "/api/workbench/runs",
         json={
             "plan_id": plan["id"],
+            "expected_digest": contracts.plan_digest(plan),
             "dataset_id": "northstar",
             "mode": "audit",
             "request_id": request_id,
@@ -540,7 +552,12 @@ def test_synthetic_challenges_are_durable_owner_only_without_receipts(api, monke
     monkeypatch.setattr(runner, "execute_plan", execute)
     response = client.post(
         "/api/workbench/runs",
-        json={"plan_id": plan["id"], "dataset_id": "northstar", "mode": "rehearse"},
+        json={
+            "plan_id": plan["id"],
+            "expected_digest": contracts.plan_digest(plan),
+            "dataset_id": "northstar",
+            "mode": "rehearse",
+        },
     )
     assert response.status_code == 200, response.text
     ident = response.json()["run_id"]
@@ -605,6 +622,7 @@ def test_pending_run_cancellation_wins_over_completion(joint, monkeypatch):
         "/api/workbench/runs",
         json={
             "plan_id": plan["id"],
+            "expected_digest": contracts.plan_digest(plan),
             "dataset_id": "northstar",
             "mode": "audit",
             "request_id": "pending",
@@ -638,6 +656,7 @@ def test_confidential_admission_never_accepts_fabricated_runtimefacts(api):
         "/api/workbench/runs",
         json={
             "plan_id": plan["id"],
+            "expected_digest": contracts.plan_digest(plan),
             "dataset_id": "northstar",
             "mode": "audit",
             "runtime_facts": {"attestation_verified": True},
@@ -648,3 +667,77 @@ def test_confidential_admission_never_accepts_fabricated_runtimefacts(api):
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "sealed_runtime_required"
     assert not service.tasks
+
+
+@pytest.mark.parametrize("mode", ["rehearse", "audit"])
+def test_execution_digest_rejects_competing_save_before_any_admission(api, monkeypatch, mode):
+    service, client = api
+    plan = executable_plan(service)
+    saved = client.post("/api/workbench/plans", json={"plan": plan}).json()
+    assert client.post("/api/workbench/check", json={"plan": plan}).json()["valid"]
+    assert client.get(f"/api/workbench/plans/{plan['id']}").json()["digest"] == saved["digest"]
+    newer = {**plan, "title": "Competing tab B"}
+    assert (
+        client.put(
+            f"/api/workbench/plans/{plan['id']}",
+            json={"plan": newer, "expected_digest": saved["digest"]},
+        ).status_code
+        == 200
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Rejected digest reached admission, reservation, queue or runtime")
+
+    monkeypatch.setattr(service, "runtime_check", forbidden)
+    monkeypatch.setattr(service, "bind", forbidden)
+    monkeypatch.setattr(service.governance, "admit", forbidden)
+    monkeypatch.setattr(service.store, "enqueue", forbidden)
+    for extra, status in [
+        ({}, 400),
+        ({"expected_digest": ""}, 400),
+        ({"expected_digest": saved["digest"]}, 409),
+    ]:
+        response = client.post(
+            "/api/workbench/runs",
+            json={"plan_id": plan["id"], "dataset_id": "northstar", "mode": mode, **extra},
+        )
+        assert response.status_code == status, response.text
+        assert "expected_digest" in response.json()["error"]["message"]
+    assert not service.tasks
+    with service.store.connection() as db:
+        assert db.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("mode", ["rehearse", "audit"])
+def test_execution_queues_matching_snapshot_despite_save_during_admission(api, monkeypatch, mode):
+    service, client = api
+    plan = executable_plan(service)
+    saved = client.post("/api/workbench/plans", json={"plan": plan}).json()
+    newer = {**plan, "title": "Changed after snapshot"}
+    original = service.store.enqueue
+
+    def enqueue(owner, snapshot, digest, *args, **kwargs):
+        service.store.save_plan(owner, newer, contracts.plan_digest(newer), expected_digest=digest)
+        return original(owner, snapshot, digest, *args, **kwargs)
+
+    async def no_work(*args):
+        pass
+
+    monkeypatch.setattr(service.store, "enqueue", enqueue)
+    monkeypatch.setattr(service, "execute", no_work)
+    monkeypatch.setattr(service, "bind", lambda *args: ({"authorization": {}}, {}))
+    monkeypatch.setattr(service.governance, "admit", lambda *args, **kwargs: {"run_id": "admitted"})
+    response = client.post(
+        "/api/workbench/runs",
+        json={
+            "plan_id": plan["id"],
+            "dataset_id": "northstar",
+            "mode": mode,
+            "expected_digest": saved["digest"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    job = service.store.job("alice", response.json()["run_id"])
+    assert job["plan"] == plan
+    assert job["digest"] == saved["digest"]
+    assert service.store.plan("alice", plan["id"])["plan"] == newer

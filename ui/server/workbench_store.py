@@ -141,6 +141,19 @@ class WorkbenchStore:
             raise KeyError("Plan not found")
         return {"plan": json.loads(row[0]), "digest": row[1]}
 
+    def execution_snapshot(self, owner, plan_id, expected_digest):
+        # The body and digest come from one SELECT, so a competing save cannot
+        # pair a checked digest with another revision's body. Callers queue this
+        # detached snapshot, never reload the mutable plan ID after admission.
+        if not isinstance(expected_digest, str) or not expected_digest.strip():
+            raise ValueError("expected_digest is required for execution")
+        package = self.plan(owner, plan_id)
+        if package["digest"] != expected_digest:
+            raise Conflict(
+                "Saved agreement changed; expected_digest is stale. Reload and check again."
+            )
+        return package
+
     def revision(self, owner, plan_id, digest):
         with self.connection() as db:
             row = db.execute(

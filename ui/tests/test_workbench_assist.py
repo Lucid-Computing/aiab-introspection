@@ -5,7 +5,7 @@ import copy
 import json
 
 import pytest
-from aiab.workbench import datasets, runner
+from aiab.workbench import contracts, datasets, runner
 from aiab.workbench.fixtures.specs import SPECS
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -150,21 +150,47 @@ def test_auth_origin_owner_input_limits_and_no_http_injection(api, observed):
     url = "/api/workbench/evaluations"
     assert (
         client.post(
-            url, json={"plan_id": value["id"]}, headers={"origin": "https://evil"}
+            url,
+            json={
+                "plan_id": value["id"],
+                "expected_digest": contracts.plan_digest(value),
+            },
+            headers={"origin": "https://evil"},
         ).status_code
         == 403
     )
     assert (
-        client.post(url, json={"plan_id": value["id"]}, headers={"test-user": "bob"}).status_code
+        client.post(
+            url,
+            json={
+                "plan_id": value["id"],
+                "expected_digest": contracts.plan_digest(value),
+            },
+            headers={"test-user": "bob"},
+        ).status_code
         == 404
     )
     for body in [
-        {"plan_id": value["id"], "include_agent": "false"},
-        {"plan_id": value["id"], "case_limit": True},
-        {"plan_id": value["id"], "include_agent": True, "case_limit": 5},
-        {"plan_id": value["id"], "seed": -1},
         {
             "plan_id": value["id"],
+            "expected_digest": contracts.plan_digest(value),
+            "include_agent": "false",
+        },
+        {
+            "plan_id": value["id"],
+            "expected_digest": contracts.plan_digest(value),
+            "case_limit": True,
+        },
+        {
+            "plan_id": value["id"],
+            "expected_digest": contracts.plan_digest(value),
+            "include_agent": True,
+            "case_limit": 5,
+        },
+        {"plan_id": value["id"], "expected_digest": contracts.plan_digest(value), "seed": -1},
+        {
+            "plan_id": value["id"],
+            "expected_digest": contracts.plan_digest(value),
             "evidence_mode": "synthetic_full_trace",
             "authorization": {"all": True},
         },
@@ -179,7 +205,16 @@ def test_auth_origin_owner_input_limits_and_no_http_injection(api, observed):
         == 400
     )
     del client.headers["test-user"]
-    assert client.post(url, json={"plan_id": value["id"]}).status_code == 401
+    assert (
+        client.post(
+            url,
+            json={
+                "plan_id": value["id"],
+                "expected_digest": contracts.plan_digest(value),
+            },
+        ).status_code
+        == 401
+    )
     assert client.get(url + "/unknown").status_code == 401
 
 
@@ -187,7 +222,13 @@ def test_real_deterministic_api_durable_derived_scope_and_metrics(api, observed)
     workbench, jobs, client = api
     value = plan(observed)
     save(api, value)
-    response = client.post("/api/workbench/evaluations", json={"plan_id": value["id"]})
+    response = client.post(
+        "/api/workbench/evaluations",
+        json={
+            "plan_id": value["id"],
+            "expected_digest": contracts.plan_digest(value),
+        },
+    )
     assert response.status_code == 200, response.text
     ident = response.json()["evaluation_id"]
     client.portal.call(drain, jobs)
@@ -281,16 +322,26 @@ def test_cancel_restart_and_late_completion_cannot_overwrite(api, observed, monk
         await asyncio.Future()
 
     monkeypatch.setattr(assist, "evaluate", blocked)
-    response = client.post("/api/workbench/evaluations", json={"plan_id": value["id"]})
+    response = client.post(
+        "/api/workbench/evaluations",
+        json={
+            "plan_id": value["id"],
+            "expected_digest": contracts.plan_digest(value),
+        },
+    )
     ident = response.json()["evaluation_id"]
     response = client.post(f"/api/workbench/evaluations/{ident}/cancel")
     assert response.json()["status"] == "cancelled"
     client.portal.call(drain, jobs)
     assert not jobs.update("alice", ident, "completed", {"private": True})
     assert jobs.get("alice", ident)["status"] == "cancelled"
-    ident = client.post("/api/workbench/evaluations", json={"plan_id": value["id"]}).json()[
-        "evaluation_id"
-    ]
+    ident = client.post(
+        "/api/workbench/evaluations",
+        json={
+            "plan_id": value["id"],
+            "expected_digest": contracts.plan_digest(value),
+        },
+    ).json()["evaluation_id"]
     restarted = assist.EvaluationJobs(workbench)
     assert restarted.get("alice", ident)["status"] == "interrupted"
     assert not restarted.tasks
@@ -312,7 +363,12 @@ def test_agent_admission_uses_real_runtime_path_without_model_injection(api, obs
     monkeypatch.setattr(runner, "execute_plan", runtime_failure)
     response = client.post(
         "/api/workbench/evaluations",
-        json={"plan_id": value["id"], "include_agent": True, "case_limit": 1},
+        json={
+            "plan_id": value["id"],
+            "expected_digest": contracts.plan_digest(value),
+            "include_agent": True,
+            "case_limit": 1,
+        },
     )
     assert response.status_code == 200, response.text
     ident = response.json()["evaluation_id"]
@@ -344,11 +400,24 @@ def test_cancel_preserves_partial_checkpoint_and_capacity(api, observed, monkeyp
     monkeypatch.setattr(assist, "evaluate", partial)
     identifiers = []
     for _ in range(2):
-        response = client.post("/api/workbench/evaluations", json={"plan_id": value["id"]})
+        response = client.post(
+            "/api/workbench/evaluations",
+            json={
+                "plan_id": value["id"],
+                "expected_digest": contracts.plan_digest(value),
+            },
+        )
         assert response.status_code == 200
         identifiers.append(response.json()["evaluation_id"])
     assert (
-        client.post("/api/workbench/evaluations", json={"plan_id": value["id"]}).status_code == 429
+        client.post(
+            "/api/workbench/evaluations",
+            json={
+                "plan_id": value["id"],
+                "expected_digest": contracts.plan_digest(value),
+            },
+        ).status_code
+        == 429
     )
     for ident in identifiers:
         assert jobs.get("alice", ident)["report"]["partial"]
@@ -574,3 +643,65 @@ def test_correction_cannot_overspend_remaining_output(observed):
         asyncio.run(assist.suggest(value, "Improve", test_model=model))
     assert model.calls[1][1] == assist.MAX_OUTPUT_TOKENS - 4000
     assert len(model.calls) == 2 and model.closed
+
+
+def test_evaluation_digest_rejects_competing_save_before_submission(api, observed, monkeypatch):
+    workbench, jobs, client = api
+    value = plan(observed)
+    save(api, value)
+    saved = client.get(f"/api/workbench/plans/{value['id']}").json()
+    assert client.post("/api/workbench/check", json={"plan": value}).json()["valid"]
+    newer = {**value, "title": "Competing tab B"}
+    assert (
+        client.put(
+            f"/api/workbench/plans/{value['id']}",
+            json={"plan": newer, "expected_digest": saved["digest"]},
+        ).status_code
+        == 200
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Rejected digest reached evaluation submission")
+
+    monkeypatch.setattr(jobs, "submit", forbidden)
+    for extra, status in [
+        ({}, 400),
+        ({"expected_digest": None}, 400),
+        ({"expected_digest": saved["digest"]}, 409),
+    ]:
+        response = client.post("/api/workbench/evaluations", json={"plan_id": value["id"], **extra})
+        assert response.status_code == status, response.text
+        assert "expected_digest" in response.json()["error"]["message"]
+    assert not jobs.tasks
+    with jobs.connect() as db:
+        assert db.execute("SELECT count(*) FROM evaluations").fetchone()[0] == 0
+
+
+def test_evaluation_retains_snapshot_when_saved_after_read(api, observed, monkeypatch):
+    workbench, jobs, client = api
+    value = plan(observed)
+    save(api, value)
+    digest = contracts.plan_digest(value)
+    newer = {**value, "title": "Changed after snapshot"}
+    submit = jobs.submit
+
+    def competing_save(owner, package, *args):
+        workbench.store.save_plan(
+            owner, newer, contracts.plan_digest(newer), expected_digest=digest
+        )
+        return submit(owner, package, *args)
+
+    async def no_work(*args):
+        pass
+
+    monkeypatch.setattr(jobs, "submit", competing_save)
+    monkeypatch.setattr(jobs, "run", no_work)
+    response = client.post(
+        "/api/workbench/evaluations",
+        json={"plan_id": value["id"], "expected_digest": digest, "case_limit": 1},
+    )
+    assert response.status_code == 200, response.text
+    result = jobs.get("alice", response.json()["evaluation_id"])
+    assert result["plan_digest"] == digest
+    assert result["evaluated_plan"]["title"] == value["title"]
+    assert workbench.store.plan("alice", value["id"])["plan"] == newer

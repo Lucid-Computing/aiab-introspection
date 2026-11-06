@@ -117,9 +117,16 @@ concurrency, and never accept a caller-supplied identity as authority.
 - `GET /api/workbench/plans/{id}` → `{plan, digest, approvals}`.
 - `PUT /api/workbench/plans/{id}` with `{plan, expected_digest}` → `{plan, digest}`.
 - `POST /api/workbench/check` with `{plan}` → `{valid, diagnostics, requirements}`.
-- `POST /api/workbench/runs` with `{plan_id, dataset_id, mode}` → `{run_id}`;
+- `POST /api/workbench/runs` with `{plan_id, dataset_id, mode, expected_digest}` → `{run_id}`;
   mode is `rehearse` or `audit`. Both use real methods; a rehearsal can use explicitly
   selected synthetic inputs. No mocked model presented as a live run.
+- `POST /api/workbench/evaluations` with
+  `{plan_id, expected_digest, include_agent, case_limit, seed}` → `{evaluation_id}`.
+  Runs and evaluations require the actual saved/check-passed digest. Missing or
+  empty digests return `400 expected_digest_required`; stale digests return
+  `409 conflict` before runtime, governance admission or queue submission. The
+  server reads the body and digest together and queues that detached snapshot;
+  later saves cannot replace it. Governance execution/revocation checks still apply.
 - `GET /api/workbench/runs/{id}` → recipient-safe run status/result.
 - `POST /api/workbench/runs/{id}/cancel` cancels an authorized run.
 - `POST /api/workbench/plans/{id}/approve` approves the displayed digest.

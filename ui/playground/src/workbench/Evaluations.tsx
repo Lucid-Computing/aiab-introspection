@@ -97,7 +97,7 @@ export default function Evaluations({ saved, eligible, online, account }: { save
         const expected = context.current;
         const remote = await api.loadPlan(saved.plan.id);
         if (context.current.key !== expected.key || context.current.saved !== saved || !context.current.eligible || remote.digest !== saved.digest || pretty(remote.plan) !== pretty(saved.plan)) throw new Error("Saved agreement changed. Reload, save and check before evaluating.");
-        const result = await api.evaluate(saved.plan.id, agent, Number(limit), Number(seed));
+        const result = await api.evaluate(saved.plan.id, agent, Number(limit), Number(seed), saved.digest);
         if (!result.evaluation_id) throw new Error("Evaluation API returned no evaluation_id.");
         if (context.current.key === expected.key) remember(result.evaluation_id);
       })}>Start synthetic evaluation</button>

@@ -40,8 +40,8 @@ it("shows provider failure without fallback", async () => {
 });
 it("sends exact evaluation body and encoded owner-only get/cancel paths", async () => {
   const fetcher = vi.fn(async (url: string, _options?: RequestInit) => response(url.endsWith("cancel") ? { evaluation_id: "ev/id", status: "cancelled" } : url.endsWith("ev%2Fid") ? job() : { evaluation_id: "ev/id" })); vi.stubGlobal("fetch", fetcher);
-  await api.evaluate("plan", true, 4, 12); await api.getEvaluation("ev/id"); await api.cancelEvaluation("ev/id");
-  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({ plan_id: "plan", include_agent: true, case_limit: 4, seed: 12 }); expect(fetcher.mock.calls[1][0]).toBe("/api/workbench/evaluations/ev%2Fid"); expect(fetcher.mock.calls[2][0]).toBe("/api/workbench/evaluations/ev%2Fid/cancel"); expect(fetcher.mock.calls[2][1]?.body).toBe("{}");
+  await api.evaluate("plan", true, 4, 12, "checked"); await api.getEvaluation("ev/id"); await api.cancelEvaluation("ev/id");
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({ plan_id: "plan", include_agent: true, case_limit: 4, seed: 12, expected_digest: "checked" }); expect(fetcher.mock.calls[1][0]).toBe("/api/workbench/evaluations/ev%2Fid"); expect(fetcher.mock.calls[2][0]).toBe("/api/workbench/evaluations/ev%2Fid/cancel"); expect(fetcher.mock.calls[2][1]?.body).toBe("{}");
 });
 it.each(["completed", "failed", "cancelled", "interrupted"] as const)("stops polling at %s", async (status) => {
   const get = vi.spyOn(api, "getEvaluation").mockResolvedValue(job(status)); const callback = vi.fn(); await pollEvaluation("ev/id", callback, new AbortController().signal, 1); expect(get).toHaveBeenCalledTimes(1); expect(callback).toHaveBeenCalledWith(expect.objectContaining({ status, evaluation_id: "ev/id" }));
@@ -59,7 +59,7 @@ it("gates unchecked saves, changes mode case cap and retains IDs across remount"
   const p = blankPlan(); const saved = { plan: p, digest: "saved" }; vi.spyOn(api, "loadPlan").mockResolvedValue(saved); const submit = vi.spyOn(api, "evaluate").mockResolvedValue({ evaluation_id: "ev/id" }); vi.spyOn(api, "getEvaluation").mockResolvedValue(job());
   const t = await mount(createElement(Evaluations, { saved, eligible: false, online: true, account: "owner" })); expect(button(t, "Start synthetic evaluation").props.disabled).toBe(true);
   await act(async () => t.update(createElement(Evaluations, { saved, eligible: true, online: true, account: "owner" })));
-  await change(t, "Evaluation mode", "agent"); await click(t, "Start synthetic evaluation"); expect(submit).toHaveBeenCalledWith(p.id, true, 4, 0); expect(text(t.root)).toContain("derived-hash");
+  await change(t, "Evaluation mode", "agent"); await click(t, "Start synthetic evaluation"); expect(submit).toHaveBeenCalledWith(p.id, true, 4, 0, saved.digest); expect(text(t.root)).toContain("derived-hash");
   const reopened = await mount(createElement(Evaluations, { saved, eligible: true, online: true, account: "owner" })); await click(reopened, "ev/id"); expect(text(reopened.root)).toContain("Evaluation completed");
 });
 it("cancels real service work and refreshes the retained partial report", async () => {
