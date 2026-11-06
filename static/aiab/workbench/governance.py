@@ -887,6 +887,13 @@ class GovernanceStore:
                 out.append({"plan": record["plan"], "digest": record["digest"]})
             return out
 
+    def plan_owner(self, digest, actor):
+        """Authenticated agreement ownership, independent of private draft copies."""
+        with self._db() as db:
+            record = self._get(db, "plan", digest)
+            self._visible(db, record, actor)
+            return record["owner"]
+
     def run_status(self, run_id, actor):
         with self._db() as db:
             run = self._get(db, "run", run_id)

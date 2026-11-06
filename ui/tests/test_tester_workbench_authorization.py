@@ -236,9 +236,6 @@ def test_receipt_binding_and_challenge_parent_cannot_be_substituted(joint):
     )
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="AUTH-04: duplicate digest hides shared agreement"
-)
 def test_reader_copy_cannot_hide_owner_agreement_from_other_participants(joint):
     _, client, plan, _, *_ = joint
     endpoint = "/api/workbench/plans/" + plan["id"]

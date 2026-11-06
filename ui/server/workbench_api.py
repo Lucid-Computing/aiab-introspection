@@ -103,9 +103,8 @@ class WorkbenchAPI:
         visible = self.governance.plans(actor)
         current = []
         for package in visible:
-            try:
-                self.store.current_owner(package["digest"])
-            except KeyError:
+            owner = self.governance.plan_owner(package["digest"], actor)
+            if not self.store.is_current(owner, package["plan"]):
                 continue
             current.append(package)
         own = self.store.plans(actor)
@@ -499,7 +498,13 @@ class WorkbenchAPI:
             except (IndexError, KeyError, TypeError, ValueError):
                 raise ValueError("Clause unavailable") from None
             recipients = body.get("recipients", [actor])
-            owner = self.store.current_owner(package["digest"])
+            try:
+                owner = self.governance.plan_owner(package["digest"], actor)
+            except ValueError:
+                # An unbound private draft has no governance record yet.
+                if not self.store.is_current(actor, package["plan"]):
+                    raise KeyError("Agreement not found") from None
+                owner = actor
             if not isinstance(recipients, list) or not set(recipients) <= self.permitted(
                 package["plan"]
             ) | {owner}:
