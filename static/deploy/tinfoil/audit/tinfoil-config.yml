@@ -1,5 +1,5 @@
 {
-  "cvm-version": "0.14.9",
+  "cvm-version": "0.14.17",
   "cpus": 2,
   "memory": 8192,
   "networks": {
@@ -41,7 +41,7 @@
           "XDG_DATA_HOME": "/tmp/aiab-data"
         },
         {
-          "AIAB_RELEASE_TAG": "v0.0.10"
+          "AIAB_RELEASE_TAG": "v0.0.11"
         }
       ],
       "secrets": [
