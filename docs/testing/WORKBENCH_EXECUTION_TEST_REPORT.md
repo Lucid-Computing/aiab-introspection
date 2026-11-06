@@ -1,5 +1,16 @@
 # Workbench execution tester report
 
+## Parent resolution — 2026-11-06
+
+EXE-01, EXE-02 and EXE-03 are fixed on `dev-astra-one`. Conflicting cohort/period
+values abstain independently of input order; historical consent uses the latest
+exact-bound state at admission, with simultaneous conflicting states requiring
+adjudication; unrelated review/release/defect versions abstain. The original
+findings below describe the tested baseline. Their strict xfail markers have been
+removed. The updated regression file passes **38 tests**, including all 432
+synthetic outcomes and additional before/after admission, reapproval and conflicting
+timestamp cases. These changes require deployment before they affect the hosted UI.
+
 Date: 2026-11-06 (UTC). Tester: Sol, isolated `t3-f9f437e8` worktree.
 Source baseline: `f3aec71`; hosted baseline supplied by coordinator: `e404703`
 (not independently established from a deployment metadata endpoint).

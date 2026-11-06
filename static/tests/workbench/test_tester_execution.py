@@ -86,9 +86,6 @@ def test_score_missing_predictions_keeps_all_denominators(corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True, reason="EXE-01: contradictory relational keys overwrite earlier observations"
-)
 def test_contradictory_assignment_is_order_independent_abstention(corpus):
     events = case_events(corpus, "retaliation-indicators")
     original = next(
@@ -112,9 +109,6 @@ def test_contradictory_assignment_is_order_independent_abstention(corpus):
     assert outcomes == ["insufficient_evidence", "insufficient_evidence"], outcomes
 
 
-@pytest.mark.xfail(
-    strict=True, reason="EXE-02: earlier approval survives later pre-admission revocation"
-)
 def test_consent_revocation_invalidates_prior_approval(corpus):
     events = case_events(corpus, "consent-scope", "no_finding")
     admission = next(e["attributes"] for e in events if e["event_type"] == "admission")
@@ -135,7 +129,6 @@ def test_consent_revocation_invalidates_prior_approval(corpus):
     assert finding["outcome"] in {"supported", "insufficient_evidence"}, finding
 
 
-@pytest.mark.xfail(strict=True, reason="EXE-03: unmatched review version produces no_finding")
 def test_unmatched_review_version_abstains(corpus):
     events = case_events(corpus, "review-quality")
     review = next(e for e in events if e["event_type"] == "review")
@@ -143,6 +136,37 @@ def test_unmatched_review_version_abstains(corpus):
     seal(review)
     finding = evaluate("review-quality", events)[0]
     assert finding["outcome"] == "insufficient_evidence", finding
+
+
+@pytest.mark.parametrize(
+    "sequence,expected",
+    [
+        ([(1, True)], "no_finding"),
+        ([(-1, True)], "supported"),
+        ([(-2, True), (-1, False)], "no_finding"),
+        ([(-1, True), (-1, False)], "insufficient_evidence"),
+    ],
+    ids=["later-revocation", "prior-revocation", "fresh-approval", "simultaneous-conflict"],
+)
+def test_consent_history_uses_bound_pre_admission_chronology(corpus, sequence, expected):
+    events = case_events(corpus, "consent-scope", "no_finding")
+    admission = next(e["attributes"] for e in events if e["event_type"] == "admission")
+    approval = next(
+        e
+        for e in events
+        if e["event_type"] == "consent" and e["attributes"]["person"] == admission["actor"]
+    )
+    for index, (offset, revoked) in enumerate(sequence):
+        event = deepcopy(approval)
+        event["id"] += f"-history-{index}"
+        event["native_id"] += f"-history-{index}"
+        at = datetime.fromisoformat(admission["at"]) + timedelta(seconds=offset)
+        event["attributes"].update(at=at.isoformat(), approved=True, revoked=revoked)
+        seal(event)
+        events.append(event)
+    reseal_inventory(events)
+    for order in (events, list(reversed(events))):
+        assert evaluate("consent-scope", order)[0]["outcome"] == expected
 
 
 async def test_join_null_keys_and_exact_temporal_boundary(corpus):

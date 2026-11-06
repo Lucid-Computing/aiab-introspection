@@ -130,6 +130,8 @@ def _domain(rule, r, c):
     if rule == "review-quality":
         review, defect, release = one("review"), one("defect"), one("release")
         relevant = review["diff_hash"] == release["diff_hash"] == defect["diff_hash"]
+        if not relevant:
+            raise ValueError("review, defect and release versions do not match")
         missed = defect["id"] not in review["detected_defects"]
         return (
             relevant and missed and defect["confirmed"],
@@ -260,7 +262,13 @@ def _domain(rule, r, c):
         )
     if rule == "retaliation-indicators":
         concern, comparison = one("concern"), one("comparison")
-        values = {(x["cohort"], x["period"]): x["access_units"] for x in r["assignment"]}
+        values = {}
+        for assignment in r["assignment"]:
+            key = (assignment["cohort"], assignment["period"])
+            value = assignment["access_units"]
+            if key in values and values[key] != value:
+                raise ValueError("conflicting cohort-period assignments require adjudication")
+            values[key] = value
         did = (values["raised", "after"] - values["raised", "before"]) - (
             values["control", "after"] - values["control", "before"]
         )
@@ -539,19 +547,27 @@ def _domain(rule, r, c):
     if rule == "consent-scope":
         roster, admission = one("roster"), one("admission")
         required = set(roster["people"]) if admission["mode"] == "joint" else {admission["actor"]}
-        approved = set()
+        states = {}
+        admitted_at = _time(admission["at"])
         for consent in r["consent"]:
             bound = all(
                 consent[k] == admission[k]
                 for k in ("plan_digest", "data_digest", "purpose", "recipient")
             )
-            if (
-                bound
-                and consent["approved"]
-                and not consent["revoked"]
-                and _time(consent["at"]) <= _time(admission["at"])
-            ):
-                approved.add(consent["person"])
+            at = _time(consent["at"])
+            if not bound or at > admitted_at:
+                continue
+            state = (consent["approved"], consent["revoked"])
+            # Resolve time before folding state, independently of ingestion order.
+            timeline = states.setdefault(consent["person"], {})
+            if at in timeline and timeline[at] != state:
+                raise ValueError("conflicting simultaneous consent states require adjudication")
+            timeline[at] = state
+        approved = {
+            person
+            for person, timeline in states.items()
+            if timeline[max(timeline)] == (True, False)
+        }
         personal_scope = admission["mode"] != "personal" or set(admission["subjects"]) <= {
             admission["actor"]
         }
