@@ -21,6 +21,8 @@ resolution notes. All corresponding expected-failure markers are removed in the
 current tests. Frontend verification passed 145 tests, typechecking and build.
 Execution regression verification passed 38 tests, including checks across all
 432 synthetic cases. Integrated login/authorization verification passed 47 tests.
+The final combined run of workbench API, assistance/evaluation and authorization
+regressions passed 96 tests in 373.50 seconds, with no expected failures.
 These suites overlap with broader tests; their counts should not be added as a
 single independent coverage number.
 
