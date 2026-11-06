@@ -6,6 +6,12 @@ login file is `~/.local/share/aiab-dev-astra-one/login.json`; do not commit or s
 that file in presentation materials. Use the authenticated workbench, not the
 legacy builder without `?workbench=1`.
 
+WorkOS login uses the same Staging OIDC issuer, client and role mapping as dev.
+The isolated service has its own callback URL registered on that application:
+`https://aiab-dev-astra-one.onrender.com/login/callback`. Its session signing key
+and local account storage remain separate. Use **Sign in with WorkOS** for your
+existing WorkOS account.
+
 Hosted checks on November 5 passed: a real Pi/DeepSeek investigation completed
 four turns and eight tool calls in about 36 seconds; verified authoring changed
 only the requested title; a deterministic evaluation matched all 16 selected
