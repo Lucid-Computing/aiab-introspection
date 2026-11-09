@@ -1,20 +1,28 @@
-"""One real classifier call over a release-pinned, attested TLS connection."""
+"""One real classifier call through Tinfoil's attested model router."""
 
 from __future__ import annotations
 
 from aiab.audit.protocol import AuditError, canonical, closed, decode, validate
-from aiab.audit.transport import PinnedConnection
+from aiab.audit.transport import RoutedConnection
+
+# Chat-template tokens around the prompt (the serving template's fixed system preamble and
+# generation prompt) and around each message; generous for gpt-oss's harmony format.
+PROMPT_OVERHEAD_TOKENS = 256
+MESSAGE_OVERHEAD_TOKENS = 16
 
 SCORE_SCHEMA = closed({"score": {"type": "number", "minimum": 0, "maximum": 1}})
 
 # Independently reviewed release config, not an endpoint's self-declared weight hash.
-# https://github.com/tinfoilsh/confidential-gpt-oss-safeguard-120b/blob/v0.0.10/tinfoil-config.yml
+# https://github.com/tinfoilsh/confidential-gpt-oss-safeguard-120b/blob/v0.0.11/tinfoil-config.yml
 # The measured config binds the modelwrap root and loads only its /tinfoil/mpk mount.
-# Adding a serving release requires review of its actual model/config/serving command.
+# v0.0.11 serves the same modelwrap root as v0.0.10 (only the CVM, serving image and two
+# usage flags changed). Adding a serving release requires review of its actual
+# model/config/serving command. The box reaches the model through Tinfoil's router
+# (transport.RoutedConnection), which verifies the model enclave; the box itself does not.
 MODEL_BINDINGS = {
     (
         "tinfoilsh/confidential-gpt-oss-safeguard-120b",
-        "sha256:a7a8ffa64fed85d1a8800f3de01b37f1429abb650962dc41773f365d98369c34",
+        "sha256:28993b6de54ae31936dfb8dddda06d3f71e84f33840c3cfadf8f33abfeb5aedd",
     ): (
         "gpt-oss-safeguard-120b",
         "sha256:7a279c6d7739f7ded0cf859f1bf83893543a94a455e9b27e5cbcb1abe5d893a6",
@@ -44,10 +52,41 @@ class PinnedModel:
         if binding != (model["id"], model["artifact_digest"]):
             raise AuditError("unapproved_model_binding")
         self.model, self.credential = model, credential
-        self.connection = PinnedConnection(model["host"], model["repo"], model["release_digest"])
+        self.connection = RoutedConnection(model["host"], model["id"])
 
     async def start(self):
         await self.connection.start()
+
+    @property
+    def route(self) -> dict:
+        """The attested router release and the model enclaves it named, for /aiab/health."""
+        connection = self.connection
+        return {
+            "router_repo": getattr(connection, "repo", None),
+            "router_release": getattr(connection, "release", None),
+            "enclaves": sorted(getattr(connection, "served", ())),
+        }
+
+    async def request(self, body: bytes):
+        """One chat completion. The router's TLS key changes when Tinfoil releases a new
+        router: then attest the router afresh, under the same rule as at start-up, and send
+        the request once more. Nothing is sent to an endpoint that has not been verified."""
+        for attempt in range(2):
+            connection = self.connection
+            if connection.failed:
+                await connection.close()
+                connection = self.connection = RoutedConnection(
+                    self.model["host"], self.model["id"]
+                )
+                await connection.start()
+            try:
+                return await connection.request(
+                    "POST", "/v1/chat/completions", body, self.credential
+                )
+            except AuditError:
+                if attempt or not connection.failed:
+                    raise
+        raise AuditError("model_unavailable", 503)
 
     async def check_context(self, text: str, policy: dict):
         content = messages(text, policy)
@@ -55,19 +94,18 @@ class PinnedModel:
         return content
 
     async def check_messages(self, content: list[dict], max_output_tokens: int):
-        """Refuse a prompt that, with its answer budget, would not fit the model's context."""
-        model = self.model
-        # Ask the exact attested serving tokenizer to count the assembled prompt.
-        # This is not an inference call; no truncation or fallback estimate is used.
-        status, count = await self.connection.request(
-            "POST",
-            "/tokenize",
-            canonical({"model": model["id"], "messages": content, "add_generation_prompt": True}),
-            self.credential,
+        """Refuse a prompt that, with its answer budget, might not fit the model's context.
+
+        The router serves no tokenizer endpoint, so this is an upper bound, not a count:
+        every text token covers at least one UTF-8 byte, and the chat template adds a fixed
+        preamble and a few tokens per message. A prompt within the bound always fits; one
+        beyond it is refused even if it might have fit. Nothing is ever truncated.
+        """
+        bound = PROMPT_OVERHEAD_TOKENS + sum(
+            MESSAGE_OVERHEAD_TOKENS + len(m["role"].encode()) + len(m["content"].encode())
+            for m in content
         )
-        if status != 200 or not isinstance(count, dict) or type(count.get("count")) is not int:
-            raise AuditError("model_unavailable")
-        if count["count"] + max_output_tokens > model["context_tokens"]:
+        if bound + max_output_tokens > self.model["context_tokens"]:
             raise AuditError("input_too_large", 413)
 
     async def complete(self, content: list[dict], schema: dict, max_output_tokens: int) -> dict:
@@ -87,9 +125,7 @@ class PinnedModel:
                 "json_schema": {"name": "audit_answer", "strict": True, "schema": schema},
             },
         }
-        status, result = await self.connection.request(
-            "POST", "/v1/chat/completions", canonical(request), self.credential
-        )
+        status, result = await self.request(canonical(request))
         if status != 200:
             raise AuditError("model_unavailable")
         return parse_answer(result, schema)
@@ -112,9 +148,7 @@ class PinnedModel:
                 "json_schema": {"name": "audit_score", "strict": True, "schema": SCORE_SCHEMA},
             },
         }
-        status, result = await self.connection.request(
-            "POST", "/v1/chat/completions", canonical(request), self.credential
-        )
+        status, result = await self.request(canonical(request))
         if status != 200:
             raise AuditError("model_unavailable")
         try:
