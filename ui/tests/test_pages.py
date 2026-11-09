@@ -148,6 +148,9 @@ def test_sign_page_signs_in_the_browser_and_keeps_the_manual_route(client, tmp_p
     assert 'id="upload-form-lab"' in html and 'id="key-form-lab"' in html
     assert 'id="cert-lab"' in html  # a pasted signature carries its certificate
     assert "Set up signing" in html and "Use this key file" in html  # no terminal needed
+    # The card hides buttons with the hidden attribute, which .btn's display would override.
+    css = (REPO_ROOT / "ui/assets/aiab.css").read_text()
+    assert ".browser-key [hidden] { display: none !important; }" in css
     assert (
         "sign_digest.py certify" not in html.split("Other ways to sign")[1].split("browser-key")[1]
     )
