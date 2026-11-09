@@ -286,7 +286,6 @@ class Request:
     size: int  # bytes of the request body
     raw: dict = field(repr=False)
     message_count: int = 0
-    first_user_text: str = ""  # the first user message with text, for the session title
     parts: list[tuple[str, str]] | None = None  # call_parts, kept by the light index
     file: str = ""  # the file the line is in, and where: set by the light index
     offset: int = -1
@@ -301,7 +300,7 @@ class Request:
 
     @property
     def title_text(self) -> str:
-        return self.first_user_text
+        return ""  # a proxied call never lends its text to a title (MAC-377)
 
     @property
     def last_user_text(self) -> str:
@@ -330,17 +329,16 @@ class Session:
 
     @property
     def title(self) -> str:
-        """The first thing the person said. For proxied calls that is taken from the fullest
-        request first: side requests (a quota check, a title request) share the session id
-        but are not the conversation. A Slack or GitHub session is titled by its first post."""
-        ordered = list(self.records)
-        if isinstance(ordered[0], Request):
-            calls = [r for r in ordered if isinstance(r, Request)]
-            ordered = [max(calls, key=lambda r: (r.message_count, r.time)), *ordered]
-        for r in ordered:
+        """A proxied session is titled by who, when and how many calls, never by what was
+        said: the text is for the box, not for this server's lists (MAC-377). A Slack or
+        GitHub session, public to begin with, is titled by its first post."""
+        if isinstance(self.records[0], Request):
+            n = len(self.records)
+            return f"{self.who} · {self.started_short} · {n} call{'s' if n != 1 else ''}"
+        for r in self.records:
             if r.title_text:
                 return _one_line(r.title_text, 80)
-        return "(no user text)"
+        return "(no text)"
 
     @property
     def started(self) -> str:
@@ -493,7 +491,6 @@ def parse_request(entry: dict) -> Request:
         if not session:
             session = _session_from_metadata(body.get("metadata"))
     response_blocks, stop = _response_blocks(reply)
-    first_user = next((m["text"] for m in messages if m["role"] == "user" and m["text"]), "")
     raw_req = entry.get("request_raw") or {}
     size = (
         len(raw_req.get("text") or raw_req.get("base64") or "") if isinstance(raw_req, dict) else 0
@@ -514,7 +511,6 @@ def parse_request(entry: dict) -> Request:
         size=size,
         raw=entry,
         message_count=len(messages),
-        first_user_text=first_user[:500],
     )
 
 

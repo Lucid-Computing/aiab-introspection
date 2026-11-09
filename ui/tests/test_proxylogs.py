@@ -157,11 +157,12 @@ def test_index_dedups_orders_and_keeps_no_conversation(tmp_path):
     assert index[1].message_count == 3
 
 
-def test_session_title_comes_from_the_fullest_call_not_the_side_request(tmp_path):
+def test_session_title_names_who_and_when_never_what_was_said(tmp_path):
     settings = _settings(tmp_path)
     _write_logs(_dev(settings).path(settings))
     (session,) = P.sessions(P.load_index(settings, _dev(settings)))
-    assert session.title == FIRST
+    assert session.title == f"{session.who} · {session.started_short} · 3 calls"
+    assert FIRST not in session.title  # the text is for the box, not for this list (MAC-377)
     assert [r.session_id for r in session.records] == ["s1", "s1", "s1"]
 
 
@@ -359,7 +360,7 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
     dev = client.get("/logs").text
     assert 'class="srcsel-item on" href="/logs?logs=dev"' in dev
     assert 'class="srcsel-item " href="/logs?logs=prod"' in dev
-    assert "prod only" not in dev and FIRST in dev
+    assert "prod only" not in dev and "tester · " in dev  # titles name who, not what
     assert 'name="logs" value="dev"' in dev and "Dev Agent Logs · 3 requests on disk" in dev
 
     prod = client.get("/logs?logs=prod").text

@@ -46,9 +46,11 @@ STEPS = (
     ),
     (
         "export",
-        "Sign the test export",
-        "Takes the chosen records and signs them with the demo logger key, standing in for "
-        "the real logger. The box will refuse records without this evidence.",
+        "Seal and sign the test export",
+        "Takes the chosen records, seals each record's text to the box's encryption key "
+        "from step 2 (only the box can open it) and signs them with the demo logger key, "
+        "standing in for the real logger. The box will refuse records without this evidence. "
+        "The plain records are deleted from the server once the export is written.",
     ),
     (
         "submit",
@@ -243,6 +245,12 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
             anchor = json.loads(files["anchor"].read_text())
             return {"host": anchor["release"]["host"], "manifest": anchor["manifest"]}
         if key == "export":
+            # Seal the records to the box attested in step 2 when it publishes an encryption
+            # key (boxes before MAC-377 do not); the submission then holds ciphertext and the
+            # plain records leave the server. Stands in for the logger, which will seal at
+            # its end so this server never holds the text at all.
+            identity = json.loads(files["anchor"].read_text()).get("identity", {})
+            sealed = "encryption_key" in identity
             _cli(
                 settings,
                 plan,
@@ -255,9 +263,16 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 "ui-" + uuid.uuid4().hex,
                 "--output",
                 str(files["submission"]),
+                *(("--seal-to", str(files["anchor"])) if sealed else ()),
             )
             submission = json.loads(files["submission"].read_text())
-            return {"records": len(submission["records"]), "input_scope": submission["input_scope"]}
+            fixture.unlink(missing_ok=True)
+            return {
+                "records": len(submission["records"]),
+                "input_scope": submission["input_scope"],
+                "sealed": sealed,
+                "boot_id": identity.get("boot_id"),
+            }
         if key == "submit":
             _cli(
                 settings,
