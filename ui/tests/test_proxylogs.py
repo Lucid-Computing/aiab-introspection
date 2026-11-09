@@ -317,7 +317,7 @@ def _client(monkeypatch, settings):
     return client
 
 
-def test_logs_page_pages_sessions_and_loads_earlier_messages_on_demand(tmp_path, monkeypatch):
+def test_logs_page_pages_sessions_and_shows_metadata_never_the_text(tmp_path, monkeypatch):
     from server import app as web
 
     settings = _settings(tmp_path)
@@ -339,13 +339,11 @@ def test_logs_page_pages_sessions_and_loads_earlier_messages_on_demand(tmp_path,
     assert second.count('class="logs-item') == 5 and "← newer" in second
 
     oldest = client.get("/logs?page=2&session=s0").text
-    assert 'data-src="/logs/earlier/0.0?logs=dev"' in oldest
-    assert 'href="/logs/raw/0.0?logs=dev"' in oldest
-    shown = '<pre class="msg-text msg-text--user">turn {}</pre>'.format
-    assert shown(0) not in oldest and shown(9) in oldest  # the folded part is not sent
-    earlier = client.get("/logs/earlier/0.0?logs=dev").text
-    assert shown(0) in earlier and shown(3) in earlier and shown(4) not in earlier
-    assert client.get("/logs/earlier/0.0?logs=prod").status_code == 404  # not in that source
+    # Metadata only: who, when, how many messages. The text is for the box (MAC-377).
+    assert "Messages in the request</dt><dd>10</dd>" in oldest
+    assert "turn " not in oldest and "/logs/earlier/" not in oldest and "/logs/raw/" not in oldest
+    assert client.get("/logs/earlier/0.0?logs=dev").status_code == 404
+    assert client.get("/logs/raw/0.0?logs=dev").status_code == 404
 
 
 def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path, monkeypatch):
@@ -365,7 +363,7 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
 
     prod = client.get("/logs?logs=prod").text
     assert 'class="srcsel-item on" href="/logs?logs=prod"' in prod
-    assert "prod only" in prod and FIRST not in prod
+    assert "prod-user · " in prod and "prod only" not in prod and FIRST not in prod
     assert "Prod Agent Logs · 1 requests on disk" in prod
     assert "&amp;logs=prod&amp;who=" in prod  # session links stay on the source
 

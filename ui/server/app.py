@@ -484,8 +484,16 @@ async def logs_page(request: Request) -> Response:
     )
     req = None
     if current:
-        picked = next((r for r in current.records if r.id == wanted_req), None)
-        req = proxylogs.load_full(settings, source, picked or current.records[-1])
+        picked = (
+            next((r for r in current.records if r.id == wanted_req), None) or (current.records[-1])
+        )
+        # A proxied call is shown by its metadata only; its text is never read back here.
+        # Slack and GitHub posts are public, and shown whole.
+        req = (
+            picked
+            if isinstance(picked, proxylogs.Request)
+            else proxylogs.load_full(settings, source, picked)
+        )
     return render(
         request,
         "logs.html",
@@ -508,15 +516,11 @@ async def logs_page(request: Request) -> Response:
 
 @app.get("/logs/earlier/{rid}")
 async def logs_earlier(request: Request, rid: str) -> Response:
-    """The messages the Logs page folds away for one call, rendered when it unfolds them."""
+    """Gone: a proxied call's messages are never served by this server (MAC-377). Kept so an
+    old page's fetch gets a clear answer, not a route error."""
     if user_of(request) is None:
         return Response("not signed in", status_code=401)
-    source = _log_source(request)
-    light = next((r for r in proxylogs.load_index(settings, source) if r.id == rid), None)
-    if not isinstance(light, proxylogs.Request):  # none, or a Slack or GitHub post: shown whole
-        return Response("no such request", status_code=404)
-    full = proxylogs.load_full(settings, source, light)
-    return render(request, "logs_earlier.html", messages=full.messages[:-LOGS_RECENT])
+    return Response("the text of a call is not served; it is for the box", status_code=404)
 
 
 @app.get("/logs/raw/{rid}")
@@ -526,6 +530,8 @@ async def logs_raw(request: Request, rid: str) -> Response:
         return to_login(request)
     source = _log_source(request)
     light = next((r for r in proxylogs.load_index(settings, source) if r.id == rid), None)
+    if isinstance(light, proxylogs.Request):  # a proxied call's text is for the box only
+        return Response("the text of a call is not served; it is for the box", status_code=404)
     entry = proxylogs.raw_entry(settings, source, light) if light else None
     if entry is None:
         return Response("no such request", status_code=404)

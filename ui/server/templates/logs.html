@@ -66,44 +66,15 @@
       </ol>
     </details>
 
-    <p class="req-meta">{% if req.id == current.records[-1].id %}full transcript{% else %}request {{ current.records.index(req) + 1 }} of {{ current.records | length }}{% endif %} · {{ req.when_short }} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · <a class="link" href="/logs/raw/{{ req.id }}?{{ src }}" target="_blank" rel="noopener">raw JSON</a></p>
-
-    {% if req.system_text %}
-    <details class="fold"><summary>System prompt ({{ "{:,}".format(req.system_text | length) }} chars)</summary><pre class="fold-text">{{ req.system_text }}</pre></details>
-    {% endif %}
-    {% if req.tool_names %}
-    <details class="fold"><summary>Tools available ({{ req.tool_names | length }})</summary><p class="fold-text mono">{{ req.tool_names | join(", ") }}</p></details>
-    {% endif %}
-
-
-    <div class="msgs">
-      {% if req.messages | length > recent %}
-      {# fetched when opened: a long conversation's history can run to megabytes #}
-      <details class="fold fold--plain earlier" data-src="/logs/earlier/{{ req.id }}?{{ src }}">
-        <summary>Earlier in this conversation ({{ req.messages | length - recent }} messages)</summary>
-        <p class="text-muted earlier-wait">Loading…</p>
-      </details>
-      <script>
-      document.querySelectorAll("details.earlier[data-src]").forEach((d) => d.addEventListener("toggle", async () => {
-        if (!d.open || d.dataset.loaded) return;
-        d.dataset.loaded = "1";
-        const r = await fetch(d.dataset.src);
-        d.querySelector(".earlier-wait").outerHTML = r.ok ? await r.text() : '<p class="form-message error">Could not load the earlier messages.</p>';
-      }));
-      </script>
-      {% endif %}
-      {% for m in req.messages[-recent:] %}{{ message(m) }}{% endfor %}
-      <div class="msg msg--reply">
-        <div class="msg-role">assistant<span class="msg-role-sub">this reply{% if req.stop_reason %} · {{ req.stop_reason }}{% endif %}</span></div>
-        <div class="msg-body">
-          {% for b in req.response_blocks %}
-          {% if b.kind == "text" %}<div class="msg-text msg-text--reply md">{{ b.text | md }}</div>
-          {% else %}{{ block(b, "reply") }}{% endif %}
-          {% else %}<p class="text-muted msg-empty">(no reply recorded)</p>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
+    {# Metadata only. What was said is for the box: it travels sealed and is never shown or
+       served by this server (MAC-377). #}
+    <p class="req-meta">request {{ current.records.index(req) + 1 }} of {{ current.records | length }} · {{ req.when_short }} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · {{ req.size_kb }}</p>
+    <dl class="req-facts">
+      <dt>Messages in the request</dt><dd>{{ req.message_count }}</dd>
+      <dt>Stop reason</dt><dd>{{ req.stop_reason or "—" }}</dd>
+      <dt>Session</dt><dd class="mono">{{ current.id }}</dd>
+    </dl>
+    <p class="text-muted">The text of this session is not kept readable here. It is sent sealed to the box, which alone can open it for an agreed audit.</p>
     {% else %}
     <p class="text-muted" style="padding: var(--space-6)">Pick a session on the left.</p>
     {% endif %}
