@@ -13,7 +13,7 @@ How a change travels from the agreement UI to the running box, and which branch 
 Nothing is deployed from `master`. `production` only moves in three ways:
 
 1. **Agreement drafts** (`agreements/<name>/`): they live on the UI server's disk only and are git-ignored; nothing reaches GitHub. Several people edit them in the same UI, and a save made from an older version is refused rather than overwriting a newer one. (Decided 24 Oct 2026; `AIAB_PUSH_DRAFTS=1` still pushes drafts to the checkout's branch for anyone who wants that backup.) A signed agreement is run from the Runs screen: the run sends the folder, signatures included, to the box with the records. No plan is ever baked or merged (decided 1 Nov 2026).
-2. **A party's public key** (`static/aiab/baked/trust.json`): when a party submits a public key on the Sign screen, the UI opens a pull request `keys/<party>-…` against `production` that changes only that file. `approve-keys.yml` checks it is well-formed and that nothing else changed, merges it and starts `release.yml`: the key reaches the box only inside a new measured image, because the box verifies every run's plan against the keys built into it. Decided 24 Oct 2026 by Teddy: no human merge for now; when a real auditor is on board, require the other party's review of that file.
+2. **A party's root key** (`static/aiab/baked/trust.json`): when a party submits a new root public key on the Sign screen, the UI opens a pull request `keys/<party>-…` against `production` that changes only that file. `approve-keys.yml` checks it is well-formed and that nothing else changed, merges it and starts `release.yml`: the root reaches the box only inside a new measured image, because the box verifies every run's certificates against the roots built into it. The keys that sign plans are not in the file: a party certifies a signing key with its root (`sign_digest.py certify`) and the certificate travels with each signature, so a new signing key, including a new browser key, needs no pull request and no release (MAC-432, 9 Nov 2026). A root changes rarely: when it is lost or exposed, or to revoke every key it certified. Decided 24 Oct 2026 by Teddy: no human merge for now; when a real auditor is on board, require the other party's review of that file.
 3. **Box code** (`static/`): merged from `master` when a change is confirmed, like cutting a release.
 
 ## From a merge on `production` to the live box
@@ -26,7 +26,7 @@ static/ or trust.json change --> production --push or approve-keys dispatch--> r
                                    +--> commits the new release pins and the matching config/trust/manifest back to production [skip ci]
 ```
 
-The box never fetches anything at run time. The trust keys and the model binding are inside the image, so the hardware attestation covers them; the plan arrives signed with each run and is verified against those keys. Clients (the UI's Runs page, `python -m auditor.baked`) read the release pins from the repository and refuse a box that does not match.
+The box never fetches anything at run time. The trust roots and the model binding are inside the image, so the hardware attestation covers them; the plan arrives signed with each run, with each party's certificate, and is verified against those roots. Clients (the UI's Runs page, `python -m auditor.baked`) read the release pins from the repository and refuse a box that does not match.
 
 ## What the release job needs, once
 

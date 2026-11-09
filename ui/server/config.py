@@ -82,10 +82,13 @@ class Settings:
     github_bundle: Path = UI_ROOT / "data" / "github-export.enc"
 
     anthropic_api_key: str | None = field(default=None, repr=False)
-    # AIAB_LAB_KEY: the lab's private key (base64 raw Ed25519, the format of lab.key from
-    # make dev-keys). Set, the server signs every plan version as the lab itself, so nobody
-    # waits for the lab; whoever controls the server can then sign as the lab. Prototype only.
+    # AIAB_LAB_KEY: the lab's signing key (base64 raw Ed25519, the format of lab.key from
+    # make dev-keys) and AIAB_LAB_CERTIFICATE: the certificate the lab's root gave it (the
+    # JSON line in lab.cert). Both set, the server signs every plan version as the lab
+    # itself, so nobody waits for the lab; whoever controls the server can then sign as the
+    # lab. The lab's root stays with the lab. Prototype only.
     lab_signing_key: str | None = field(default=None, repr=False)
+    lab_signing_certificate: str | None = None
     # OpenID Connect login (WorkOS AuthKit; any provider with a discovery document). Issuer,
     # client id and secret set: Sign in goes through the provider; emails in admins_file are
     # the lab, everyone else is the auditor. oidc_group set: the ID token's groups claim must
@@ -197,6 +200,7 @@ def load_settings() -> Settings:
         ).resolve(),
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
         lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
+        lab_signing_certificate=env.get("AIAB_LAB_CERTIFICATE", "").strip() or None,
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
         oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,
         oidc_client_secret=env.get("OIDC_CLIENT_SECRET", "").strip() or None,

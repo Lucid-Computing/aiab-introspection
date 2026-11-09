@@ -1,10 +1,13 @@
-// Signing in the browser. The party's Ed25519 key is made here, kept in this browser's
-// IndexedDB as a non-extractable WebCrypto key, and signs the plan digest here. The server
-// only ever receives the public key and signatures, through the same two forms the manual
-// openssl route uses, so the box, the trust file and the verifier are unchanged.
+// Signing in the browser. The party's Ed25519 signing key is made here, kept in this
+// browser's IndexedDB as a non-extractable WebCrypto key, and signs the plan digest here.
+// The box trusts one root key per party; the party's root certifies this signing key
+// (sign_digest.py certify, on the party's own machine), and the certificate is registered
+// here and sent with every signature. The server only ever receives public keys,
+// certificates and signatures, through the same forms the manual openssl route uses.
 //
-// The signed message is exactly what static/aiab/audit/protocol.py signs and checks:
-// "AIAB/plan-bundle/v1" + NUL + the canonical JSON {"plan_digest":"sha256:..."}.
+// The signed messages are exactly what static/aiab/audit/protocol.py signs and checks:
+// "AIAB/plan-bundle/v1" + NUL + the canonical JSON {"plan_digest":"sha256:..."}, and for
+// a certificate "AIAB/signing-key/v1" + NUL + {"role":"lab","signing_key":"..."}.
 //
 // The pure parts are exposed as globalThis.AiabSigning so that a Node script (the test in
 // ui/tests/test_browser_signing.py) can check the bytes against the Python verifier.
@@ -13,6 +16,7 @@
   "use strict";
 
   var PREFIX = "AIAB/plan-bundle/v1\u0000";
+  var CERTIFICATE_PREFIX = "AIAB/signing-key/v1\u0000";
   var BACKUP_FORMAT = "aiab-signing-key/v1";
   var PBKDF2_ITERATIONS = 600000;
   var DB_NAME = "aiab-signing";
@@ -40,6 +44,40 @@
   // RFC 8785 form byte for byte: one key, no spaces, the digest has no escapable character.
   function messageBytes(digest) {
     return new TextEncoder().encode(PREFIX + '{"plan_digest":"' + checkDigest(digest) + '"}');
+  }
+
+  // The certificate as the box reads it: role, signature, signing_key, the canonical
+  // (sorted, unspaced) form. Anything else in the pasted text is refused.
+  function parseCertificate(text) {
+    var raw;
+    try { raw = JSON.parse(text); } catch (e) { throw new Error("not JSON"); }
+    if (!raw || typeof raw !== "object" || Object.keys(raw).sort().join() !== "role,signature,signing_key") {
+      throw new Error("expected a certificate with role, signature and signing_key");
+    }
+    if (raw.role !== "lab" && raw.role !== "auditor") throw new Error("bad role");
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(raw.signing_key)) throw new Error("bad signing key");
+    if (typeof raw.signature !== "string" || raw.signature.length > 256) throw new Error("bad signature");
+    return { role: raw.role, signature: raw.signature, signing_key: raw.signing_key };
+  }
+
+  function certificateText(certificate) {
+    return '{"role":"' + certificate.role + '","signature":"' + certificate.signature +
+      '","signing_key":"' + certificate.signing_key + '"}';
+  }
+
+  function certificateMessageBytes(certificate) {
+    return new TextEncoder().encode(
+      CERTIFICATE_PREFIX + '{"role":"' + certificate.role + '","signing_key":"' + certificate.signing_key + '"}'
+    );
+  }
+
+  // Did this root (the party's public key in the trust file) sign the certificate?
+  function verifyCertificate(certificate, rootKey) {
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(rootKey)) return Promise.resolve(false);
+    return subtle.importKey("raw", unb64(rootKey), { name: "Ed25519" }, false, ["verify"])
+      .then(function (root) {
+        return subtle.verify({ name: "Ed25519" }, root, unb64(certificate.signature), certificateMessageBytes(certificate));
+      }, function () { return false; });
   }
 
   // Ed25519 is available when generateKey accepts it; older browsers throw.
@@ -161,7 +199,12 @@
 
   root.AiabSigning = {
     PREFIX: PREFIX,
+    CERTIFICATE_PREFIX: CERTIFICATE_PREFIX,
     messageBytes: messageBytes,
+    parseCertificate: parseCertificate,
+    certificateText: certificateText,
+    certificateMessageBytes: certificateMessageBytes,
+    verifyCertificate: verifyCertificate,
     supported: supported,
     generate: generate,
     importPrivate: importPrivate,
@@ -212,10 +255,9 @@
     var party = box.dataset.party, digest = box.dataset.digest, trusted = box.dataset.trusted || "";
     var states = box.querySelectorAll("[data-state]");
     var note = box.querySelector(".browser-key-note");
-    var keyForm = document.getElementById("key-form-" + party);
-    var keyInput = document.getElementById("key-" + party);
     var uploadForm = document.getElementById("upload-form-" + party);
     var sigInput = document.getElementById("sig-" + party);
+    var certInput = document.getElementById("cert-" + party);
 
     function show(state) {
       states.forEach(function (el) { el.hidden = el.dataset.state !== state; });
@@ -228,23 +270,32 @@
       note.classList.toggle("field-hint--error", !!bad);
     }
 
+    // Is the stored certificate one the party's root (on production) made for this key?
+    function certificateVerdict(entry) {
+      var certificate = entry.certificate;
+      if (!certificate) return Promise.resolve({ ok: false, text: "No certificate registered yet." });
+      if (certificate.role !== party || certificate.signing_key !== entry.publicKey) {
+        return Promise.resolve({ ok: false, text: "The registered certificate is for another key or role." });
+      }
+      return verifyCertificate(certificate, trusted).then(function (ok) {
+        return ok
+          ? { ok: true, text: "Certified by the " + party + " root production trusts." }
+          : { ok: false, text: "The registered certificate was not made by the " + party + " root production trusts." };
+      });
+    }
+
     function render(entry) {
       if (!entry) { show("none"); return; }
-      box.querySelector(".browser-public-key").textContent = entry.publicKey;
-      var verdict = box.querySelector(".browser-key-verdict"), submit = box.querySelector(".browser-key-submit");
+      box.querySelectorAll(".browser-public-key").forEach(function (el) { el.textContent = entry.publicKey; });
+      var verdict = box.querySelector(".browser-key-verdict"), certify = box.querySelector(".browser-certify-block");
       var signButton = box.querySelector(".browser-sign");
-      if (entry.publicKey === trusted) {
-        verdict.textContent = "This is the key production trusts for the " + party + ".";
-        verdict.className = "browser-key-verdict selected-label ok";
-        submit.hidden = true;
-        signButton.disabled = false;
-      } else {
-        verdict.textContent = "Production does not trust this key yet.";
-        verdict.className = "browser-key-verdict selected-label bad";
-        submit.hidden = false;
-        signButton.disabled = true;
-      }
-      show("ready");
+      return certificateVerdict(entry).then(function (result) {
+        verdict.textContent = result.text;
+        verdict.className = "browser-key-verdict selected-label " + (result.ok ? "ok" : "bad");
+        certify.hidden = result.ok;
+        signButton.disabled = !result.ok;
+        show("ready");
+      });
     }
 
     function refresh() {
@@ -295,28 +346,45 @@
       }).catch(function (error) { tell("The key was not imported: " + error.message, true); });
     }
 
-    function submitPublicKey() {
+    // The certificate the party's root made for this browser's key, pasted here once.
+    function registerCertificate(event) {
+      event.preventDefault();
+      var form = event.target, text = form.elements.certificate.value;
+      var certificate;
       loadKey(party).then(function (entry) {
-        if (!entry || !keyForm || !keyInput) return;
-        keyInput.value = entry.publicKey;
-        keyForm.requestSubmit();
-      });
+        if (!entry) throw new Error("there is no key in this browser");
+        certificate = parseCertificate(text);
+        if (certificate.role !== party) throw new Error("that certificate is for the " + certificate.role);
+        if (certificate.signing_key !== entry.publicKey) throw new Error("that certificate names another key, not this browser's");
+        return verifyCertificate(certificate, trusted).then(function (ok) {
+          if (!ok) throw new Error("the " + party + " root production trusts did not sign it");
+          entry.certificate = certificate;
+          return storeKey(party, entry);
+        });
+      }).then(function () {
+        form.reset();
+        tell("Certificate registered. This browser's key can sign now.");
+        return refresh();
+      }).catch(function (error) { tell("The certificate was not registered: " + error.message, true); });
     }
 
     function signNow() {
       loadKey(party).then(function (entry) {
         if (!entry) { tell("There is no key in this browser.", true); return; }
-        if (entry.publicKey !== trusted) { tell("Production does not trust this browser's key yet.", true); return; }
-        return confirmDialog(
-          "Sign this version, digest " + digest + ", with the " + party + " key in this browser (" +
-          entry.publicKey + ")? Check the digest against the plan zip first if you want to."
-        ).then(function (ok) {
-          if (!ok) return;
-          tell("Signing…");
-          return sign(entry.privateKey, digest).then(function (signature) {
-            if (!uploadForm || !sigInput) throw new Error("the upload form is missing");
-            sigInput.value = signature;
-            uploadForm.requestSubmit();
+        return certificateVerdict(entry).then(function (result) {
+          if (!result.ok) { tell(result.text, true); return; }
+          return confirmDialog(
+            "Sign this version, digest " + digest + ", with the " + party + " key in this browser (" +
+            entry.publicKey + ")? Check the digest against the plan zip first if you want to."
+          ).then(function (ok) {
+            if (!ok) return;
+            tell("Signing…");
+            return sign(entry.privateKey, digest).then(function (signature) {
+              if (!uploadForm || !sigInput || !certInput) throw new Error("the upload form is missing");
+              sigInput.value = signature;
+              certInput.value = certificateText(entry.certificate);
+              uploadForm.requestSubmit();
+            });
           });
         });
       }).catch(function (error) { tell("Not signed: " + error.message, true); });
@@ -333,7 +401,7 @@
 
     box.querySelector(".browser-make").addEventListener("submit", makeKey);
     box.querySelector(".browser-import").addEventListener("submit", importKey);
-    box.querySelector(".browser-key-submit").addEventListener("click", submitPublicKey);
+    box.querySelector(".browser-certify").addEventListener("submit", registerCertificate);
     box.querySelector(".browser-sign").addEventListener("click", signNow);
     box.querySelector(".browser-forget").addEventListener("click", forget);
 

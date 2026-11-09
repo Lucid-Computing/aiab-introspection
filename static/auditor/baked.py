@@ -8,7 +8,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.protocol import AuditError, canonical, decode, digest, sign_bytes
-from aiab.baked.bundle import load_bundle
+from aiab.baked.bundle import certified_key, load_bundle, write_certificate
 from aiab.baked.records import export_statement, scope_of
 from aiab.baked.records import verify as verify_input
 from aiab.baked.runtime import verify_report
@@ -59,6 +59,10 @@ async def remote(args, bundle):
                     role: (args.folder / "signatures" / f"{role}.sig").read_text().strip()
                     for role in ("lab", "auditor")
                 },
+                "certificates": {
+                    role: decode((args.folder / "signatures" / f"{role}.cert").read_bytes())
+                    for role in ("lab", "auditor")
+                },
             }
             status, value = await client.request("POST", "/aiab/runs", submission)
             if status != 202:
@@ -96,6 +100,13 @@ def main(argv=None):
     sign = commands.add_parser("sign")
     sign.add_argument("--private", type=Path, required=True)
     sign.add_argument("--role", choices=["lab", "auditor"], required=True)
+    sign.add_argument(
+        "--certificate",
+        type=Path,
+        required=True,
+        help="the certificate the party's root gave this signing key (JSON); stored next to "
+        "the signature as signatures/<role>.cert",
+    )
     sign.add_argument("--output", type=Path, required=True)
     export = commands.add_parser("mock-export")
     for name in ("records", "private", "output"):
@@ -134,9 +145,10 @@ def main(argv=None):
             )
         elif args.command == "sign":
             key = private(args.private)
-            if (
+            certificate = decode(args.certificate.read_bytes())
+            # The root in the trust file must certify exactly this key for this role.
+            if certified_key(certificate, args.role, trust) != (
                 base64.b64encode(key.public_key().public_bytes_raw()).decode()
-                != trust[args.role + "_key"]
             ):
                 raise AuditError("wrong_signing_key")
             write_new(
@@ -147,6 +159,7 @@ def main(argv=None):
                 + b"\n",
                 0o644,
             )
+            write_certificate(args.output.with_suffix(".cert"), certificate)
         elif args.command == "mock-export":
             key = private(args.private)
             if (

@@ -74,13 +74,17 @@ The mock model is a development stand-in; `--mock` runs are never evidence.
 ```sh
 uv run python -m auditor.baked --folder ../plan digest
 uv run python -m auditor.baked --folder ../plan sign \
-  --role lab --private /absolute/private/lab.key --output /tmp/lab.sig
+  --role lab --private /absolute/private/lab.key --certificate /absolute/lab.cert --output /tmp/lab.sig
 uv run python -m auditor.baked --folder ../plan sign \
-  --role auditor --private /absolute/private/auditor.key --output /tmp/auditor.sig
+  --role auditor --private /absolute/private/auditor.key --certificate /absolute/auditor.cert --output /tmp/auditor.sig
 ```
 
-Put the reviewed signature files at `plan/signatures/lab.sig` and `auditor.sig`.
-The signing commands refuse to overwrite outputs. Never commit private keys.
+`--certificate` is the certificate the party's root made for the signing key
+(`ui/assets/sign_digest.py certify`, or `make dev-keys` for development keys); `sign`
+checks it against the root in the trust file and writes it next to the signature as
+`/tmp/lab.cert`. Put the reviewed files at `plan/signatures/lab.sig`, `lab.cert`,
+`auditor.sig` and `auditor.cert`. The signing commands refuse to overwrite outputs.
+Never commit private keys.
 
 ```sh
 uv run python -m aiab.baked.check ../plan
@@ -178,9 +182,10 @@ released plan folder and release file for historical reports after upgrades.
 ## Send the plan with the run
 
 `submit` attaches the signed folder to the submission as
-`plan: {"files": {"plan.json": text}, "signatures": {"lab": ..., "auditor": ...}}`, over the
-verified connection. The box recomputes the digest over the UTF-8 bytes of the text,
-verifies both signatures against its baked keys, applies the static restrictions,
+`plan: {"files": {"plan.json": text}, "signatures": {"lab": ..., "auditor": ...}, "certificates": {"lab": {...}, "auditor": {...}}}`,
+over the verified connection. The box recomputes the digest over the UTF-8 bytes of the
+text, checks each certificate against the party's baked root and the signature against
+the certified key, applies the static restrictions,
 checks the digest equals the submission's `plan_digest`, runs the plan once on the
 records, signs the report with that digest, and keeps nothing of the plan. A wrong
 or tampered plan fails in admission; no run starts. Lab or logger may submit, as before.

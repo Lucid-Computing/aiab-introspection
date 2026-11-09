@@ -10,6 +10,7 @@ from dataclasses import replace
 
 import pytest
 from aiab.audit.protocol import sign_bytes, verify_signature
+from aiab.baked.bundle import canonical, make_certificate
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
@@ -33,12 +34,28 @@ def public(key: Ed25519PrivateKey) -> str:
 
 @pytest.fixture
 def keys(tmp_path):
-    """A lab key and an auditor key, and a trust file that pins them (model from the fixture)."""
+    """A root per party in the trust file (model from the fixture), and a signing key per
+    party with the certificate its root made for it."""
+    roots = {role: Ed25519PrivateKey.generate() for role in ("lab", "auditor")}
     lab, auditor = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
     trust = json.loads((FIXTURE / "trust.json").read_text())
-    trust["lab_key"], trust["auditor_key"] = public(lab), public(auditor)
+    trust["lab_key"], trust["auditor_key"] = public(roots["lab"]), public(roots["auditor"])
     (tmp_path / "trust.json").write_text(json.dumps(trust))
-    return {"lab": lab, "auditor": auditor, "trust": tmp_path / "trust.json"}
+    certs = {
+        "lab": make_certificate(roots["lab"], "lab", public(lab)),
+        "auditor": make_certificate(roots["auditor"], "auditor", public(auditor)),
+    }
+    return {
+        "lab": lab,
+        "auditor": auditor,
+        "roots": roots,
+        "certs": certs,
+        "trust": tmp_path / "trust.json",
+    }
+
+
+def cert_text(keys, role):
+    return canonical(keys["certs"][role]).decode()
 
 
 @pytest.fixture
@@ -55,6 +72,7 @@ def settings(tmp_path, keys, monkeypatch):
         box_url=None,
         push_drafts=False,
         lab_signing_key=raw(keys["lab"]),
+        lab_signing_certificate=cert_text(keys, "lab"),
     )
 
 
@@ -68,13 +86,15 @@ def lab_signature_verifies(target, keys):
     text = (target.plan_dir / "signatures/lab.sig").read_text().strip()
     digest = pv.file_digest(pv.bundle_files(target.plan_dir))
     verify_signature(public(keys["lab"]), text, "plan-bundle", {"plan_digest": digest})
+    stored = json.loads((target.plan_dir / "signatures/lab.cert").read_text())
+    assert stored == keys["certs"]["lab"]  # the certificate travels with the signature
     return text
 
 
 def sign_as_auditor(target, keys):
     digest = pv.file_digest(pv.bundle_files(target.plan_dir))
     sig = base64.b64encode(keys["auditor"].sign(sign_bytes("plan-bundle", {"plan_digest": digest})))
-    status, _ = pv.write_signature(target, "auditor", sig, AUDITOR)
+    status, _ = pv.write_signature(target, "auditor", sig, AUDITOR, cert_text(keys, "auditor"))
     assert status == "ok"
 
 
@@ -116,15 +136,30 @@ def test_the_auditor_signature_freezes_and_edit_brings_the_lab_signature_back(se
     assert view.signatures["auditor"]["status"] == "missing"
 
 
-def test_an_untrusted_server_key_signs_nothing(settings, keys):
+def test_an_uncertified_server_key_signs_nothing(settings, keys):
+    # A key the certificate does not name.
     other = replace(settings, lab_signing_key=raw(Ed25519PrivateKey.generate()))
-    assert pv.lab_auto_problem(other).startswith("the server's lab key")
+    assert "certifies another key" in pv.lab_auto_problem(other)
     target = create(other)
     assert not (target.plan_dir / "signatures/lab.sig").exists()
     view = pv.load_plan_view(target)
     assert view.signatures["lab"]["status"] == "missing" and not view.signatures["lab"]["auto"]
     bad = replace(settings, lab_signing_key="not a key")
     assert "not a base64" in pv.lab_auto_problem(bad)
+    # No certificate at all, or one a stranger's root made.
+    missing = replace(settings, lab_signing_certificate=None)
+    assert "not set" in pv.lab_auto_problem(missing)
+    forged = make_certificate(Ed25519PrivateKey.generate(), "lab", public(keys["lab"]))
+    stranger = replace(settings, lab_signing_certificate=canonical(forged).decode())
+    assert "not made by the lab root" in pv.lab_auto_problem(stranger)
+    # The root itself, certified by itself: refused, the root never signs plans.
+    as_root = make_certificate(keys["roots"]["lab"], "lab", public(keys["roots"]["lab"]))
+    rooted = replace(
+        settings,
+        lab_signing_key=raw(keys["roots"]["lab"]),
+        lab_signing_certificate=canonical(as_root).decode(),
+    )
+    assert "not made by the lab root" in pv.lab_auto_problem(rooted)
 
 
 def test_without_the_key_nothing_is_signed_and_a_lab_signature_freezes(settings, keys):
@@ -136,9 +171,14 @@ def test_without_the_key_nothing_is_signed_and_a_lab_signature_freezes(settings,
     )
     digest = pv.file_digest(pv.bundle_files(target.plan_dir))
     sig = base64.b64encode(keys["lab"].sign(sign_bytes("plan-bundle", {"plan_digest": digest})))
-    assert pv.write_signature(target, "lab", sig, LAB)[0] == "ok"
+    assert pv.write_signature(target, "lab", sig, LAB)[0] == "invalid"  # no certificate
+    assert pv.write_signature(target, "lab", sig, LAB, cert_text(keys, "lab"))[0] == "ok"
     view = pv.load_plan_view(target)
     assert view.frozen and not view.signatures["lab"]["auto"]
+    assert view.signatures["lab"]["signing_key"] == public(keys["lab"])
+    # Removing the signature removes its certificate too.
+    assert pv.remove_signature(target, "lab", LAB)
+    assert not (target.plan_dir / "signatures/lab.cert").exists()
 
 
 def client_for(monkeypatch, settings, party="auditor"):
@@ -167,7 +207,7 @@ def test_the_builder_can_save_twice_and_the_sign_screen_shows_the_badge(
         lab_signature_verifies(target, keys)
     html = client.get("/a/auto/sign").text
     assert "signed this version automatically by the server" in html
-    assert "The lab's key is on this server" in html
+    assert "The lab's signing key and its certificate are on this server" in html
     assert 'action="/a/auto/sign/remove"' not in html
     html = (
         client_for(

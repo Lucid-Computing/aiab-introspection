@@ -1,9 +1,11 @@
 """Development-only party keys in the box's format, plus a trust file that pins them.
 
-``python -m server.devkeys DIR`` writes lab.key, auditor.key, logger.key (base64 raw
-Ed25519 private keys, mode 0600), a .pem copy of each for openssl, and trust.json (the
-public keys plus the model binding copied from static/aiab/baked/trust.json). Running it
-again keeps existing keys and only adds what is missing. Real parties make their own keys.
+``python -m server.devkeys DIR`` writes, for the lab and the auditor, a root key
+(<party>-root.key), a signing key (<party>.key) and the certificate the root gives the
+signing key (<party>.cert); logger.key for the logger; a .pem copy of each private key for
+openssl; and trust.json (the two root public keys and the logger key, plus the model
+binding copied from static/aiab/baked/trust.json). Running it again keeps existing keys
+and only adds what is missing. Real parties make their own keys.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import os
 import sys
 from pathlib import Path
 
+from aiab.baked.bundle import make_certificate, write_certificate
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from server.config import REPO_ROOT
@@ -49,20 +52,36 @@ def load_or_make(path: Path) -> tuple[Ed25519PrivateKey, str]:
     return key, note
 
 
+def public_key(key: Ed25519PrivateKey) -> str:
+    return base64.b64encode(key.public_key().public_bytes_raw()).decode()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m server.devkeys")
     parser.add_argument("directory", type=Path)
     args = parser.parse_args(argv)
     args.directory.mkdir(parents=True, exist_ok=True)
     trust = json.loads(STATIC_TRUST.read_text(encoding="utf-8"))
-    for role in ("lab", "auditor", "logger"):
+    for role in ("lab", "auditor"):
+        root, note = load_or_make(args.directory / f"{role}-root.key")
+        trust[f"{role}_key"] = public_key(root)
+        print(f"{role}-root.key: {note}")
         key, note = load_or_make(args.directory / f"{role}.key")
-        trust[f"{role}_key"] = base64.b64encode(key.public_key().public_bytes_raw()).decode()
         print(f"{role}.key: {note}")
+        # The certificate is remade each time: it is public and cheap, and this keeps it
+        # right after a root or signing key is replaced by hand.
+        write_certificate(
+            args.directory / f"{role}.cert", make_certificate(root, role, public_key(key))
+        )
+        print(f"{role}.cert: certifies {role}.key with {role}-root.key")
+    key, note = load_or_make(args.directory / "logger.key")
+    trust["logger_key"] = public_key(key)
+    print(f"logger.key: {note}")
     out = args.directory / "trust.json"
     out.write_text(json.dumps(trust, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote {out}")
     print(f"start the UI with AIAB_TRUST_FILE={out}")
+    print("make dev also sets AIAB_LAB_KEY from lab.key and AIAB_LAB_CERTIFICATE from lab.cert")
     return 0
 
 

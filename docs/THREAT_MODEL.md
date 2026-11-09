@@ -68,15 +68,27 @@ Every admitted conversation reaches Tinfoil classification; only policy-allowed
 messages reach Anthropic when both hosted overlays are enabled. Classifier
 verification does not make Anthropic answer inference confidential or attested.
 
-Party signing keys for the audit plan (lab and auditor, Ed25519) live with the parties,
-not in the service. In the agreement UI each party's key is made and kept in that party's
-browser as a non-extractable WebCrypto key, with a password-encrypted backup the party
-holds, and signs the plan digest in the browser; the UI server receives public keys and
-signatures only. One exception exists for the prototype: with `AIAB_LAB_KEY` set, the UI
-server holds the lab's private key and signs every plan version as the lab by itself, so
-whoever controls the server can sign as the lab, and the lab signature then shows only
-that the server saw the version. The auditor's signature still comes from outside the
-server. The UI server is otherwise trusted to serve honest JavaScript and an
+Party keys for the audit plan (lab and auditor, Ed25519) live with the parties, not in
+the service. Each party has a root key, whose public half is baked into the box image
+(`trust.json`) and covered by the attestation, and signing keys the root certifies: a
+certificate is the root's signature over `{"role", "signing_key"}`, and a run carries each
+party's certificate next to its plan signature. The box checks the certificate against
+the baked root, then the plan signature against the certified key, and refuses a plan
+signed with a root directly, so the root is used only to certify and is kept off the
+server and out of the browser. A new signing key needs no release; only a root change
+goes through the trust file and a rebuild. The box keeps no state, so a certificate
+cannot be revoked: a lost signing key stays valid until its party's root is rotated,
+which is the same exposure a lost key had when keys were baked in. The box reads no
+clock, so certificates carry no expiry. In the agreement UI each party's signing key is
+made and kept in that party's browser as a non-extractable WebCrypto key, with a
+password-encrypted backup the party holds; the party certifies it once on its own machine
+(`sign_digest.py certify`), registers the certificate in the browser, and signs the plan
+digest in the browser; the UI server receives public keys, certificates and signatures
+only. One exception exists for the prototype: with `AIAB_LAB_KEY` and
+`AIAB_LAB_CERTIFICATE` set, the UI server holds a certified lab signing key and signs
+every plan version as the lab by itself, so whoever controls the server can sign as the
+lab, and the lab signature then shows only that the server saw the version; the lab's
+root stays with the lab. The auditor's signature still comes from outside the server. The UI server is otherwise trusted to serve honest JavaScript and an
 honest digest, which is an active attack a party can detect by comparing the served page
 with the repository and the shown digest with the downloaded plan files, and the trust
 file change that admits a new public key is visible in GitHub history. Hosting both

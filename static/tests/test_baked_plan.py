@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.api import create_app
 from aiab.audit.protocol import AuditError, canonical, clone, decode, sign_bytes
-from aiab.baked.bundle import file_digest, load_bundle
+from aiab.baked.bundle import file_digest, load_bundle, make_certificate, write_certificate
 from aiab.baked.executor import execute
 from aiab.baked.output import capacity, check_schema
 from aiab.baked.plan_ir import check_plan
@@ -31,9 +31,17 @@ def setup(tmp_path):
     shutil.copytree(fixture, folder)
     (folder / "trust.json").unlink()  # the fixture's trust file is not part of a plan folder
     trust = decode((fixture / "trust.json").read_bytes())
+    # The parties' roots go into the trust file; the plan is signed with signing keys
+    # each root certifies. keys["roots"] and keys["certs"] travel with the private keys.
     keys = {role: Ed25519PrivateKey.generate() for role in ("lab", "auditor", "logger")}
-    for role, key in keys.items():
-        trust[role + "_key"] = base64.b64encode(key.public_key().public_bytes_raw()).decode()
+    keys["roots"] = {role: Ed25519PrivateKey.generate() for role in ("lab", "auditor")}
+    for role in ("lab", "auditor"):
+        trust[role + "_key"] = public_key(keys["roots"][role])
+    trust["logger_key"] = public_key(keys["logger"])
+    keys["certs"] = {
+        role: make_certificate(keys["roots"][role], role, public_key(keys[role]))
+        for role in ("lab", "auditor")
+    }
     trust["runtime_digest"] = "sha256:" + "a" * 64
     unsigned = load_bundle(folder, trust, signed=False)
     (folder / "signatures").mkdir(exist_ok=True)  # the fixture ships demo signatures
@@ -43,6 +51,7 @@ def setup(tmp_path):
                 keys[role].sign(sign_bytes("plan-bundle", {"plan_digest": unsigned.digest}))
             ).decode()
         )
+        write_certificate(folder / "signatures" / f"{role}.cert", keys["certs"][role])
     bundle = load_bundle(folder, trust)
     records = [
         decode(line)
@@ -51,8 +60,13 @@ def setup(tmp_path):
     return folder, trust, keys, bundle, records
 
 
+def public_key(key):
+    return base64.b64encode(key.public_key().public_bytes_raw()).decode()
+
+
 def carried(files, keys):
-    """A bundle as it travels with a run: its file as text, signed by both fixture keys."""
+    """A bundle as it travels with a run: its file as text, signed by both fixture keys,
+    with the certificates their roots gave them."""
     plan_digest = file_digest(files)
     return {
         "files": {name: raw.decode() for name, raw in files.items()},
@@ -62,6 +76,7 @@ def carried(files, keys):
             ).decode()
             for role in ("lab", "auditor")
         },
+        "certificates": {role: keys["certs"][role] for role in ("lab", "auditor")},
     }
 
 

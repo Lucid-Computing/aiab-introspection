@@ -9,11 +9,18 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.api import create_app
 from aiab.audit.protocol import AuditError, sign_bytes
-from aiab.baked.bundle import PLAN_FILE, check_bundle, file_digest, submitted_bundle
+from aiab.baked.bundle import (
+    PLAN_FILE,
+    check_bundle,
+    file_digest,
+    make_certificate,
+    submitted_bundle,
+)
 from aiab.baked.records import export_statement, scope_of, verify
 from aiab.baked.runtime import Runtime, verify_report
 from aiab.dryrun import MockModel
 from tests import test_baked_plan
+from tests.test_baked_plan import public_key
 
 demo_plan = test_baked_plan.setup  # the frozen graph-plan fixture
 
@@ -26,10 +33,12 @@ def plan(demo_plan):
 TOKENS = {role: role + "-" + "x" * 40 for role in ("lab", "auditor", "logger")}
 
 
-def signed_document(plan, keys=None, plan_id=None, text=None):
-    """The fixture plan as it is sent with a run, re-signed by the given keys."""
+def signed_document(plan, keys=None, plan_id=None, text=None, certificates=None):
+    """The fixture plan as it is sent with a run, re-signed by the given keys, with the
+    fixture's certificates unless others are given."""
     _, trust, fixture_keys, bundle, _ = plan
     keys = keys or fixture_keys
+    certificates = certificates or fixture_keys["certs"]
     if text is None:
         text = bundle.files[PLAN_FILE].decode()
         if plan_id:
@@ -43,7 +52,11 @@ def signed_document(plan, keys=None, plan_id=None, text=None):
         ).decode()
         for role in ("lab", "auditor")
     }
-    return {"files": {PLAN_FILE: text}, "signatures": signatures}, digest
+    return {
+        "files": {PLAN_FILE: text},
+        "signatures": signatures,
+        "certificates": certificates,
+    }, digest
 
 
 def submission_for(plan, plan_digest, document=None, submission_id="one-shot-1"):
@@ -81,16 +94,62 @@ def test_submitted_bundle_has_the_folder_digest(plan):
         "extra_field",
         "no_plan_file",
         "not_a_plan",
+        "no_certificates",
+        "uncertified_key",
+        "certified_by_the_other_root",
+        "certificate_for_the_other_role",
+        "root_signs_the_plan",
+        "one_key_for_both_parties",
     ],
 )
 def test_submitted_bundle_refused(plan, case):
     _, trust, keys, _, _ = plan
     document, _ = signed_document(plan)
     code = "invalid_bundle"
+    roots, certs = keys["roots"], keys["certs"]
     if case == "wrong_lab_key":
+        # Signed by a key the lab's certificate does not name.
         stranger = {**keys, "lab": Ed25519PrivateKey.generate()}
         document, _ = signed_document(plan, keys=stranger)
         code = "invalid_signature"
+    elif case == "no_certificates":
+        del document["certificates"]
+    elif case == "uncertified_key":
+        # A certificate nobody's root signed: made with a stranger's root.
+        stranger = Ed25519PrivateKey.generate()
+        forged = {**certs, "lab": make_certificate(stranger, "lab", public_key(keys["lab"]))}
+        document, _ = signed_document(plan, certificates=forged)
+        code = "invalid_certificate"
+    elif case == "certified_by_the_other_root":
+        crossed = {
+            **certs,
+            "lab": make_certificate(roots["auditor"], "lab", public_key(keys["lab"])),
+        }
+        document, _ = signed_document(plan, certificates=crossed)
+        code = "invalid_certificate"
+    elif case == "certificate_for_the_other_role":
+        # The lab root certified this key as the auditor's; it does not sign as the lab.
+        swapped = {
+            **certs,
+            "lab": make_certificate(roots["lab"], "auditor", public_key(keys["lab"])),
+        }
+        document, _ = signed_document(plan, certificates=swapped)
+        code = "invalid_certificate"
+    elif case == "root_signs_the_plan":
+        # A root certifying itself and signing the plan directly is refused: the root
+        # stays offline, and the box enforces it.
+        as_root = {**keys, "lab": roots["lab"]}
+        self_signed = {**certs, "lab": make_certificate(roots["lab"], "lab", trust["lab_key"])}
+        document, _ = signed_document(plan, keys=as_root, certificates=self_signed)
+        code = "invalid_certificate"
+    elif case == "one_key_for_both_parties":
+        shared = {**keys, "auditor": keys["lab"]}
+        both = {
+            **certs,
+            "auditor": make_certificate(roots["auditor"], "auditor", public_key(keys["lab"])),
+        }
+        document, _ = signed_document(plan, keys=shared, certificates=both)
+        code = "invalid_certificate"
     elif case == "auditor_missing":
         del document["signatures"]["auditor"]
     elif case == "stale_after_edit":
