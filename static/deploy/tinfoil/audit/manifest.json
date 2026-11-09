@@ -1,7 +1,7 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:a8a7c529688732e43483b725ac167c04154586f86f8266c9bccd4471ecbb1412",
+  "image_digest": "sha256:1748e434326d48fd43b79236003936335c0ab71b6a13bd71f39248a2a86c8cdf",
   "restrictions": {
     "version": "0.2.0",
     "plan_format": "aiab-plan-ir/v0",
@@ -61,5 +61,6 @@
   "max_retained_runs": 128,
   "retention": "in-memory-per-boot",
   "logger_evidence": "aiab-record-export/v1",
+  "record_encryption": "hpke-x25519-hkdf-sha256-aes256gcm/v1",
   "logger_integration": "synthetic-export-contract-not-native-WORM"
 }
