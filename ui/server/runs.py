@@ -4,8 +4,9 @@ The UI adds no verification logic: every
 step is one call of ``python -m auditor.baked`` from the static part, and the screen shows
 what that command printed or wrote. A run is a folder under the runs directory holding
 plan/ (a frozen copy of the agreement as it was sent, signatures included), state.json (the
-step list) and the CLI's own output files (anchor, submission, admission, report). A
-background thread performs the steps; the page re-reads state.json on each load.
+step list, and the plan version sent with its digest) and the CLI's own output files
+(anchor, submission, admission, report). A background thread performs the steps; the page
+re-reads state.json on each load.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from aiab.audit.protocol import AuditError
-from aiab.baked.bundle import load_bundle
+from aiab.baked.bundle import bundle_files, file_digest, load_bundle
 from aiab.baked.plan_ir import check_plan
 
 from server.config import STATIC_DIR, Settings
@@ -171,6 +172,47 @@ def preflight(settings: Settings, folder: Path | None) -> dict:
         if not (settings.demo_keys_dir / name).is_file():
             missing.append(f"{name} in {settings.demo_keys_dir}")
     return {"release": release, "missing": missing, "ok": not missing, "plan_digest": plan_digest}
+
+
+def sent_plan(settings: Settings, copy: Path, agreement: str) -> dict:
+    """Which plan version a run sends: the digest of the frozen copy in the run folder and
+    whether both signatures verify against the keys the box trusts, checked when the run
+    starts. The run page links to this version, so a flag can be traced to its wiring."""
+    entry = {"agreement": agreement, "digest": None, "signed": False, "checked": "at start"}
+    try:
+        bundle = load_bundle(
+            copy, json.loads(settings.trust_file.read_text(encoding="utf-8")), signed=True
+        )
+        entry.update(digest=bundle.digest, signed=True)
+    except AuditError as exc:
+        entry["problem"] = exc.code
+    except (OSError, ValueError) as exc:
+        entry["problem"] = f"{type(exc).__name__}: {exc}"
+    if entry["digest"] is None:
+        try:
+            entry["digest"] = file_digest(bundle_files(copy))
+        except (AuditError, OSError, ValueError):
+            pass
+    return entry
+
+
+def _derived_plan(settings: Settings, state: dict) -> dict | None:
+    """The plan entry for a run saved before runs recorded one: the digest from the verify
+    step, else from the copy in the run folder. Marked as derived."""
+    verify = next((s for s in state["steps"] if s["key"] == "verify"), {})
+    output = verify.get("output") or {}
+    entry = {
+        "agreement": state.get("agreement", ""),
+        "digest": output.get("plan_digest"),
+        "signed": bool(output.get("signatures_verified")),
+        "checked": "derived",
+    }
+    if entry["digest"] is None:
+        try:
+            entry["digest"] = file_digest(bundle_files(settings.runs_dir / state["id"] / "plan"))
+        except (AuditError, OSError, ValueError, KeyError):
+            return None
+    return entry
 
 
 def _write(folder: Path, state: dict) -> None:
@@ -378,6 +420,7 @@ def start_run(
         "by": {"party": actor.get("party", ""), "user": actor.get("username", "")},
         "agreement": agreement,
         "transcript": label or agreement,
+        "plan": sent_plan(settings, target / "plan", agreement),
         "status": "running",
         "steps": [{"key": k, "title": t, "explain": e, "status": "waiting"} for k, t, e in STEPS],
         "result": None,
@@ -398,6 +441,8 @@ def load_run(settings: Settings, run_id: str) -> dict | None:
         started = datetime.strptime(state["started"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
         if (datetime.now(UTC) - started).total_seconds() > STALE_SECONDS:
             state["status"] = "interrupted"  # the server restarted while this run was going
+    if "plan" not in state:
+        state["plan"] = _derived_plan(settings, state)
     state["outcome"] = outcome(state)
     return state
 
