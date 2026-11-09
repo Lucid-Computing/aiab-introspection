@@ -1,7 +1,7 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:c644d03f49e6373fdf778954729f7971b9ecfaac5c42ba113335f0376bc9eb25",
+  "image_digest": "sha256:a972924327f86ed3ad7a4c28dfc68bc40dafba72a711ac623a81bd1356b7185e",
   "restrictions": {
     "version": "0.2.0",
     "plan_format": "aiab-plan-ir/v0",
@@ -56,7 +56,7 @@
     "logger_key": "HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg="
   },
   "report_schema": "aiab-report/v3",
-  "plan_submission": "signed-bundle-per-run/v1",
+  "plan_submission": "signed-bundle-per-run/v2",
   "max_active_runs": 4,
   "max_retained_runs": 128,
   "retention": "in-memory-per-boot",
