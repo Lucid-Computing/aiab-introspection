@@ -8,6 +8,7 @@ import re
 import secrets
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -886,7 +887,11 @@ async def runs_start(request: Request) -> Response:
         run_id = runs.start_run(settings, user, chosen, target.plan_dir, records, label=label)
     except (ValueError, OSError) as exc:
         return back(here, err=str(exc))
-    pv.record_change(target, user, "run", "run", f"run {run_id} started ({len(records)} records)")
+    sent = (runs.load_run(settings, run_id) or {}).get("plan") or {}
+    version = f", version {sent['digest'][7:19]}" if sent.get("digest") else ""
+    pv.record_change(
+        target, user, "run", "run", f"run {run_id} started ({len(records)} records{version})"
+    )
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
 
@@ -898,6 +903,30 @@ async def run_page(request: Request, run_id: str) -> Response:
     if state is None:
         return back("/runs", err="No such run.")
     return render(request, "run.html", run=state)
+
+
+@app.get("/runs/{run_id}/plan")
+async def run_plan(request: Request, run_id: str) -> Response:
+    """The plan version a run sent, read only: the frozen copy in the run folder, not the
+    agreement as it is now."""
+    if user_of(request) is None:
+        return to_login(request)
+    state = runs.load_run(settings, run_id)
+    if state is None:
+        return back("/runs", err="No such run.")
+    view, error = load_view(replace(settings, plan_dir=settings.runs_dir / run_id / "plan"))
+    return render(
+        request,
+        "plan.html",
+        editor=None,
+        view=view,
+        error=error,
+        edit=False,
+        base=f"/a/{state['agreement']}",
+        aid=state["agreement"],
+        changes={},
+        snapshot=state,
+    )
 
 
 @app.get("/attest")

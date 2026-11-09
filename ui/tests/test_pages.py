@@ -1,5 +1,6 @@
 """Every page renders with one agreement on disk and no deploy slot, box or GitHub."""
 
+import json
 import shutil
 from dataclasses import replace
 
@@ -147,3 +148,39 @@ def test_sign_page_signs_in_the_browser_and_keeps_the_manual_route(client, tmp_p
     assert 'id="upload-form-lab"' in html and 'id="key-form-lab"' in html
     assert "openssl pkeyutl -sign" in html  # a key kept outside the browser still works
     assert 'data-party="auditor"' not in html  # only your own party's card has the key block
+
+
+def test_started_run_records_and_links_the_plan_version_it_sent(client, tmp_path, monkeypatch):
+    """A flag must be traceable to the wiring that produced it: the run records the digest
+    of the copy it sends, and its page links to that copy, read only."""
+    monkeypatch.setattr(ui.runs, "_execute", lambda *a: None)  # no CLI, no box
+    settings = ui.settings
+    digest = ui.runs.preflight(settings, tmp_path / "agreements/bio")["plan_digest"]
+    assert digest
+    run_id = ui.runs.start_run(
+        settings, LAB, "bio", tmp_path / "agreements/bio", [{"content": "hello"}]
+    )
+    state = json.loads((settings.runs_dir / run_id / "state.json").read_text())
+    assert state["plan"] == {
+        "agreement": "bio",
+        "digest": digest,
+        "signed": True,
+        "checked": "at start",
+    }
+
+    # Editing the agreement afterwards does not change what the run points at.
+    plan = tmp_path / "agreements/bio/plan.json"
+    plan.write_text(plan.read_text().replace('"title"', '"title" ', 1))
+
+    page = client.get(f"/runs/{run_id}").text
+    assert f'href="/runs/{run_id}/plan"' in page
+    assert digest[7:19] in page and "signed by both parties" in page
+    listing = client.get("/runs").text
+    assert f'href="/runs/{run_id}/plan"' in listing
+
+    snapshot = client.get(f"/runs/{run_id}/plan")
+    assert snapshot.status_code == 200, snapshot.text[-500:]
+    assert digest in snapshot.text and "Read only" in snapshot.text
+    assert "/plan/edit" not in snapshot.text and "/sign" not in snapshot.text
+    assert "audit-plan-playground" not in snapshot.text
+    assert client.get("/runs/20260101T000000Z-abcdef/plan").status_code == 303
