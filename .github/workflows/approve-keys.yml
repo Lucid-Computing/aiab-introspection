@@ -1,8 +1,10 @@
-# A party's public key changes through a pull request against production or dev that touches only
+# A party's root key changes through a pull request against production or dev that touches only
 # static/aiab/baked/trust.json. This job checks the change is well-formed, merges it, and
-# starts the release, since the key reaches the box only inside a new measured image: the
-# box verifies every run's plan against the keys baked into it. Pull requests from forks get
-# a read-only token here, so a stranger's key can be checked but never merged.
+# starts the release, since the root reaches the box only inside a new measured image: the
+# box verifies the certificate carried with every run's plan against the roots baked into
+# it, and the plan signature against the certified key. Signing keys themselves never pass
+# through here. Pull requests from forks get a read-only token here, so a stranger's key
+# can be checked but never merged.
 # Later, when a real auditor is on board: require the other party's review on this file.
 name: Check a trust key change
 on:

@@ -69,7 +69,7 @@ class Runtime:
             "model_binding": trust["model"],
             "parties": {k: trust[k] for k in ("lab_key", "auditor_key", "logger_key")},
             "report_schema": "aiab-report/v3",
-            "plan_submission": "signed-bundle-per-run/v1",
+            "plan_submission": "signed-bundle-per-run/v2",  # with each party's certificate
             "max_active_runs": 4,
             "max_retained_runs": 128,
             "retention": "in-memory-per-boot",

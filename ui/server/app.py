@@ -1250,8 +1250,9 @@ async def sign_upload(
     aid: str,
     party: Annotated[str, Form()],
     signature: Annotated[str, Form()] = "",
+    certificate: Annotated[str, Form()] = "",
 ) -> Response:
-    # The default keeps an empty paste from being a 422; the browser sends "" for an empty box.
+    # The defaults keep an empty paste from being a 422; the browser sends "" for an empty box.
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
@@ -1261,7 +1262,7 @@ async def sign_upload(
         return back(here, err="Paste only your own party's signature.")
     if not signature.strip():
         return back(here, err="Paste the line the sign command printed first.")
-    status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user)
+    status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user, certificate)
     if status != "ok":
         return back(here, err=f"Signature not accepted: {detail}")
     editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
@@ -1298,24 +1299,24 @@ async def set_key(
     user = user_of(request)
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
-        return back(here, err="You can only replace your own party's public key.")
+        return back(here, err="You can only replace your own party's root key.")
     public_key, problem = pv.normalize_public_key(public_key)
     if problem or public_key is None:
         return back(here, err=problem or "that is not an Ed25519 public key")
     if pv.load_trust(settings).get(f"{party}_key") == public_key:
-        return back(here, msg=f"Production already trusts this {party} key. Nothing to submit.")
+        return back(here, msg=f"Production already trusts this {party} root. Nothing to submit.")
     pushed = publish.push_key_change(
         settings.git_dir, party, public_key, user, base=settings.deploy_base
     )
     if pushed.error:
         return back(here, err=f"The {party} key was not submitted: {pushed.error}")
-    pv.record_change(target, user, "key", f"public key: {party}", f"submitted {public_key}")
+    pv.record_change(target, user, "key", f"root key: {party}", f"submitted {public_key}")
     where = pushed.pr_url or pushed.compare_url or f"branch {pushed.branch}"
     _remember_key(party, public_key, user, pushed.pr_url)  # every page blocks until the box has it
     return back(
         here,
-        msg=f"The {party} key is submitted ({where}). The check merges it within a minute and"
-        " the box is released with it; every page waits until the box trusts it.",
+        msg=f"The {party} root key is submitted ({where}). The check merges it within a minute"
+        " and the box is released with it; every page waits until the box trusts it.",
     )
 
 
