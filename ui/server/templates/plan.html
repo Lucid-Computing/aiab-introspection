@@ -3,7 +3,7 @@
 {% block head %}<style>
 .builder { display: block; width: 100%; height: calc(100vh - 150px); min-height: 640px; border: 1px solid var(--line, #d9d9d9); background: #fff; }
 .nodes-table td, .nodes-table th { vertical-align: top; }
-</style>{% endblock %}
+</style>{% if not snapshot %}<script src="/assets/sign.js" defer></script>{% endif %}{% endblock %}
 {% block content %}
 {% if snapshot %}<p class="crumb"><a href="/runs/{{ snapshot.id }}" class="link">← Run {{ snapshot.id }}</a></p>
 {% else %}<p class="crumb"><a href="/agreements" class="link">← Agreements</a></p>{% endif %}
@@ -21,15 +21,27 @@
 {% elif editor %}
 <div class="notice"><p>{{ editor.user }} ({{ editor.party }}) is editing this agreement since {{ editor.since | hhmm }}. You can read it; editing opens up when they leave, sign or stay idle for 15 minutes.</p></div>
 {% else %}
-<div class="row" style="gap: var(--space-4); margin-bottom: var(--space-4); align-items: center; flex-wrap: wrap">
+{% set mine = view.signatures[user.party] %}
+<div class="row" style="gap: var(--space-4); margin-bottom: var(--space-3); align-items: center; flex-wrap: wrap">
   {% if not edit %}
   <form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--primary">Edit this plan</button></form>
-  <a class="btn btn--ghost" href="{{ base }}/sign">Sign this plan</a>
+  {% endif %}
+  {% if mine.auto %}
+  <span class="text-muted">Signed as the lab by the server.</span>
+  {% elif mine.status == 'ok' %}
+  <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?"><input type="hidden" name="party" value="{{ user.party }}"><input type="hidden" name="next" value="{{ base }}/plan"><button class="btn btn--ghost">Re-sign</button></form>
+  {% elif view.issue %}
+  <button class="btn btn--ghost" disabled title="The box would reject this plan: {{ view.issue }}">Sign</button>
+  {% elif edit %}
+  {# The builder saves in its frame, so this page's digest can be stale: the Sign screen re-reads it. #}
+  <a class="btn btn--primary" href="{{ base }}/sign">Sign</a>
   {% else %}
-  <a class="btn btn--primary" href="{{ base }}/sign">Sign this plan</a>
+  <a class="btn btn--ghost quick-sign" href="{{ base }}/sign" data-party="{{ user.party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[user.party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/plan">Sign</a>
   {% endif %}
   <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>
+  <a class="link" href="{{ base }}/sign">Keys and signatures</a>
 </div>
+<p class="explain" style="margin: 0 0 var(--space-4)">{% for party in parties %}{% set s = view.signatures[party] %}<span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{{ party }}: {% if s.auto %}signed by the server{% elif s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span> {% endfor %}</p>
 {% endif %}
 
 {# The "Build your plan with AI" chat (plan_chat.html) is hidden for now; the builder is the editor. #}

@@ -192,3 +192,57 @@ def test_started_run_records_and_links_the_plan_version_it_sent(client, tmp_path
     assert "/plan/edit" not in snapshot.text and "/sign" not in snapshot.text
     assert "audit-plan-playground" not in snapshot.text
     assert client.get("/runs/20260101T000000Z-abcdef/plan").status_code == 303
+
+
+def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_fallback(
+    client, tmp_path
+):
+    """Sign on the plan and agreements pages signs in the browser when its key is trusted;
+    only a browser that is not set up lands on the Sign screen, told what is missing."""
+    (tmp_path / "agreements/bio/signatures/lab.sig").unlink()  # the fixture is already signed
+    plan = client.get("/a/bio/plan").text
+    assert '<script src="/assets/sign.js" defer></script>' in plan
+    assert 'quick-sign" href="/a/bio/sign" data-party="lab" data-digest="sha256:' in plan
+    assert 'data-upload="/a/bio/sign/upload" data-next="/a/bio/plan"' in plan
+    assert "lab: not signed" in plan and "auditor: signed this version" in plan
+    assert 'href="/a/bio/sign">Keys and signatures</a>' in plan
+    listing = client.get("/agreements").text
+    assert '<script src="/assets/sign.js" defer></script>' in listing
+    assert 'quick-sign" href="/a/bio/sign" data-party="lab"' in listing
+    assert 'data-upload="/a/bio/sign/upload" data-next="/agreements"' in listing
+    fallback = client.get("/a/bio/sign?why=none").text
+    assert "Signing is not set up in this browser yet" in fallback
+    assert "cannot make Ed25519 keys" in client.get("/a/bio/sign?why=unsupported").text
+
+
+def test_a_signed_plan_offers_re_sign_and_signature_actions_return_to_the_button_page(
+    client,
+):
+    plan = client.get("/a/bio/plan").text
+    assert 'action="/a/bio/sign/remove"' in plan and 'name="next" value="/a/bio/plan"' in plan
+    assert "quick-sign" not in plan and "lab: signed this version" in plan
+    assert 'title="You signed this version">Signed</a>' in client.get("/agreements").text
+
+    removed = client.post("/a/bio/sign/remove", data={"party": "lab", "next": "/a/bio/plan"})
+    assert removed.status_code == 303
+    assert removed.headers["location"].startswith("/a/bio/plan?msg=")
+    # A problem always shows on the Sign screen, whatever page the button was on.
+    bad = client.post(
+        "/a/bio/sign/upload",
+        data={"party": "lab", "signature": "not a signature", "next": "/a/bio/plan"},
+    )
+    assert bad.headers["location"].startswith("/a/bio/sign?err=")
+    # Only a path on this site is a return target.
+    assert ui._sign_next("bio", "https://example.com/") == "/a/bio/sign"
+    assert ui._sign_next("bio", "//example.com/") == "/a/bio/sign"
+    assert ui._sign_next("bio", "") == "/a/bio/sign"
+
+
+def test_in_edit_mode_sign_goes_to_the_sign_screen_because_the_builder_saves_in_its_frame(
+    client, tmp_path
+):
+    (tmp_path / "agreements/bio/signatures/lab.sig").unlink()
+    assert client.post("/a/bio/plan/edit", data={"next": "/a/bio/plan"}).status_code == 303
+    plan = client.get("/a/bio/plan?edit=1").text
+    assert "quick-sign" not in plan and 'href="/a/bio/sign">Sign</a>' in plan
+    ui.editing.clear("bio")

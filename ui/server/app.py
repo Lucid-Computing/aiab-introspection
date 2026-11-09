@@ -1219,6 +1219,30 @@ async def plan_bundle(request: Request, aid: str) -> Response:
     )
 
 
+def _sign_next(aid: str, next_path: str) -> str:
+    """Where a signature action returns to: the page the Sign button was on, if it names
+    one on this site, else the Sign screen."""
+    if next_path.startswith("/") and not next_path.startswith("//"):
+        return next_path
+    return f"/a/{aid}/sign"
+
+
+# What the Sign button found missing in the browser before it sent someone here.
+SIGN_WHY = {
+    "unsupported": "This browser cannot sign: it cannot make Ed25519 keys (needs Safari 17, "
+    "Firefox 130 or Chrome 137, or newer). Use the commands under Other ways to sign and paste "
+    "the signature below.",
+    "none": "Signing is not set up in this browser yet. Set it up below, once. After that, "
+    "Sign on the plan signs straight away.",
+    "waiting": "The box does not trust your key yet. Submit it below if you have not; Sign "
+    "works once the release is done.",
+    "old": "This browser has your key from before root keys. Continue with it below, then "
+    "Sign on the plan signs straight away.",
+    "stale": "This browser's key is not one the box trusts. Set up signing again below, or "
+    "use your key file.",
+}
+
+
 @app.get("/a/{aid}/sign")
 async def sign(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
@@ -1241,6 +1265,7 @@ async def sign(request: Request, aid: str) -> Response:
         copy=copy,
         auto_sign=bool(settings.lab_signing_key),
         auto_problem=pv.lab_auto_problem(settings),
+        why=SIGN_WHY.get(request.query_params.get("why", "")),
     )
 
 
@@ -1251,8 +1276,10 @@ async def sign_upload(
     party: Annotated[str, Form()],
     signature: Annotated[str, Form()] = "",
     certificate: Annotated[str, Form()] = "",
+    next: Annotated[str, Form()] = "",
 ) -> Response:
     # The defaults keep an empty paste from being a 422; the browser sends "" for an empty box.
+    # `next` is the page the Sign button was on; a problem always shows on the Sign screen.
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
@@ -1267,12 +1294,14 @@ async def sign_upload(
         return back(here, err=f"Signature not accepted: {detail}")
     editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
     saved(user)
-    return back(here, msg=f"{party} signature verified and stored.")
+    return back(_sign_next(aid, next), msg=f"{party} signature verified and stored.")
 
 
 @app.post("/a/{aid}/sign/remove")
-async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()]) -> Response:
-    """Re-sign: remove your own signature for this version, then the paste form comes back."""
+async def sign_remove(
+    request: Request, aid: str, party: Annotated[str, Form()], next: Annotated[str, Form()] = ""
+) -> Response:
+    """Re-sign: remove your own signature for this version; the Sign button comes back."""
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
@@ -1283,7 +1312,7 @@ async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()])
     if not pv.remove_signature(target, party, user):
         return back(here, err="There is no signature of yours to remove.")
     saved(user)
-    return back(here, msg="Your signature is removed. Sign this version again below.")
+    return back(_sign_next(aid, next), msg="Your signature is removed. Sign this version again.")
 
 
 @app.post("/a/{aid}/sign/key")

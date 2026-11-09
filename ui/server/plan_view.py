@@ -700,6 +700,8 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "digest": view.digest,
                     "state": view.state,
                     "signed": view.signed_by_both,
+                    "signatures": {r: s["status"] for r, s in view.signatures.items()},
+                    "public_keys": view.public_keys,
                     "error": None,
                     "issue": view.issue,
                 }
@@ -713,6 +715,8 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "digest": None,
                     "state": f"does not load: {type(exc).__name__}",
                     "signed": False,
+                    "signatures": {},
+                    "public_keys": {},
                     "error": str(exc),
                     "issue": None,
                 }

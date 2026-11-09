@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Agreements · AIAB agreement{% endblock %}
-{% block head %}{% if keys and keys.busy %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
+{% block head %}{% if keys and keys.busy %}<meta http-equiv="refresh" content="20">{% endif %}<script src="/assets/sign.js" defer></script>{% endblock %}
 {% block content %}
 <div class="row" style="justify-content: space-between; margin-bottom: var(--space-6)"><h1 style="margin: 0">Agreements</h1><a class="btn btn--primary" href="/agreements/new">New agreement</a></div>
 {% if copy and (copy.behind or copy.last_pull.error or copy.error) %}<div class="form-message error"><p style="margin:0">This server's copy of <span class="mono">{{ copy.branch }}</span> is at {{ copy.head }}{% if copy.behind %}, {{ copy.behind }} commit{{ "s" if copy.behind != 1 }} behind GitHub{% endif %}.{% if copy.last_pull.error %} Last catch-up failed: <span class="mono">{{ copy.last_pull.error }}</span>.{% elif copy.error %} <span class="mono">{{ copy.error }}</span>.{% endif %}</p>
@@ -31,7 +31,10 @@
     <td class="actions">
       <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/plan">Open</a>
       <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm" {% if r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Edit</button></form>
-      <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/sign">Sign</a>
+      {% set mine = r.signatures.get(user.party) %}
+      {% if r.error or r.issue %}<button class="btn btn--ghost btn--sm" disabled title="fix the plan first">Sign</button>
+      {% elif mine == 'ok' %}<a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/sign" title="You signed this version">Signed</a>
+      {% else %}<a class="btn btn--ghost btn--sm quick-sign" href="/a/{{ r.id }}/sign" data-party="{{ user.party }}" data-digest="{{ r.digest }}" data-trusted="{{ r.public_keys.get(user.party) or '' }}" data-upload="/a/{{ r.id }}/sign/upload" data-next="/agreements">Sign</a>{% endif %}
       {% if why %}<button class="btn btn--primary btn--sm" disabled title="{{ why }}">Run</button>{% else %}<a class="btn btn--primary btn--sm" href="/runs?agreement={{ r.id }}">Run</a>{% endif %}
       <form method="post" action="/a/{{ r.id }}/delete" class="inline" data-confirm="Delete {{ r.plan_id }}? The folder agreements/{{ r.id }} and its history are removed; runs keep their own copy of what they sent. This cannot be undone."><button class="btn btn--ghost btn--sm" {% if r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Delete</button></form>
     </td>

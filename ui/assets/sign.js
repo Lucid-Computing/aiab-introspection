@@ -260,6 +260,23 @@
     return approvedSigningKey(entry.privateKey, entry.publicKey, party);
   }
 
+  // What a browser's key can do now for a party whose trusted root is `trusted`.
+  // "ready": sign. "waiting": the box does not trust this browser's root yet. "old": a key
+  // from before root keys that production trusts as the root. "stale": anything else;
+  // set up again.
+  function standing(entry, party, trusted) {
+    if (!entry.certificate) {
+      return Promise.resolve(entry.publicKey === trusted ? "old" : "stale");
+    }
+    if (entry.certificate.role !== party || entry.certificate.signing_key !== entry.publicKey) {
+      return Promise.resolve("stale");
+    }
+    // Keys registered before setup recorded their root carry no rootPublicKey: judge
+    // them by whether the trusted root made their certificate.
+    if (entry.rootPublicKey && entry.rootPublicKey !== trusted) return Promise.resolve("waiting");
+    return verifyCertificate(entry.certificate, trusted).then(function (ok) { return ok ? "ready" : "stale"; });
+  }
+
   root.AiabSigning = {
     PREFIX: PREFIX,
     CERTIFICATE_PREFIX: CERTIFICATE_PREFIX,
@@ -272,6 +289,7 @@
     setUp: setUp,
     fromKeyFile: fromKeyFile,
     fromStoredKey: fromStoredKey,
+    standing: standing,
     supported: supported,
     generate: generate,
     importPrivate: importPrivate,
@@ -296,6 +314,10 @@
       dialog.addEventListener("close", function () { resolve(dialog.returnValue === "ok"); }, { once: true });
       dialog.showModal();
     });
+  }
+
+  function signQuestion(digest, party) {
+    return "Sign this version, digest " + digest + ", as the " + party + "? Check the digest against the plan zip first if you want to.";
   }
 
   function download(name, text) {
@@ -345,22 +367,6 @@
 
     function short(key) { return key ? key.slice(0, 8) + "…" : "none"; }
 
-    // What this browser's key can do now. "ready": sign. "waiting": the box does not
-    // trust this browser's root yet. "old": a key from before root keys that production
-    // trusts as the root. "stale": anything else; set up again.
-    function standing(entry) {
-      if (!entry.certificate) {
-        return Promise.resolve(entry.publicKey === trusted ? "old" : "stale");
-      }
-      if (entry.certificate.role !== party || entry.certificate.signing_key !== entry.publicKey) {
-        return Promise.resolve("stale");
-      }
-      // Keys registered before setup recorded their root carry no rootPublicKey: judge
-      // them by whether the trusted root made their certificate.
-      if (entry.rootPublicKey && entry.rootPublicKey !== trusted) return Promise.resolve("waiting");
-      return verifyCertificate(entry.certificate, trusted).then(function (ok) { return ok ? "ready" : "stale"; });
-    }
-
     var VERDICT = {
       ready: ["Ready to sign.", "ok"],
       waiting: ["Waiting for the box to trust your key. Submit it if you have not; the release takes a few minutes.", "bad"],
@@ -369,7 +375,7 @@
 
     function render(entry) {
       if (!entry) { show("none"); return; }
-      return standing(entry).then(function (state) {
+      return standing(entry, party, trusted).then(function (state) {
         if (state === "stale") {
           tell("This browser's " + party + " key is not one the box trusts. Set up signing again, or use your key file.", true);
           show("none");
@@ -463,11 +469,9 @@
     function signNow() {
       loadKey(party).then(function (entry) {
         if (!entry) { tell("There is no key in this browser.", true); return; }
-        return standing(entry).then(function (state) {
+        return standing(entry, party, trusted).then(function (state) {
           if (state !== "ready") { tell("This browser cannot sign yet.", true); return; }
-          return confirmDialog(
-            "Sign this version, digest " + digest + ", as the " + party + "? Check the digest against the plan zip first if you want to."
-          ).then(function (ok) {
+          return confirmDialog(signQuestion(digest, party)).then(function (ok) {
             if (!ok) return;
             tell("Signing…");
             return sign(entry.privateKey, digest).then(function (signature) {
@@ -503,7 +507,70 @@
     });
   }
 
+  // ---- Sign, from the plan and the agreements pages ----
+  //
+  // A link to the Sign screen with data-party, data-digest, data-trusted, data-upload and
+  // data-next. When this browser holds a key the box trusts, the click signs here and posts
+  // the signature; the Sign screen is only for a browser that is not set up (or cannot be).
+  // The link's href is the fall-back; ?why= tells that screen what was missing.
+
+  function postForm(action, fields) {
+    var form = document.createElement("form");
+    form.method = "post";
+    form.action = action;
+    form.hidden = true;
+    Object.keys(fields).forEach(function (name) {
+      var input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = fields[name];
+      form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    form.submit();
+  }
+
+  function wireQuickSign(link) {
+    var party = link.dataset.party, digest = link.dataset.digest, trusted = link.dataset.trusted || "";
+
+    function fallBack(why, error) {
+      var href = link.getAttribute("href");
+      var separator = href.indexOf("?") === -1 ? "?" : "&";
+      if (why) href += separator + "why=" + encodeURIComponent(why);
+      else if (error) href += separator + "err=" + encodeURIComponent("Not signed: " + error);
+      root.location.assign(href);
+    }
+
+    link.addEventListener("click", function (event) {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      if (link.dataset.busy) return;
+      link.dataset.busy = "1";
+      supported().then(function (ok) {
+        if (!ok || !root.indexedDB) { fallBack("unsupported"); return; }
+        return loadKey(party).then(function (entry) {
+          if (!entry) { fallBack("none"); return; }
+          return standing(entry, party, trusted).then(function (state) {
+            if (state !== "ready") { fallBack(state); return; }
+            return confirmDialog(signQuestion(digest, party)).then(function (yes) {
+              if (!yes) { delete link.dataset.busy; return; }
+              return sign(entry.privateKey, digest).then(function (signature) {
+                postForm(link.dataset.upload, {
+                  party: party,
+                  signature: signature,
+                  certificate: certificateText(entry.certificate),
+                  next: link.dataset.next || "",
+                });
+              });
+            });
+          });
+        });
+      }).catch(function (error) { fallBack(null, error.message || String(error)); });
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     document.querySelectorAll(".browser-key[data-party]").forEach(wire);
+    document.querySelectorAll("a.quick-sign[data-party]").forEach(wireQuickSign);
   });
 })(globalThis);
