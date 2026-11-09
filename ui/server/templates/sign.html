@@ -95,7 +95,7 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
         </div>
       </div>
       <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
-        <summary>Use a {{ party }} root key of your own</summary>
+        <summary>Use a root key of your own</summary>
         <div class="info-body">
           <p class="explain">For a root kept outside the browser, for example in 1Password. Set up signing does this for you. Submitting opens a pull request on the trust file and a release; certificates from the old root stop counting after it.</p>
           <form id="key-form-{{ party }}" method="post" action="{{ base }}/sign/key" data-busy="Submitting your root key: making the branch and opening the pull request. A few seconds.">
