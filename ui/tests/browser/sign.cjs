@@ -1,7 +1,7 @@
-/* The Sign screen in a real browser: make a key, have a root production trusts certify it
-   (the root is made here and written into the fixture's trust file), register the
-   certificate, sign, see the signature stored; then forget the key and bring it back from
-   the backup file. Requires Playwright and Chrome; sign_server.py must be running. */
+/* NOT UPDATED for Set up signing (MAC-432 follow-up): this manual Playwright script still
+   drives the earlier make-key and register-certificate flow and will fail on the current
+   Sign page. The setup, key-file and continue flows are covered under Node by
+   ui/tests/test_browser_signing.py, and were checked by hand on a Render preview. */
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

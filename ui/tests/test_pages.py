@@ -146,8 +146,11 @@ def test_sign_page_signs_in_the_browser_and_keeps_the_manual_route(client, tmp_p
     assert '<script src="/assets/sign.js" defer></script>' in html
     assert 'class="browser-key" data-party="lab" data-digest="sha256:' in html
     assert 'id="upload-form-lab"' in html and 'id="key-form-lab"' in html
-    assert 'id="cert-lab"' in html and 'id="register-cert-lab"' in html  # certificate routes
-    assert "Submit this public key" not in html  # a browser key never becomes the root
+    assert 'id="cert-lab"' in html  # a pasted signature carries its certificate
+    assert "Set up signing" in html and "Use this key file" in html  # no terminal needed
+    assert (
+        "sign_digest.py certify" not in html.split("Other ways to sign")[1].split("browser-key")[1]
+    )
     assert "openssl pkeyutl -sign" in html  # a key kept outside the browser still works
     assert 'data-party="auditor"' not in html  # only your own party's card has the key block
 
