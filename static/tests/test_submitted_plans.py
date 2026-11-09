@@ -59,6 +59,17 @@ def signed_document(plan, keys=None, plan_id=None, text=None, certificates=None)
     }, digest
 
 
+def respell(key):
+    """Another base64 spelling of the same 32 bytes: the last character carries two unused
+    bits, so one of its neighbours in the alphabet decodes to the same bytes."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    index = alphabet.index(key[42])
+    other = alphabet[index ^ 1]
+    respelled = key[:42] + other + "="
+    assert base64.b64decode(respelled) == base64.b64decode(key) and respelled != key
+    return respelled
+
+
 def submission_for(plan, plan_digest, document=None, submission_id="one-shot-1"):
     _, _, keys, bundle, records = plan
     scope = bundle.config.get("input_scope") or scope_of(records)
@@ -99,7 +110,10 @@ def test_submitted_bundle_has_the_folder_digest(plan):
         "certified_by_the_other_root",
         "certificate_for_the_other_role",
         "root_signs_the_plan",
+        "root_signs_the_plan_respelled",
         "one_key_for_both_parties",
+        "one_key_for_both_parties_respelled",
+        "other_root_as_signing_key",
     ],
 )
 def test_submitted_bundle_refused(plan, case):
@@ -136,11 +150,37 @@ def test_submitted_bundle_refused(plan, case):
         document, _ = signed_document(plan, certificates=swapped)
         code = "invalid_certificate"
     elif case == "root_signs_the_plan":
-        # A root certifying itself and signing the plan directly is refused: the root
-        # stays offline, and the box enforces it.
+        # A root certifying itself and signing the plan directly is refused. (Where the
+        # root lives is the party's business; the box only refuses the root as a signer.)
         as_root = {**keys, "lab": roots["lab"]}
         self_signed = {**certs, "lab": make_certificate(roots["lab"], "lab", trust["lab_key"])}
         document, _ = signed_document(plan, keys=as_root, certificates=self_signed)
+        code = "invalid_certificate"
+    elif case == "root_signs_the_plan_respelled":
+        # The same root bytes in another base64 spelling (unused trailing bits set): a
+        # string comparison would miss it, the byte comparison does not.
+        as_root = {**keys, "lab": roots["lab"]}
+        self_signed = {
+            **certs,
+            "lab": make_certificate(roots["lab"], "lab", respell(trust["lab_key"])),
+        }
+        document, _ = signed_document(plan, keys=as_root, certificates=self_signed)
+        code = "invalid_certificate"
+    elif case == "one_key_for_both_parties_respelled":
+        shared = {**keys, "auditor": keys["lab"]}
+        both = {
+            **certs,
+            "auditor": make_certificate(
+                roots["auditor"], "auditor", respell(public_key(keys["lab"]))
+            ),
+        }
+        document, _ = signed_document(plan, keys=shared, certificates=both)
+        code = "invalid_certificate"
+    elif case == "other_root_as_signing_key":
+        # The lab root certifying the auditor's root as a lab signing key: a root never signs.
+        as_other = {**keys, "lab": roots["auditor"]}
+        crossed = {**certs, "lab": make_certificate(roots["lab"], "lab", trust["auditor_key"])}
+        document, _ = signed_document(plan, keys=as_other, certificates=crossed)
         code = "invalid_certificate"
     elif case == "one_key_for_both_parties":
         shared = {**keys, "auditor": keys["lab"]}

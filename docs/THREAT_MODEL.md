@@ -73,9 +73,11 @@ the service. Each party has a root key, whose public half is baked into the box 
 (`trust.json`) and covered by the attestation, and signing keys the root certifies: a
 certificate is the root's signature over `{"role", "signing_key"}`, and a run carries each
 party's certificate next to its plan signature. The box checks the certificate against
-the baked root, then the plan signature against the certified key, and refuses a plan
-signed with a root directly, so the root is used only to certify and is kept off the
-server and out of the browser. A new signing key needs no release; only a root change
+the baked root, then the plan signature against the certified key, and refuses a
+certificate that names a root as the signing key, so a root cannot sign a plan through
+the normal path. The box cannot see where a root lives or how a certified key was made:
+keeping the root off the server and out of the browser, and certifying only keys made
+separately from it, is an operational requirement of each party. A new signing key needs no release; only a root change
 goes through the trust file and a rebuild. The box keeps no state, so a certificate
 cannot be revoked: a lost signing key stays valid until its party's root is rotated,
 which is the same exposure a lost key had when keys were baked in. The box reads no

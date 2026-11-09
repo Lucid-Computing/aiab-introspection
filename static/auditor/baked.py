@@ -8,7 +8,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.protocol import AuditError, canonical, decode, digest, sign_bytes
-from aiab.baked.bundle import certified_key, load_bundle, write_certificate
+from aiab.baked.bundle import certified_key, load_bundle
 from aiab.baked.records import export_statement, scope_of
 from aiab.baked.records import verify as verify_input
 from aiab.baked.runtime import verify_report
@@ -144,6 +144,8 @@ def main(argv=None):
                 ).decode()
             )
         elif args.command == "sign":
+            if args.output.suffix == ".cert":
+                raise AuditError("output_is_the_certificate_path")
             key = private(args.private)
             certificate = decode(args.certificate.read_bytes())
             # The root in the trust file must certify exactly this key for this role.
@@ -159,7 +161,8 @@ def main(argv=None):
                 + b"\n",
                 0o644,
             )
-            write_certificate(args.output.with_suffix(".cert"), certificate)
+            # Next to the signature, and never over an existing file (same as the signature).
+            write_new(args.output.with_suffix(".cert"), canonical(certificate) + b"\n", 0o644)
         elif args.command == "mock-export":
             key = private(args.private)
             if (

@@ -20,7 +20,9 @@ from aiab.baked.bundle import (
     PLAN_FILE,
     bundle_files,
     certified_key,
+    certified_keys,
     file_digest,
+    key_bytes,
     load_bundle,
     restrictions,
     write_certificate,
@@ -195,6 +197,12 @@ def load_plan_view(settings: Settings) -> PlanView:
             "signing_key": signing_key,
             **entry,
         }
+    # The box refuses one signing key for both parties (certified_keys); so does this view.
+    if all(s["status"] == "ok" for s in signatures.values()) and len(
+        {key_bytes(s["signing_key"]) for s in signatures.values()}
+    ) < len(PARTIES):
+        for entry in signatures.values():
+            entry["status"], entry["detail"] = "invalid", "the same signing key for both parties"
     # With a lab key on the server, the lab signature is the server's own and never
     # freezes the plan: the server signs the next version again. Only the auditor's does.
     auto = lab_auto_key(settings) is not None
@@ -416,6 +424,25 @@ def write_signature(
         verify_signature(signing_key, text, "plan-bundle", {"plan_digest": plan_digest})
     except (AuditError, ValueError, KeyError):
         return "invalid", "does not verify for the current plan digest with the certified key"
+    for other in PARTIES:
+        if other == role:
+            continue
+        stored, _ = read_certificate(settings.plan_dir / "signatures" / f"{other}.cert")
+        if stored is None:
+            continue
+        try:
+            certified_keys({role: parsed, other: stored}, trust)
+        except (AuditError, KeyError):
+            # Only a valid certificate of the other party can collide; an invalid one is
+            # that party's problem and shows on its card.
+            try:
+                certified_key(stored, other, trust)
+            except (AuditError, KeyError):
+                continue
+            return (
+                "invalid",
+                f"this signing key is already the {other}'s; the parties' keys must differ",
+            )
     target = settings.plan_dir / "signatures" / f"{role}.sig"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text + "\n", encoding="utf-8")
@@ -528,8 +555,10 @@ def ensure_lab_signature(settings: Settings, actor: dict[str, str] | None = None
     target = settings.plan_dir / "signatures" / "lab.sig"
     if target.is_file():
         try:
-            _, stored_key = read_certificate(target.with_suffix(".cert"))
-            if stored_key != public:
+            stored, _ = read_certificate(target.with_suffix(".cert"))
+            # The stored certificate must be the current root's, for this key: after a
+            # root rotation the signature is re-made with the new certificate.
+            if stored is None or certified_key(stored, "lab", load_trust(settings)) != public:
                 raise AuditError("invalid_certificate")
             verify_signature(
                 public,

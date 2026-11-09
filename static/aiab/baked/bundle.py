@@ -84,25 +84,43 @@ def make_certificate(root_private, role: str, signing_key: str) -> dict:
     return {**statement, "signature": base64.b64encode(signature).decode()}
 
 
+def key_bytes(key: str) -> bytes:
+    """The 32 raw bytes of a key in its one canonical base64 spelling. Base64 has several
+    spellings of the same bytes (unused trailing bits), and every key comparison below is
+    on bytes, so a key spelled differently cannot pass as a different key."""
+    import base64
+
+    try:
+        raw = base64.b64decode(key, validate=True)
+    except (ValueError, TypeError):
+        raise AuditError("invalid_certificate") from None
+    if len(raw) != 32 or base64.b64encode(raw).decode() != key:
+        raise AuditError("invalid_certificate")
+    return raw
+
+
 def certified_key(certificate, role: str, trust: dict) -> str:
     """The signing key a party's root certifies for ``role``, or ``invalid_certificate``.
 
     Refused: a malformed certificate, one for the other role, one the root did not sign,
-    and one that names the root itself (the root certifies keys, it does not sign plans)."""
+    and one that names either party's root (a root certifies keys, it does not sign
+    plans). Keys are compared as bytes, in canonical base64 only."""
     validate(certificate, CERTIFICATE, "invalid_certificate")
     root = trust[role + "_key"]
-    if certificate["role"] != role or certificate["signing_key"] == root:
+    signing_key = certificate["signing_key"]
+    roots = {key_bytes(trust[party + "_key"]) for party in PARTIES}
+    if certificate["role"] != role or key_bytes(signing_key) in roots:
         raise AuditError("invalid_certificate")
     try:
         verify_signature(
             root,
             certificate["signature"].strip(),
             CERTIFICATE_KIND,
-            certificate_statement(role, certificate["signing_key"]),
+            certificate_statement(role, signing_key),
         )
     except AuditError:
         raise AuditError("invalid_certificate") from None
-    return certificate["signing_key"]
+    return signing_key
 
 
 def certified_keys(certificates, trust: dict) -> dict[str, str]:
@@ -110,7 +128,7 @@ def certified_keys(certificates, trust: dict) -> dict[str, str]:
     if not isinstance(certificates, dict) or set(certificates) != set(PARTIES):
         raise AuditError("invalid_certificate")
     keys = {role: certified_key(certificates[role], role, trust) for role in PARTIES}
-    if len(set(keys.values())) != len(PARTIES):
+    if len({key_bytes(k) for k in keys.values()}) != len(PARTIES):
         raise AuditError("invalid_certificate")
     return keys
 

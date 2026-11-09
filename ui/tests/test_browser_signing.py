@@ -30,6 +30,8 @@ const S = globalThis.AiabSigning;
   const digest = process.argv[2], rootKey = process.argv[3], certificateText = process.argv[4];
   const pair = await S.generate();
   const certificate = S.parseCertificate(certificateText);
+  const padded = JSON.parse(certificateText); padded.signature = "\\n" + padded.signature + "\\n";
+  const reparsed = S.parseCertificate(JSON.stringify(padded));
   const forged = Object.assign({}, certificate, { signing_key: rootKey });  // names another key
   const backup = await S.encryptBackup(pair.pkcs8, "pw", pair.publicKey, "lab");
   const restored = await S.decryptBackup(backup, "pw");
@@ -46,6 +48,10 @@ const S = globalThis.AiabSigning;
     message: Buffer.from(S.messageBytes(digest)).toString("latin1"),
     certificate_message: Buffer.from(S.certificateMessageBytes(certificate)).toString("latin1"),
     certificate_text: S.certificateText(certificate),
+    padded_text_is_valid_json: (() => {
+      try { JSON.parse(S.certificateText(reparsed)); return true; } catch { return false; }
+    })(),
+    padded_text_equal: S.certificateText(reparsed) === S.certificateText(certificate),
     certificate_verifies: await S.verifyCertificate(certificate, rootKey),
     forged_certificate_refused: !(await S.verifyCertificate(forged, rootKey)),
     other_root_refused: !(await S.verifyCertificate(certificate, process.argv[5])),
@@ -110,3 +116,5 @@ def test_the_browser_checks_a_certificate_the_way_the_box_does(probe):
     )
     certificate = make_certificate(ROOT, "lab", OTHER_KEY)
     assert probe["certificate_text"] == canonical(certificate).decode()
+    # Whitespace around a pasted signature is dropped, and the text sent stays valid JSON.
+    assert probe["padded_text_is_valid_json"] and probe["padded_text_equal"]

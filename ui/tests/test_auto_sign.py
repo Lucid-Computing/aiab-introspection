@@ -181,6 +181,41 @@ def test_without_the_key_nothing_is_signed_and_a_lab_signature_freezes(settings,
     assert not (target.plan_dir / "signatures/lab.cert").exists()
 
 
+def test_one_signing_key_for_both_parties_is_refused_as_the_box_refuses_it(settings, keys):
+    """The lab's certified key, certified again by the auditor root as the auditor's: the
+    box refuses the pair (certified_keys), so the UI refuses to store it and never shows
+    "signed by both"."""
+    target = create(settings)  # the server's lab signature is there
+    digest = pv.file_digest(pv.bundle_files(target.plan_dir))
+    shared = make_certificate(keys["roots"]["auditor"], "auditor", public(keys["lab"]))
+    sig = base64.b64encode(keys["lab"].sign(sign_bytes("plan-bundle", {"plan_digest": digest})))
+    status, detail = pv.write_signature(target, "auditor", sig, AUDITOR, canonical(shared).decode())
+    assert status == "invalid" and "must differ" in detail
+    # Written behind the UI's back: the view marks both invalid rather than "signed by both".
+    (target.plan_dir / "signatures/auditor.sig").write_text(sig.decode() + "\n")
+    pv.write_certificate(target.plan_dir / "signatures/auditor.cert", shared)
+    view = pv.load_plan_view(target)
+    assert not view.signed_by_both
+    assert {s["status"] for s in view.signatures.values()} == {"invalid"}
+
+
+def test_a_rotated_lab_root_makes_the_server_sign_again_with_the_new_certificate(settings, keys):
+    target = create(settings)
+    old = (target.plan_dir / "signatures/lab.cert").read_text()
+    new_root = Ed25519PrivateKey.generate()
+    trust = json.loads(keys["trust"].read_text())
+    trust["lab_key"] = public(new_root)
+    keys["trust"].write_text(json.dumps(trust))
+    fresh = make_certificate(new_root, "lab", public(keys["lab"]))
+    rotated = replace(settings, lab_signing_certificate=canonical(fresh).decode())
+    rotated = pv.for_agreement(rotated, "auto")
+    assert pv.lab_auto_problem(rotated) is None
+    # Same plan, same signing key, but the stored certificate is the old root's: re-sign.
+    assert pv.ensure_lab_signature(rotated, AUDITOR)
+    assert (target.plan_dir / "signatures/lab.cert").read_text() != old
+    assert pv.load_plan_view(rotated).signatures["lab"]["status"] == "ok"
+
+
 def client_for(monkeypatch, settings, party="auditor"):
     from server import app as web
 

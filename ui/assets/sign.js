@@ -57,12 +57,16 @@
     if (raw.role !== "lab" && raw.role !== "auditor") throw new Error("bad role");
     if (!/^[A-Za-z0-9+/]{43}=$/.test(raw.signing_key)) throw new Error("bad signing key");
     if (typeof raw.signature !== "string" || raw.signature.length > 256) throw new Error("bad signature");
-    return { role: raw.role, signature: raw.signature, signing_key: raw.signing_key };
+    // Whitespace around the signature is accepted by the verifier (it strips it); drop it
+    // here so the stored and sent certificate is the plain base64 line.
+    return { role: raw.role, signature: raw.signature.trim(), signing_key: raw.signing_key };
   }
 
+  // The canonical (RFC 8785) text: keys in order, strings escaped as JSON does. The
+  // signature is a base64 line but the schema allows other characters, so no shortcut.
   function certificateText(certificate) {
-    return '{"role":"' + certificate.role + '","signature":"' + certificate.signature +
-      '","signing_key":"' + certificate.signing_key + '"}';
+    return '{"role":' + JSON.stringify(certificate.role) + ',"signature":' + JSON.stringify(certificate.signature) +
+      ',"signing_key":' + JSON.stringify(certificate.signing_key) + '}';
   }
 
   function certificateMessageBytes(certificate) {
