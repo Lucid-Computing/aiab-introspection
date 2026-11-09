@@ -48,7 +48,7 @@ jobs:
         run: |
           # A branch name is not always a valid tag (a manual run on jonathanng/mac-432-… has
           # a slash): anything outside [A-Za-z0-9_.-] becomes a dash.
-          BRANCH_TAG=$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9_.-\n' '-')
+          BRANCH_TAG=$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9_.\n-' '-')
           TAGS="$IMAGE:$GITHUB_SHA,$IMAGE:$BRANCH_TAG"
           if [ "$GITHUB_REF_NAME" = production ]; then TAGS="$TAGS,$IMAGE:latest"; fi
           echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
