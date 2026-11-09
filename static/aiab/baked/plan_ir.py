@@ -35,7 +35,7 @@ ABSTAIN = "abstain"
 
 # The box's own ceilings. A plan sets its limits below these; the manifest publishes them.
 LIMITS = {
-    "max_input_utf8_bytes": 1_000_000,
+    "max_input_utf8_bytes": 1_000_000_000_000,
     "max_records_per_run": 2000,
     "max_model_calls_per_run": 256,
     "max_runtime_seconds_per_run": 300,
