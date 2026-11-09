@@ -1,5 +1,5 @@
 {
-  "auditor_key": "Ln2Cm26DSOfNyyeNIDVfm0LYSwhE89xWgrrDrrBWCtA=",
+  "auditor_key": "iv7OStXPFmN9jBFUxMigG6DXVaRER4jTKMaki1v0nvA=",
   "lab_key": "9RWibUJxhAsEssU1LFdcOPrBr+Op46uAZX8m/E2EwEQ=",
   "logger_key": "HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg=",
   "model": {
@@ -12,5 +12,5 @@
     "repo": "tinfoilsh/confidential-gpt-oss-safeguard-120b",
     "temperature": 0
   },
-  "runtime_digest": "sha256:55033222c5e5ca4d34161a9b2c9da4057c80c024cd6bbaa1723675d2847f5368"
+  "runtime_digest": "sha256:c644d03f49e6373fdf778954729f7971b9ecfaac5c42ba113335f0376bc9eb25"
 }
