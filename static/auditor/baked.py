@@ -12,6 +12,7 @@ from aiab.baked.bundle import load_bundle
 from aiab.baked.records import export_statement, scope_of
 from aiab.baked.records import verify as verify_input
 from aiab.baked.runtime import verify_report
+from aiab.baked.sealing import seal_record
 from aiab.config import read_private_key
 from auditor.audit import AuditClient, write_new
 
@@ -100,6 +101,13 @@ def main(argv=None):
     for name in ("records", "private", "output"):
         export.add_argument("--" + name, type=Path, required=True)
     export.add_argument("--submission-id", required=True)
+    export.add_argument(
+        "--seal-to",
+        type=Path,
+        default=None,
+        help="A pin-identity anchor: seal each record's content to the box's encryption key "
+        "in it, as the logger will, so the UI server never holds the text",
+    )
     offline = commands.add_parser("verify-offline")
     for name in ("anchor", "report", "release"):
         offline.add_argument("--" + name, type=Path, required=True)
@@ -149,6 +157,11 @@ def main(argv=None):
             records = [
                 decode(line) for line in args.records.read_bytes().splitlines() if line.strip()
             ]
+            if args.seal_to is not None:
+                identity = decode(args.seal_to.read_bytes())["identity"]
+                records = [
+                    seal_record(r, identity["encryption_key"], identity["boot_id"]) for r in records
+                ]
             scope = bundle.config.get("input_scope") or scope_of(records)
             statement = export_statement(records, scope)
             evidence = {
