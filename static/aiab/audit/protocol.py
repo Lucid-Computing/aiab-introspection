@@ -77,7 +77,7 @@ MODEL = closed(
         "artifact_digest": DIGEST,
         "repo": TEXT,
         "release_digest": DIGEST,
-        "host": {"type": "string", "pattern": "^[a-z0-9.-]+\\.tinfoil\\.dev$"},
+        "host": {"type": "string", "pattern": "^[a-z0-9.-]+\\.tinfoil\\.(dev|sh)$"},
         "temperature": {"const": 0},
         "max_output_tokens": {"type": "integer", "minimum": 32, "maximum": 2048},
         "context_tokens": {"type": "integer", "minimum": 1024, "maximum": 131072},

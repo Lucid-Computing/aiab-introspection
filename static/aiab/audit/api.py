@@ -125,9 +125,11 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
 
     @app.get("/aiab/health")
     async def health():
-        return JSONResponse(
-            {"status": "ready" if runtime.healthy else "unavailable", "boot_id": runtime.boot_id},
-            status_code=200 if runtime.healthy else 503,
-        )
+        body = {"status": "ready" if runtime.healthy else "unavailable", "boot_id": runtime.boot_id}
+        route = getattr(getattr(runtime, "model", None), "route", None)
+        if isinstance(route, dict):
+            # Which router release the box attested and which model enclaves it named.
+            body["model_route"] = route
+        return JSONResponse(body, status_code=200 if runtime.healthy else 503)
 
     return app
