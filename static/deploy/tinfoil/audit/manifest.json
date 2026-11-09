@@ -1,7 +1,7 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:217edb67ca6a21cd64a0094297520576673fd775e150840d4a797ae68fcdbb45",
+  "image_digest": "sha256:55033222c5e5ca4d34161a9b2c9da4057c80c024cd6bbaa1723675d2847f5368",
   "restrictions": {
     "version": "0.2.0",
     "plan_format": "aiab-plan-ir/v0",
@@ -52,7 +52,7 @@
   },
   "parties": {
     "lab_key": "9RWibUJxhAsEssU1LFdcOPrBr+Op46uAZX8m/E2EwEQ=",
-    "auditor_key": "HTO30WTP+tQHfIeBOeghP4Txyi/3m1VFr7QAT5n7fJ0=",
+    "auditor_key": "Ln2Cm26DSOfNyyeNIDVfm0LYSwhE89xWgrrDrrBWCtA=",
     "logger_key": "HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg="
   },
   "report_schema": "aiab-report/v3",
