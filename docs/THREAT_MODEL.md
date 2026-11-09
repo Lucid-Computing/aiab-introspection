@@ -75,18 +75,20 @@ certificate is the root's signature over `{"role", "signing_key"}`, and a run ca
 party's certificate next to its plan signature. The box checks the certificate against
 the baked root, then the plan signature against the certified key, and refuses a
 certificate that names a root as the signing key, so a root cannot sign a plan through
-the normal path. The box cannot see where a root lives or how a certified key was made:
-keeping the root off the server and out of the browser, and certifying only keys made
-separately from it, is an operational requirement of each party. A new signing key needs no release; only a root change
+the normal path. The box cannot see where a root lives or how a certified key was made. A new signing key needs no release; only a root change
 goes through the trust file and a rebuild. The box keeps no state, so a certificate
 cannot be revoked: a lost signing key stays valid until its party's root is rotated,
 which is the same exposure a lost key had when keys were baked in. The box reads no
-clock, so certificates carry no expiry. In the agreement UI each party's signing key is
-made and kept in that party's browser as a non-extractable WebCrypto key, with a
-password-encrypted backup the party holds; the party certifies it once on its own machine
-(`sign_digest.py certify`), registers the certificate in the browser, and signs the plan
-digest in the browser; the UI server receives public keys, certificates and signatures
-only. One exception exists for the prototype: with `AIAB_LAB_KEY` and
+clock, so certificates carry no expiry. In the agreement UI, Set up signing makes both
+keys in the party's browser: the root, which leaves the page only as a key file encrypted
+under the party's password (PBKDF2, AES-GCM), and a signing key the root certifies at
+once, kept in the browser as a non-extractable WebCrypto key with its certificate. The
+root is not stored in the browser; it is in page memory during setup, and again when the
+key file is opened to set up another browser. A page that serves malicious JavaScript at
+those moments can take the root, so the UI server is trusted to serve honest JavaScript
+for setup as it already is for signing. A party that wants its root never to touch the
+browser keeps it elsewhere and uses the commands under Other ways to sign. The UI server
+receives public keys, certificates and signatures only. One exception exists for the prototype: with `AIAB_LAB_KEY` and
 `AIAB_LAB_CERTIFICATE` set, the UI server holds a certified lab signing key and signs
 every plan version as the lab by itself, so whoever controls the server can sign as the
 lab, and the lab signature then shows only that the server saw the version; the lab's

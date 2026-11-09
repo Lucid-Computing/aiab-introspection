@@ -12,7 +12,7 @@ import subprocess
 
 import pytest
 from aiab.audit.protocol import AuditError, canonical, verify_signature
-from aiab.baked.bundle import make_certificate
+from aiab.baked.bundle import certified_key, make_certificate
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from server.config import REPO_ROOT
@@ -56,6 +56,28 @@ const S = globalThis.AiabSigning;
     forged_certificate_refused: !(await S.verifyCertificate(forged, rootKey)),
     other_root_refused: !(await S.verifyCertificate(certificate, process.argv[5])),
   };
+  // Set up signing: a root and an approved signing key, the root only in the key file.
+  const setup = await S.setUp("auditor", "pw");
+  const fromFile = await S.fromKeyFile(setup.keyFile, "pw", "auditor");
+  const legacyPair = await S.generate();
+  const legacyKey = await S.importPrivate(legacyPair.pkcs8);
+  const legacy = await S.fromStoredKey(
+    { privateKey: legacyKey, publicKey: legacyPair.publicKey }, "auditor");
+  const entries = { setup: setup.entry, from_file: fromFile, legacy: legacy };
+  out.flows = {};
+  for (const [name, entry] of Object.entries(entries)) {
+    out.flows[name] = {
+      root: entry.rootPublicKey,
+      signing_key: entry.publicKey,
+      certificate: S.certificateText(entry.certificate),
+      signature: await S.sign(entry.privateKey, digest),
+      private_key_extractable: entry.privateKey.extractable,
+      keys: Object.keys(entry).sort(),
+    };
+  }
+  out.legacy_root = legacyPair.publicKey;
+  out.key_file_root = await S.publicKeyOf(await S.decryptBackup(setup.keyFile, "pw"));
+  out.key_file_format = setup.keyFile.format;
   console.log(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -118,3 +140,25 @@ def test_the_browser_checks_a_certificate_the_way_the_box_does(probe):
     assert probe["certificate_text"] == canonical(certificate).decode()
     # Whitespace around a pasted signature is dropped, and the text sent stays valid JSON.
     assert probe["padded_text_is_valid_json"] and probe["padded_text_equal"]
+
+
+def test_set_up_signing_makes_a_root_and_a_signing_key_the_box_accepts(probe):
+    """Each way the page gets a signing key (set up, the key file in another browser, a
+    key from before root keys) yields a certificate the box's own checker accepts against
+    that root, and a plan signature from the certified key. The root is never kept: the
+    stored entry holds the signing key, non-extractable, and the root's public key only."""
+    flows = probe["flows"]
+    assert flows["setup"]["root"] == flows["from_file"]["root"] == probe["key_file_root"]
+    assert flows["legacy"]["root"] == probe["legacy_root"]
+    assert flows["setup"]["signing_key"] != flows["from_file"]["signing_key"]  # fresh per browser
+    assert probe["key_file_format"] == "aiab-signing-key/v1"  # old key files still open
+    for flow in flows.values():
+        assert flow["keys"] == ["certificate", "made", "privateKey", "publicKey", "rootPublicKey"]
+        assert flow["private_key_extractable"] is False
+        assert flow["signing_key"] != flow["root"]
+        trust = {"auditor_key": flow["root"], "lab_key": ROOT_KEY}
+        certificate = json.loads(flow["certificate"])
+        assert certified_key(certificate, "auditor", trust) == flow["signing_key"]
+        verify_signature(
+            flow["signing_key"], flow["signature"], "plan-bundle", {"plan_digest": DIGEST}
+        )

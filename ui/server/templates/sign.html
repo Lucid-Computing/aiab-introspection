@@ -8,7 +8,7 @@
 {% if copy and (copy.behind or copy.last_pull.error or copy.error) %}<div class="form-message error"><p style="margin:0">This server's copy of <span class="mono">{{ copy.branch }}</span> is at {{ copy.head }}{% if copy.behind %}, {{ copy.behind }} commit{{ "s" if copy.behind != 1 }} behind GitHub{% endif %}.{% if copy.last_pull.error %} Last catch-up failed: <span class="mono">{{ copy.last_pull.error }}</span>.{% elif copy.error %} <span class="mono">{{ copy.error }}</span>.{% endif %}</p>
 {% if copy.changes %}<p style="margin: var(--space-2) 0 0">Local changes in the copy:{% for line in copy.changes %} <span class="mono">{{ line }}</span>{% endfor %}{% if copy.dirty > copy.changes | length %} …{% endif %}</p>{% endif %}
 <p style="margin: var(--space-3) 0 0"><form method="post" action="/copy/pull" class="inline"><button class="btn btn--ghost btn--sm">Catch up now</button></form>{% if copy.dirty %} <form method="post" action="/copy/reset" class="inline" data-confirm="This moves the copy's local changes into a git stash (nothing is deleted; git stash list shows them) and then catches up with GitHub. Continue?"><button class="btn btn--ghost btn--sm">Set local changes aside and catch up</button></form>{% endif %}</p></div>{% endif %}
-<p class="lead">The digest below is the fingerprint of this version's files. Each party signs that fingerprint with a signing key of its own; the box holds one root key per party and accepts a signing key only with a certificate that party's root made for it. The auditor's signing key is made and kept in the auditor's browser and never reaches this server; the root stays on the auditor's own machine and is used once, to certify the signing key. A signing key kept elsewhere works too, with the commands under Other ways to sign.{% if auto_sign %} The lab's signing key and its certificate are on this server: it signs every version as the lab by itself, and whoever controls this server can sign as the lab.{% endif %}</p>
+<p class="lead">The digest below is the fingerprint of this version. Each party signs it in its own browser; set up signing once per party, here.{% if auto_sign %} The lab signs on this server automatically, so whoever controls this server can sign as the lab.{% endif %}</p>
 {% if auto_problem %}<p class="form-message error">The server cannot sign as the lab: {{ auto_problem }}. Until that is fixed the lab signs by hand below.</p>{% endif %}
 {% if view %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
@@ -66,19 +66,19 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
           <p class="explain">This browser cannot make Ed25519 keys (needs Safari 17, Firefox 130 or Chrome 137, or newer). Use the commands under Other ways to sign above and paste the signature below.</p>
         </div>
         <div data-state="none" hidden>
-          <p class="explain">No {{ party }} signing key in this browser yet. Make one here: it stays in this browser (on this site only), the server never sees it, and the backup file you download now is the only other copy. Then certify its public key with your root on your own machine and register the certificate here; no release is needed.</p>
+          <p class="explain">Set up signing in this browser. A key file downloads, protected by the password you choose. Keep both: they set up signing in another browser.</p>
           <form class="browser-make">
-            <div class="field"><label for="make-password-{{ party }}">Backup password</label><input id="make-password-{{ party }}" name="password" type="password" autocomplete="new-password" required></div>
-            <div class="field"><label for="make-again-{{ party }}">Backup password, again</label><input id="make-again-{{ party }}" name="again" type="password" autocomplete="new-password" required></div>
-            <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Make a key in this browser</button></p>
+            <div class="field"><label for="make-password-{{ party }}">Password</label><input id="make-password-{{ party }}" name="password" type="password" autocomplete="new-password" required></div>
+            <div class="field"><label for="make-again-{{ party }}">Password, again</label><input id="make-again-{{ party }}" name="again" type="password" autocomplete="new-password" required></div>
+            <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Set up signing</button></p>
           </form>
           <details class="info" style="margin: var(--space-4) 0 0">
-            <summary>Already have a backup file from another browser?</summary>
+            <summary>Already set up in another browser?</summary>
             <div class="info-body">
               <form class="browser-import">
-                <div class="field"><label for="import-file-{{ party }}">Backup file</label><input id="import-file-{{ party }}" name="backup" type="file" accept="application/json,.json" required></div>
+                <div class="field"><label for="import-file-{{ party }}">Key file</label><input id="import-file-{{ party }}" name="backup" type="file" accept="application/json,.json" required></div>
                 <div class="field"><label for="import-password-{{ party }}">Its password</label><input id="import-password-{{ party }}" name="password" type="password" autocomplete="current-password" required></div>
-                <p style="margin-top: var(--space-4)"><button class="btn btn--ghost">Import into this browser</button></p>
+                <p style="margin-top: var(--space-4)"><button class="btn btn--ghost">Use this key file</button></p>
               </form>
             </div>
           </details>
@@ -86,24 +86,18 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
         <div data-state="ready" hidden>
           <p class="explain keyline"><span class="text-muted">Signing key in this browser</span> <span class="mono browser-public-key"></span></p>
           <p class="explain keyline"><span class="text-muted">Status</span> <span class="browser-key-verdict"></span></p>
-          <div class="browser-certify-block" hidden>
-            <p class="explain">Certify this key with your root, on your own machine, and paste the line it prints (<a class="link" href="/assets/sign_digest.py" download>sign_digest.py</a>, Python 3 with the <span class="mono">cryptography</span> package):</p>
-<pre class="cmd">python3 sign_digest.py certify --root ~/{{ party }}-root.key --role {{ party }} --signing-key <span class="browser-public-key"></span></pre>
-            <form class="browser-certify">
-              <div class="field"><label for="register-cert-{{ party }}">Certificate</label><textarea id="register-cert-{{ party }}" name="certificate" class="code" style="min-height: 72px" placeholder='{"role":"{{ party }}","signature":"…","signing_key":"…"}' required></textarea></div>
-              <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Register the certificate</button></p>
-            </form>
-          </div>
           <p class="row">
-            <button type="button" class="btn btn--primary browser-sign">Sign this version in this browser</button>
+            <button type="button" class="btn btn--primary browser-sign" hidden>Sign this version</button>
+            <button type="button" class="btn btn--primary browser-continue" hidden>Continue with this key</button>
+            <button type="button" class="btn btn--ghost browser-submit-root" hidden>Submit my key</button>
             <button type="button" class="btn btn--ghost btn--sm browser-forget">Forget this key</button>
           </p>
         </div>
       </div>
       <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
-        <summary>Replace the {{ party }} root key</summary>
+        <summary>Use a root key of your own</summary>
         <div class="info-body">
-          <p class="explain">The root is the key production trusts, shown above, read from GitHub: this UI and the box alike check that every {{ party }} certificate was made by it. It is rarely replaced: when it is lost or exposed, or to revoke every signing key it certified. Keep it off this server and out of the browser (<span class="mono">python3 sign_digest.py keygen --out ~/{{ party }}-root.key</span>, or a key from 1Password). Submitting a new root opens a pull request that changes the trust file; the check merges it within a minute and starts the release that builds it into the box, and the status line follows both. Certificates made with the old root stop counting once the box runs the new image.</p>
+          <p class="explain">For a root kept outside the browser, for example in 1Password. Set up signing does this for you. Submitting opens a pull request on the trust file and a release; certificates from the old root stop counting after it.</p>
           <form id="key-form-{{ party }}" method="post" action="{{ base }}/sign/key" data-busy="Submitting your root key: making the branch and opening the pull request. A few seconds.">
             <input type="hidden" name="party" value="{{ party }}">
             <div class="field"><label for="key-{{ party }}">Root public key</label><input id="key-{{ party }}" name="public_key" class="json" placeholder="the 44-character line ending in =, or the ssh-ed25519 line from 1Password" required></div>

@@ -1,9 +1,13 @@
-// Signing in the browser. The party's Ed25519 signing key is made here, kept in this
-// browser's IndexedDB as a non-extractable WebCrypto key, and signs the plan digest here.
-// The box trusts one root key per party; the party's root certifies this signing key
-// (sign_digest.py certify, on the party's own machine), and the certificate is registered
-// here and sent with every signature. The server only ever receives public keys,
-// certificates and signatures, through the same forms the manual openssl route uses.
+// Signing in the browser, with nothing to run on the party's own machine.
+//
+// The box trusts one root key per party and accepts a plan signature only from a signing
+// key that root has approved (a certificate). "Set up signing" makes both here: the root,
+// which leaves the page only as the password-protected key file that downloads, and the
+// signing key, kept in this browser's IndexedDB as a non-extractable WebCrypto key with
+// the certificate the root made for it. The root is never stored in the browser and never
+// sent to the server. Another browser uses the key file: the page opens it, approves a
+// fresh signing key with the root, and forgets the root again. The server only ever
+// receives public keys, certificates and signatures.
 //
 // The signed messages are exactly what static/aiab/audit/protocol.py signs and checks:
 // "AIAB/plan-bundle/v1" + NUL + the canonical JSON {"plan_digest":"sha256:..."}, and for
@@ -201,6 +205,61 @@
   function storeKey(party, entry) { return withStore("readwrite", function (s) { return s.put(entry, party); }); }
   function forgetKey(party) { return withStore("readwrite", function (s) { return s.delete(party); }); }
 
+  // The certificate a root (a CryptoKey that can sign) gives a signing public key.
+  function certify(rootPrivateKey, role, signingKey) {
+    var certificate = { role: role, signing_key: signingKey, signature: "" };
+    return subtle.sign({ name: "Ed25519" }, rootPrivateKey, certificateMessageBytes(certificate))
+      .then(function (signature) { certificate.signature = b64(signature); return certificate; });
+  }
+
+  // A fresh signing key approved by the given root: what this browser keeps.
+  function approvedSigningKey(rootPrivateKey, rootPublicKey, role) {
+    return generate().then(function (pair) {
+      return Promise.all([importPrivate(pair.pkcs8), certify(rootPrivateKey, role, pair.publicKey)])
+        .then(function (parts) {
+          return {
+            privateKey: parts[0],
+            publicKey: pair.publicKey,
+            certificate: parts[1],
+            rootPublicKey: rootPublicKey,
+            made: new Date().toISOString(),
+          };
+        });
+    });
+  }
+
+  // Set up signing: a root and an approved signing key. Returns the key file (the root,
+  // encrypted with the password) and the entry to store. The root is dropped afterwards.
+  function setUp(party, password) {
+    return generate().then(function (root) {
+      return Promise.all([
+        encryptBackup(root.pkcs8, password, root.publicKey, party),
+        importPrivate(root.pkcs8).then(function (rootKey) {
+          return approvedSigningKey(rootKey, root.publicKey, party);
+        }),
+      ]).then(function (parts) { return { keyFile: parts[0], entry: parts[1] }; });
+    });
+  }
+
+  // Another browser: open the key file, approve a fresh signing key, drop the root.
+  function fromKeyFile(keyFile, password, party) {
+    return decryptBackup(keyFile, password).then(function (pkcs8) {
+      return Promise.all([importPrivate(pkcs8), publicKeyOf(pkcs8)]);
+    }).then(function (parts) {
+      if (keyFile.public_key && keyFile.public_key !== parts[1]) {
+        throw new Error("the file's public key does not match its private key");
+      }
+      return approvedSigningKey(parts[0], parts[1], party);
+    });
+  }
+
+  // A browser set up before root keys holds one key, which production may trust as the
+  // root: approve a fresh signing key with it. The old key is then no longer kept here;
+  // its key file is the root's key file.
+  function fromStoredKey(entry, party) {
+    return approvedSigningKey(entry.privateKey, entry.publicKey, party);
+  }
+
   root.AiabSigning = {
     PREFIX: PREFIX,
     CERTIFICATE_PREFIX: CERTIFICATE_PREFIX,
@@ -209,6 +268,10 @@
     certificateText: certificateText,
     certificateMessageBytes: certificateMessageBytes,
     verifyCertificate: verifyCertificate,
+    certify: certify,
+    setUp: setUp,
+    fromKeyFile: fromKeyFile,
+    fromStoredKey: fromStoredKey,
     supported: supported,
     generate: generate,
     importPrivate: importPrivate,
@@ -259,9 +322,15 @@
     var party = box.dataset.party, digest = box.dataset.digest, trusted = box.dataset.trusted || "";
     var states = box.querySelectorAll("[data-state]");
     var note = box.querySelector(".browser-key-note");
+    var keyForm = document.getElementById("key-form-" + party);
+    var keyInput = document.getElementById("key-" + party);
     var uploadForm = document.getElementById("upload-form-" + party);
     var sigInput = document.getElementById("sig-" + party);
     var certInput = document.getElementById("cert-" + party);
+    var verdict = box.querySelector(".browser-key-verdict");
+    var signButton = box.querySelector(".browser-sign");
+    var submitButton = box.querySelector(".browser-submit-root");
+    var continueButton = box.querySelector(".browser-continue");
 
     function show(state) {
       states.forEach(function (el) { el.hidden = el.dataset.state !== state; });
@@ -274,30 +343,44 @@
       note.classList.toggle("field-hint--error", !!bad);
     }
 
-    // Is the stored certificate one the party's root (on production) made for this key?
-    function certificateVerdict(entry) {
-      var certificate = entry.certificate;
-      if (!certificate) return Promise.resolve({ ok: false, text: "No certificate registered yet." });
-      if (certificate.role !== party || certificate.signing_key !== entry.publicKey) {
-        return Promise.resolve({ ok: false, text: "The registered certificate is for another key or role." });
+    function short(key) { return key ? key.slice(0, 8) + "…" : "none"; }
+
+    // What this browser's key can do now. "ready": sign. "waiting": the box does not
+    // trust this browser's root yet. "old": a key from before root keys that production
+    // trusts as the root. "stale": anything else; set up again.
+    function standing(entry) {
+      if (!entry.certificate) {
+        return Promise.resolve(entry.publicKey === trusted ? "old" : "stale");
       }
-      return verifyCertificate(certificate, trusted).then(function (ok) {
-        return ok
-          ? { ok: true, text: "Certified by the " + party + " root production trusts." }
-          : { ok: false, text: "The registered certificate was not made by the " + party + " root production trusts." };
-      });
+      if (entry.certificate.role !== party || entry.certificate.signing_key !== entry.publicKey) {
+        return Promise.resolve("stale");
+      }
+      // Keys registered before setup recorded their root carry no rootPublicKey: judge
+      // them by whether the trusted root made their certificate.
+      if (entry.rootPublicKey && entry.rootPublicKey !== trusted) return Promise.resolve("waiting");
+      return verifyCertificate(entry.certificate, trusted).then(function (ok) { return ok ? "ready" : "stale"; });
     }
+
+    var VERDICT = {
+      ready: ["Ready to sign.", "ok"],
+      waiting: ["Waiting for the box to trust your key. Submit it if you have not; the release takes a few minutes.", "bad"],
+      old: ["This browser has your key from before. Continue to keep using it.", "bad"],
+    };
 
     function render(entry) {
       if (!entry) { show("none"); return; }
-      box.querySelectorAll(".browser-public-key").forEach(function (el) { el.textContent = entry.publicKey; });
-      var verdict = box.querySelector(".browser-key-verdict"), certify = box.querySelector(".browser-certify-block");
-      var signButton = box.querySelector(".browser-sign");
-      return certificateVerdict(entry).then(function (result) {
-        verdict.textContent = result.text;
-        verdict.className = "browser-key-verdict selected-label " + (result.ok ? "ok" : "bad");
-        certify.hidden = result.ok;
-        signButton.disabled = !result.ok;
+      return standing(entry).then(function (state) {
+        if (state === "stale") {
+          tell("This browser's " + party + " key is not one the box trusts. Set up signing again, or use your key file.", true);
+          show("none");
+          return;
+        }
+        box.querySelector(".browser-public-key").textContent = entry.publicKey;
+        verdict.textContent = VERDICT[state][0];
+        verdict.className = "browser-key-verdict selected-label " + VERDICT[state][1];
+        signButton.hidden = state !== "ready";
+        submitButton.hidden = state !== "waiting";
+        continueButton.hidden = state !== "old";
         show("ready");
       });
     }
@@ -306,80 +389,84 @@
       return loadKey(party).then(render, function (error) { tell("This browser's key store is not available: " + error, true); show("none"); });
     }
 
-    function makeKey(event) {
+    // Send the root to production through the existing root form: a pull request, then the
+    // release that builds it into the box. Every page then waits until the box trusts it.
+    function submitRoot(rootPublicKey) {
+      if (!keyForm || !keyInput) { tell("The root form is missing on this page.", true); return Promise.resolve(); }
+      var question = trusted
+        ? "The box trusts another " + party + " key (" + short(trusted) + "). Replace it with yours (" + short(rootPublicKey) +
+          ")? Signatures approved by the old key stop counting after the release."
+        : "Submit your " + party + " key (" + short(rootPublicKey) + ")? The box trusts it after a release of a few minutes.";
+      return confirmDialog(question).then(function (ok) {
+        if (!ok) { tell("Not submitted. Submit it whenever you are ready."); return; }
+        keyInput.value = rootPublicKey;
+        keyForm.requestSubmit();
+      });
+    }
+
+    function setUpHere(event) {
       event.preventDefault();
       var form = event.target, password = form.elements.password.value, again = form.elements.again.value;
-      if (!password) { tell("Choose a backup password first.", true); return; }
+      if (!password) { tell("Choose a password first.", true); return; }
       if (password !== again) { tell("The two passwords differ.", true); return; }
-      tell("Making the key and its backup…");
+      tell("Setting up…");
       var made;
-      generate().then(function (pair) {
-        made = pair;
-        return encryptBackup(pair.pkcs8, password, pair.publicKey, party);
-      }).then(function (backup) {
-        download("aiab-" + party + "-signing-key.json", JSON.stringify(backup, null, 2) + "\n");
-        return importPrivate(made.pkcs8);
-      }).then(function (privateKey) {
-        return storeKey(party, { privateKey: privateKey, publicKey: made.publicKey, made: new Date().toISOString() });
+      setUp(party, password).then(function (result) {
+        made = result;
+        download("aiab-" + party + "-key.json", JSON.stringify(result.keyFile, null, 2) + "\n");
+        return storeKey(party, result.entry);
       }).then(function () {
         form.reset();
-        tell("Key made. The backup file is downloading: keep it and its password, there is no other copy.");
+        tell("Set up. Your key file is downloading: keep it and its password, they are the only way to sign as the " + party + " in another browser.");
         return refresh();
-      }).catch(function (error) { tell("The key was not made: " + error.message, true); });
+      }).then(function () {
+        if (made.entry.rootPublicKey !== trusted) return submitRoot(made.entry.rootPublicKey);
+      }).catch(function (error) { tell("Not set up: " + error.message, true); });
     }
 
-    function importKey(event) {
+    function useKeyFile(event) {
       event.preventDefault();
       var form = event.target, file = form.elements.backup.files[0], password = form.elements.password.value;
-      if (!file) { tell("Choose the backup file first.", true); return; }
-      tell("Reading the backup…");
-      var backup;
+      if (!file) { tell("Choose your key file first.", true); return; }
+      tell("Opening the key file…");
       readFile(file).then(function (text) {
-        backup = JSON.parse(text);
-        if (backup.party && backup.party !== party) throw new Error("that backup is the " + backup.party + " key");
-        return decryptBackup(backup, password);
-      }).then(function (pkcs8) {
-        return Promise.all([importPrivate(pkcs8), publicKeyOf(pkcs8)]);
-      }).then(function (parts) {
-        if (backup.public_key && backup.public_key !== parts[1]) throw new Error("the backup's public key does not match its private key");
-        return storeKey(party, { privateKey: parts[0], publicKey: parts[1], made: new Date().toISOString() });
-      }).then(function () {
+        var keyFile = JSON.parse(text);
+        if (keyFile.party && keyFile.party !== party) throw new Error("that is the " + keyFile.party + "'s key file");
+        return fromKeyFile(keyFile, password, party);
+      }).then(function (entry) {
+        return storeKey(party, entry).then(function () { return entry; });
+      }).then(function (entry) {
         form.reset();
-        tell("Key imported into this browser.");
+        tell(entry.rootPublicKey === trusted ? "Ready to sign in this browser." : "Key file opened. The box does not trust this key yet.");
         return refresh();
-      }).catch(function (error) { tell("The key was not imported: " + error.message, true); });
+      }).catch(function (error) { tell("The key file was not used: " + error.message, true); });
     }
 
-    // The certificate the party's root made for this browser's key, pasted here once.
-    function registerCertificate(event) {
-      event.preventDefault();
-      var form = event.target, text = form.elements.certificate.value;
-      var certificate;
+    function continueWithStoredKey() {
       loadKey(party).then(function (entry) {
-        if (!entry) throw new Error("there is no key in this browser");
-        certificate = parseCertificate(text);
-        if (certificate.role !== party) throw new Error("that certificate is for the " + certificate.role);
-        if (certificate.signing_key !== entry.publicKey) throw new Error("that certificate names another key, not this browser's");
-        return verifyCertificate(certificate, trusted).then(function (ok) {
-          if (!ok) throw new Error("the " + party + " root production trusts did not sign it");
-          entry.certificate = certificate;
-          return storeKey(party, entry);
+        if (!entry) return;
+        return fromStoredKey(entry, party).then(function (next) {
+          return storeKey(party, next);
+        }).then(function () {
+          tell("Done. The key file you saved for this browser before is now your " + party + " key file: keep it.");
+          return refresh();
         });
-      }).then(function () {
-        form.reset();
-        tell("Certificate registered. This browser's key can sign now.");
-        return refresh();
-      }).catch(function (error) { tell("The certificate was not registered: " + error.message, true); });
+      }).catch(function (error) { tell("Not continued: " + error.message, true); });
+    }
+
+    function submitStoredRoot() {
+      loadKey(party).then(function (entry) {
+        if (entry && entry.rootPublicKey) return submitRoot(entry.rootPublicKey);
+      });
     }
 
     function signNow() {
       loadKey(party).then(function (entry) {
         if (!entry) { tell("There is no key in this browser.", true); return; }
-        return certificateVerdict(entry).then(function (result) {
-          if (!result.ok) { tell(result.text, true); return; }
+        return standing(entry).then(function (state) {
+          if (state !== "ready") { tell("This browser cannot sign yet.", true); return; }
           return confirmDialog(
-            "Sign this version, digest " + digest + ", with the " + party + " key in this browser (" +
-            entry.publicKey + ")? Check the digest against the plan zip first if you want to."
+            "Sign this version, digest " + digest + ", as the " + party + "? Check the digest against the plan zip first if you want to."
           ).then(function (ok) {
             if (!ok) return;
             tell("Signing…");
@@ -396,17 +483,18 @@
 
     function forget() {
       confirmDialog(
-        "Forget the " + party + " key in this browser? Only the backup file and its password can bring it back."
+        "Forget the " + party + " key in this browser? Your key file and its password set it up again."
       ).then(function (ok) {
         if (!ok) return;
-        return forgetKey(party).then(function () { tell("Key forgotten."); return refresh(); });
+        return forgetKey(party).then(function () { tell("Forgotten."); return refresh(); });
       });
     }
 
-    box.querySelector(".browser-make").addEventListener("submit", makeKey);
-    box.querySelector(".browser-import").addEventListener("submit", importKey);
-    box.querySelector(".browser-certify").addEventListener("submit", registerCertificate);
-    box.querySelector(".browser-sign").addEventListener("click", signNow);
+    box.querySelector(".browser-make").addEventListener("submit", setUpHere);
+    box.querySelector(".browser-import").addEventListener("submit", useKeyFile);
+    submitButton.addEventListener("click", submitStoredRoot);
+    continueButton.addEventListener("click", continueWithStoredKey);
+    signButton.addEventListener("click", signNow);
     box.querySelector(".browser-forget").addEventListener("click", forget);
 
     supported().then(function (ok) {

@@ -6,7 +6,7 @@ This procedure uses the agreement UI against the live box. For the command-line 
 
 - You have a login. The lab account and the auditor account are different people.
 - The UI server holds the lab signing key in `AIAB_LAB_KEY` and its certificate in `AIAB_LAB_CERTIFICATE`. The server then signs each version as the lab.
-- The box trusts the auditor root. The auditor holds the root's private key on their own machine. If the box does not trust it, do the steps under "Replace the auditor root" first.
+- The auditor has set up signing. If not, do the steps under "Set up signing" first.
 - The UI server holds `lab.token` and `logger.key` in `AIAB_DEMO_KEYS`. The box operator supplies them.
 - The release pins in the checkout match the release the box runs. If they do not, step 2 of the run refuses.
 - The Logs page shows at least one recorded session. Without a session, the run cannot start.
@@ -35,25 +35,20 @@ The lab signature is automatic when the server holds the lab key. The auditor si
 
 After a valid signature exists, the UI refuses to save the agreement. To change it, select **Edit this plan** on the plan page. This makes a new version and removes the existing signatures. Both parties sign the new version again.
 
-### Make and certify an auditor signing key
+### Set up signing
 
-Do this once per browser, before the first signature. No release is needed.
+Do this once per browser, before the first signature. Nothing runs outside the browser.
 
-1. On the Sign page, select **Make a key in this browser**.
-2. Save the backup file and its password. The key stays in this browser only.
-3. Copy the signing key shown in the card. On your own machine, run the `certify` command the card shows, with your root key file. It prints one JSON line, the certificate.
-4. Paste the certificate under **Certificate** and select **Register the certificate**. The card shows "Certified by the auditor root production trusts". Continue with "Sign the agreement".
+1. On the Sign page, type a password twice and select **Set up signing**.
+2. Keep the key file that downloads, and its password. They are the only way to sign as the auditor in another browser.
+3. The first setup for the auditor replaces the key the box trusts. Confirm the dialog. The UI opens a pull request and a release, and every page waits until the box trusts the key, a few minutes.
+4. The card shows "Ready to sign". Continue with "Sign the agreement".
 
-To sign with a key you keep outside the browser, open **Other ways to sign** on the Sign page. Run the commands it shows. Paste the signature and the certificate under **Paste a signature made elsewhere** and select **Verify and store**.
+In another browser, open **Already set up in another browser?**, choose the key file, type its password and select **Use this key file**. No release is needed.
 
-### Replace the auditor root
+A browser that signed before root keys shows **Continue with this key** when the box trusts its key. Select it once. The key file saved for that browser is the auditor key file from then on.
 
-Only when the root is lost or exposed, or to revoke every signing key it certified. Make a root on your own machine (`python3 sign_digest.py keygen --out ~/auditor-root.key`; `sign_digest.py` downloads from the Sign page). Keep it off the server and out of the browser.
-
-1. On the Sign page, open **Replace the auditor root key**.
-2. Paste the root's public key and select **Submit this root key**. The UI opens a pull request that changes the trust file.
-3. Wait. The Sign page shows the pull request, the check and the release.
-4. When the release completes, the box trusts the root. Certify your signing key again with the new root.
+To sign with keys kept outside the browser, open **Other ways to sign** on the Sign page and follow the commands there.
 
 ## 3. Start a run
 

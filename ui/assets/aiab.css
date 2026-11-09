@@ -468,6 +468,8 @@ pre { max-width: 100%; overflow-x: auto; }
 .chat-message p { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .5rem; }
 .plan-chat .chat-diff { max-height: 34rem; overflow: auto; white-space: pre; }
 .plan-chat [hidden] { display: none !important; }
+/* The key card toggles buttons with the hidden attribute; .btn sets display. */
+.browser-key [hidden] { display: none !important; }
 
 /* Proposal review uses file sections and explicit +/- markers as well as color. */
 .plan-chat { scroll-margin-top: 6rem; }

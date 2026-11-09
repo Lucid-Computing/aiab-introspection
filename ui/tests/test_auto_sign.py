@@ -242,7 +242,7 @@ def test_the_builder_can_save_twice_and_the_sign_screen_shows_the_badge(
         lab_signature_verifies(target, keys)
     html = client.get("/a/auto/sign").text
     assert "signed this version automatically by the server" in html
-    assert "The lab's signing key and its certificate are on this server" in html
+    assert "The lab signs on this server automatically" in html
     assert 'action="/a/auto/sign/remove"' not in html
     html = (
         client_for(
