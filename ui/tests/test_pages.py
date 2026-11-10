@@ -210,6 +210,10 @@ def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_
     assert '<script src="/assets/sign.js" defer></script>' in listing
     assert 'quick-sign" href="/a/bio/sign" data-party="lab"' in listing
     assert 'data-upload="/a/bio/sign/upload" data-next="/agreements"' in listing
+    assert 'title="Lab: not signed" aria-label="lab: missing"' in listing
+    assert 'title="Auditor: signed this version" aria-label="auditor: ok"' in listing
+    assert 'title="Run: needs both signatures"' in listing
+    assert '<code class="hash" title="sha256:' in listing
     fallback = client.get("/a/bio/sign?why=none").text
     assert "Signing is not set up in this browser yet" in fallback
     assert "cannot make Ed25519 keys" in client.get("/a/bio/sign?why=unsupported").text
