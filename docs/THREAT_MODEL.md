@@ -88,17 +88,53 @@ key file is opened to set up another browser. A page that serves malicious JavaS
 those moments can take the root, so the UI server is trusted to serve honest JavaScript
 for setup as it already is for signing. A party that wants its root never to touch the
 browser keeps it elsewhere and uses the commands under Other ways to sign. The UI server
-receives public keys, certificates and signatures only. One exception exists for the prototype: with `AIAB_LAB_KEY` and
-`AIAB_LAB_CERTIFICATE` set, the UI server holds a certified lab signing key and signs
-every plan version as the lab by itself, so whoever controls the server can sign as the
-lab, and the lab signature then shows only that the server saw the version; the lab's
-root stays with the lab. The auditor's signature still comes from outside the server. The UI server is otherwise trusted to serve honest JavaScript and an
+receives public keys, certificates and signatures only, except for the prototype
+shortcut below. The UI server is otherwise trusted to serve honest JavaScript and an
 honest digest, which is an active attack a party can detect by comparing the served page
 with the repository and the shown digest with the downloaded plan files, and the trust
-file change that admits a new public key is visible in GitHub history. Hosting both
-private keys on the UI server was rejected: one server compromise would then sign for
-both parties with no trace outside the server. Requiring the other party's approval of a
-key change in `approve-keys.yml` is still open.
+file change that admits a new public key is visible in GitHub history. Requiring the
+other party's approval of a key change in `approve-keys.yml` is still open.
+
+## Prototype shortcut: the server signs for both parties
+
+To make signing one click, the UI server can hold a certified signing key for each
+party:
+
+- `AIAB_LAB_KEY` and `AIAB_LAB_CERTIFICATE`: the server signs every plan version as the
+  lab by itself.
+- `AIAB_AUDITOR_KEY` and `AIAB_AUDITOR_CERTIFICATE`: the server signs as the auditor when
+  a logged-in auditor presses Sign and confirms the digest.
+
+The box's check does not change: it still requires both signatures, each from a key the
+party's baked-in root certified. What changes is what a signature shows. With both
+keys on the server, whoever controls the server, or breaks into it, can sign as both
+parties, and the two signatures show only that the server approved the version. The UI
+decides who is the auditor from the login (anyone not in `admins.json`), and the lab
+runs the server, so in this mode the lab can sign as the auditor. The roots' private
+halves are not on the server; they stay offline with whoever made them.
+
+What the real version changes, in order:
+
+1. Each party makes its own root, on its own machine or with Set up signing in its own
+   browser, and submits the public half. One PR and one release replace the roots, so
+   no root's private half has ever been on the server or with the operator.
+2. Unset `AIAB_LAB_KEY`, `AIAB_LAB_CERTIFICATE`, `AIAB_AUDITOR_KEY` and
+   `AIAB_AUDITOR_CERTIFICATE`. The Sign button then signs in the party's browser (built:
+   set up once per browser, one-step Sign on the plan page). The lab loses automatic
+   signing and presses Sign like the auditor. Certificates from the old roots stop
+   counting with the release in step 1.
+3. More than one person per party: share the party's encrypted key file inside the
+   party, or add a flow where the root holder certifies a colleague's signing key
+   without sending the root (not built; `sign_digest.py certify` does it on the command
+   line).
+4. Each party confirms the released box trusts its root: the lab controls the repository
+   and releases, so the auditor checks the trust file in the attested image, or root
+   changes require both parties' approval in `approve-keys.yml`. Neither is built.
+
+Limits that remain in the real version: certificates cannot be revoked or expire (the
+box keeps no state and reads no clock), so cutting off a key means rotating the root;
+and the UI server serves the signing JavaScript, so a party that does not trust it signs
+with `sign_digest.py` instead.
 
 ## Data handling and observable channels
 

@@ -7,6 +7,7 @@ the Sign screen says why. Without the key nothing changes."""
 import base64
 import json
 from dataclasses import replace
+from urllib.parse import unquote
 
 import pytest
 from aiab.audit.protocol import sign_bytes, verify_signature
@@ -252,3 +253,75 @@ def test_the_builder_can_save_twice_and_the_sign_screen_shows_the_badge(
         .text
     )
     assert "The server cannot sign as the lab" in html
+
+
+# ---- AIAB_AUDITOR_KEY: the server signs as the auditor when an auditor presses Sign ----
+
+
+@pytest.fixture
+def both(settings, keys):
+    return replace(
+        settings,
+        auditor_signing_key=raw(keys["auditor"]),
+        auditor_signing_certificate=cert_text(keys, "auditor"),
+    )
+
+
+def test_the_auditor_is_never_signed_automatically(both, keys):
+    target = create(both)
+    view = pv.load_plan_view(target)
+    assert view.signatures["auditor"]["status"] == "missing" and not view.frozen
+
+
+def test_sign_on_the_server_as_the_auditor_freezes_the_plan(both, keys):
+    target = create(both)
+    digest = pv.file_digest(pv.bundle_files(target.plan_dir))
+    assert pv.sign_on_server(target, "auditor", AUDITOR, digest) == ("ok", "signed")
+    view = pv.load_plan_view(target)
+    assert view.signatures["auditor"]["status"] == "ok" and not view.signatures["auditor"].get(
+        "auto"
+    )
+    assert view.signatures["auditor"]["signing_key"] == public(keys["auditor"])
+    assert view.frozen
+    assert "caleb" == pv.load_history(target.plan_dir)[0]["user"]
+
+
+def test_sign_on_the_server_refuses_a_changed_version_or_no_key(both, settings):
+    target = create(both)
+    status, detail = pv.sign_on_server(target, "auditor", AUDITOR, "sha256:" + "0" * 64)
+    assert status == "error" and "changed" in detail
+    status, detail = pv.sign_on_server(pv.for_agreement(settings, "auto"), "auditor", AUDITOR)
+    assert status == "error" and "holds no auditor key" in detail
+    wrong = replace(both, auditor_signing_certificate=cert_text_for_lab(both))
+    assert "not made by the auditor root" in pv.server_problem(wrong, "auditor")
+
+
+def cert_text_for_lab(settings):
+    return settings.lab_signing_certificate
+
+
+def test_the_sign_button_signs_on_the_server(both, keys, monkeypatch):
+    create(both)
+    client = client_for(monkeypatch, both)
+    target = pv.for_agreement(both, "auto")
+    digest = pv.file_digest(pv.bundle_files(target.plan_dir))
+    html = client.get("/a/auto/plan").text
+    assert 'action="/a/auto/sign/server"' in html and "quick-sign" not in html
+    assert 'action="/a/auto/sign/server"' in client.get("/agreements").text
+    assert "can sign as both parties" in client.get("/a/auto/sign").text
+    response = client.post(
+        "/a/auto/sign/server",
+        data={"party": "auditor", "digest": digest, "next": "/a/auto/plan"},
+    )
+    assert response.status_code == 303 and response.headers["location"].startswith("/a/auto/plan")
+    assert pv.load_plan_view(target).signatures["auditor"]["status"] == "ok"
+    # The lab cannot use the auditor's key.
+    lab = client_for(monkeypatch, both, party="lab")
+    refused = lab.post("/a/auto/sign/server", data={"party": "auditor", "digest": digest})
+    assert "own party" in unquote(refused.headers["location"])
+
+
+def test_without_the_auditor_key_the_sign_button_signs_in_the_browser(settings, monkeypatch):
+    create(settings)
+    html = client_for(monkeypatch, settings).get("/a/auto/plan").text
+    assert "quick-sign" in html and "/sign/server" not in html
