@@ -67,10 +67,8 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
         <input type="hidden" name="party" value="{{ party }}"><input type="hidden" name="digest" value="{{ view.digest }}">
         <button class="btn btn--primary" {% if view.issue %}disabled{% endif %}>Sign</button>
       </form>
-      <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
-        <summary>Sign with a key of your own instead</summary>
-        <div class="info-body">
-      {% endif %}
+      {# No browser setup or root form here: either would make a new root and replace the one the server's key is certified by. #}
+      {% else %}
       <div class="browser-key" data-party="{{ party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[party] or '' }}">
         <p class="field-hint browser-key-note" hidden></p>
         <div data-state="unsupported" hidden>
@@ -116,6 +114,7 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
           </form>
         </div>
       </details>
+      {% endif %}
       <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
         <summary>Paste a signature made elsewhere</summary>
         <div class="info-body">
@@ -127,10 +126,6 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
           </form>
         </div>
       </details>
-      {% if party in server_parties and party != 'lab' %}
-        </div>
-      </details>
-      {% endif %}
       {% endif %}
       {% else %}<p class="text-muted">Only the {{ party }} can sign here.</p>{% endif %}
     </div>

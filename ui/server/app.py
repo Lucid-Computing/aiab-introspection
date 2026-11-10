@@ -1361,6 +1361,13 @@ async def set_key(
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
         return back(here, err="You can only replace your own party's root key.")
+    if pv.server_signs(settings, party):
+        key_env, cert_env = pv.SERVER_KEY_ENV[party]
+        return back(
+            here,
+            err=f"This server signs as the {party} with a key the current root certified; a "
+            f"new root would stop that. Unset {key_env} and {cert_env} first.",
+        )
     public_key, problem = pv.normalize_public_key(public_key)
     if problem or public_key is None:
         return back(here, err=problem or "that is not an Ed25519 public key")

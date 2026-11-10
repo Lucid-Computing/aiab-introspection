@@ -325,3 +325,14 @@ def test_without_the_auditor_key_the_sign_button_signs_in_the_browser(settings, 
     create(settings)
     html = client_for(monkeypatch, settings).get("/a/auto/plan").text
     assert "quick-sign" in html and "/sign/server" not in html
+
+
+def test_while_the_server_signs_no_page_offers_a_new_auditor_root(both, monkeypatch):
+    create(both)
+    client = client_for(monkeypatch, both)
+    html = client.get("/a/auto/sign").text
+    assert 'class="browser-key"' not in html and 'id="key-form-auditor"' not in html
+    assert "Paste a signature made elsewhere" in html
+    other = public(Ed25519PrivateKey.generate())
+    refused = client.post("/a/auto/sign/key", data={"party": "auditor", "public_key": other})
+    assert "Unset AIAB_AUDITOR_KEY" in unquote(refused.headers["location"])
