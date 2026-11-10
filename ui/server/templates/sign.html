@@ -9,8 +9,8 @@
 {% if copy and (copy.behind or copy.last_pull.error or copy.error) %}<div class="form-message error"><p style="margin:0">This server's copy of <span class="mono">{{ copy.branch }}</span> is at {{ copy.head }}{% if copy.behind %}, {{ copy.behind }} commit{{ "s" if copy.behind != 1 }} behind GitHub{% endif %}.{% if copy.last_pull.error %} Last catch-up failed: <span class="mono">{{ copy.last_pull.error }}</span>.{% elif copy.error %} <span class="mono">{{ copy.error }}</span>.{% endif %}</p>
 {% if copy.changes %}<p style="margin: var(--space-2) 0 0">Local changes in the copy:{% for line in copy.changes %} <span class="mono">{{ line }}</span>{% endfor %}{% if copy.dirty > copy.changes | length %} …{% endif %}</p>{% endif %}
 <p style="margin: var(--space-3) 0 0"><form method="post" action="/copy/pull" class="inline"><button class="btn btn--ghost btn--sm">Catch up now</button></form>{% if copy.dirty %} <form method="post" action="/copy/reset" class="inline" data-confirm="This moves the copy's local changes into a git stash (nothing is deleted; git stash list shows them) and then catches up with GitHub. Continue?"><button class="btn btn--ghost btn--sm">Set local changes aside and catch up</button></form>{% endif %}</p></div>{% endif %}
-<p class="lead">The digest below is the fingerprint of this version. Each party signs it in its own browser; set up signing once per party, here. After that, Sign on the plan signs in one step; this screen is for the setup, the keys, and a signature made elsewhere.{% if auto_sign %} The lab signs on this server automatically, so whoever controls this server can sign as the lab.{% endif %}</p>
-{% if auto_problem %}<p class="form-message error">The server cannot sign as the lab: {{ auto_problem }}. Until that is fixed the lab signs by hand below.</p>{% endif %}
+<p class="lead">The digest below is the fingerprint of this version.{% if server_signs %} Sign on the plan signs it in one step; this screen shows the keys and the signatures.{% else %} Each party signs it in its own browser; set up signing once per party, here. After that, Sign on the plan signs in one step; this screen is for the setup, the keys, and a signature made elsewhere.{% endif %}{% if auto_sign %} The lab signs on this server automatically.{% endif %}{% if "auditor" in server_parties %} The auditor signs on this server too, when an auditor presses Sign.{% endif %}{% if auto_sign or server_parties %} Prototype shortcut: whoever controls this server can sign as {{ "both parties" if server_parties | length > 1 else "the lab" if auto_sign else "the auditor" }}.{% endif %}</p>
+{% for party, problem in server_problems.items() if problem %}<p class="form-message error">The server cannot sign as the {{ party }}: {{ problem }}. Until that is fixed the {{ party }} signs by hand below.</p>{% endfor %}
 {% if view %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
 
@@ -61,6 +61,14 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
         <button class="btn btn--ghost">Re-sign</button>
       </form>
       {% else %}
+      {% if party in server_parties and party != 'lab' %}
+      <p class="explain">This server holds the {{ party }} signing key and its certificate. Sign signs this version with it.</p>
+      <form method="post" action="{{ base }}/sign/server" class="inline" data-confirm="Sign this version, digest {{ view.digest }}, as the {{ party }}?">
+        <input type="hidden" name="party" value="{{ party }}"><input type="hidden" name="digest" value="{{ view.digest }}">
+        <button class="btn btn--primary" {% if view.issue %}disabled{% endif %}>Sign</button>
+      </form>
+      {# No browser setup or root form here: either would make a new root and replace the one the server's key is certified by. #}
+      {% else %}
       <div class="browser-key" data-party="{{ party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[party] or '' }}">
         <p class="field-hint browser-key-note" hidden></p>
         <div data-state="unsupported" hidden>
@@ -106,6 +114,7 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
           </form>
         </div>
       </details>
+      {% endif %}
       <details class="info" style="margin: var(--space-4) 0 var(--space-6)">
         <summary>Paste a signature made elsewhere</summary>
         <div class="info-body">

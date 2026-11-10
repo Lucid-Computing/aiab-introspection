@@ -234,6 +234,9 @@ def render(request: Request, template: str, **context: Any) -> Response:
     context.setdefault("msg", request.query_params.get("msg"))
     context.setdefault("err", request.query_params.get("err"))
     context.setdefault("key_wait", _key_wait() if user_of(request) else None)
+    # Sign buttons sign on the server when it holds the person's party key (prototype).
+    who = user_of(request)
+    context.setdefault("server_signs", bool(who) and pv.server_signs(settings, who["party"]))
     context.update(
         user=user_of(request),
         settings=settings,
@@ -1264,7 +1267,8 @@ async def sign(request: Request, aid: str) -> Response:
         keys=keys,
         copy=copy,
         auto_sign=bool(settings.lab_signing_key),
-        auto_problem=pv.lab_auto_problem(settings),
+        server_parties=[p for p in PARTIES if pv.server_signs(settings, p)],
+        server_problems={p: pv.server_problem(settings, p) for p in PARTIES},
         why=SIGN_WHY.get(request.query_params.get("why", "")),
     )
 
@@ -1295,6 +1299,34 @@ async def sign_upload(
     editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
     saved(user)
     return back(_sign_next(aid, next), msg=f"{party} signature verified and stored.")
+
+
+@app.post("/a/{aid}/sign/server")
+async def sign_server(
+    request: Request,
+    aid: str,
+    party: Annotated[str, Form()],
+    digest: Annotated[str, Form()] = "",
+    next: Annotated[str, Form()] = "",
+) -> Response:
+    """Sign with the server's key for your party (prototype: AIAB_AUDITOR_KEY). `digest` is
+    the version the person confirmed; the server refuses if the plan has changed since."""
+    target, redirect = agreement(request, aid, write=True)
+    if redirect:
+        return redirect
+    user = user_of(request)
+    here = f"/a/{aid}/sign"
+    if user is None or party != user["party"]:
+        return back(here, err="You can only sign as your own party.")
+    view, error = load_view(target)
+    if error or view is None or view.issue:
+        return back(here, err="The box would reject this plan; fix it before signing.")
+    status, detail = pv.sign_on_server(target, party, user, digest.strip())
+    if status != "ok":
+        return back(here, err=f"Not signed: {detail}")
+    editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
+    saved(user)
+    return back(_sign_next(aid, next), msg=f"Signed this version as the {party}.")
 
 
 @app.post("/a/{aid}/sign/remove")
@@ -1329,6 +1361,13 @@ async def set_key(
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
         return back(here, err="You can only replace your own party's root key.")
+    if pv.server_signs(settings, party):
+        key_env, cert_env = pv.SERVER_KEY_ENV[party]
+        return back(
+            here,
+            err=f"This server signs as the {party} with a key the current root certified; a "
+            f"new root would stop that. Unset {key_env} and {cert_env} first.",
+        )
     public_key, problem = pv.normalize_public_key(public_key)
     if problem or public_key is None:
         return back(here, err=problem or "that is not an Ed25519 public key")

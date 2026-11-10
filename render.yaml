@@ -43,6 +43,10 @@ services:
         sync: false
       - key: AIAB_LAB_CERTIFICATE  # optional: the certificate the lab root made for AIAB_LAB_KEY (one JSON line, sign_digest.py certify)
         sync: false
+      - key: AIAB_AUDITOR_KEY   # optional, prototype: an auditor signing key; with its certificate below, Sign signs as the auditor on the server
+        sync: false
+      - key: AIAB_AUDITOR_CERTIFICATE  # optional: the certificate the auditor root made for AIAB_AUDITOR_KEY
+        sync: false
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false
       - key: LOGGER_KEY         # optional, for the Runs screen: the demo logger's private key (base64)

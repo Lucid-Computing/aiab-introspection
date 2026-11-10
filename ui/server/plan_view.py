@@ -489,92 +489,165 @@ def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -
 
 AUTO_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for auto-signing
 
+# Prototype shortcut: the server may hold a certified signing key for a party and sign as
+# it. The lab's signs every version by itself; the auditor's signs when an auditor presses
+# Sign. Whoever controls the server can then sign as that party. THREAT_MODEL.md, "Prototype
+# shortcut", lists what changes for the real version.
+SERVER_KEY_ENV = {
+    "lab": ("AIAB_LAB_KEY", "AIAB_LAB_CERTIFICATE"),
+    "auditor": ("AIAB_AUDITOR_KEY", "AIAB_AUDITOR_CERTIFICATE"),
+}
 
-def lab_auto_key(settings: Settings) -> Any | None:
-    """The private key the server signs with as the lab, or None when AIAB_LAB_KEY is unset
+
+def _server_secrets(settings: Settings, party: str) -> tuple[str | None, str | None]:
+    if party == "lab":
+        return settings.lab_signing_key, settings.lab_signing_certificate
+    if party == "auditor":
+        return settings.auditor_signing_key, settings.auditor_signing_certificate
+    return None, None
+
+
+def server_key(settings: Settings, party: str) -> Any | None:
+    """The private key the server signs with as `party`, or None when its variable is unset
     or not a key."""
-    if not settings.lab_signing_key:
+    raw, _ = _server_secrets(settings, party)
+    if not raw:
         return None
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     try:
-        return Ed25519PrivateKey.from_private_bytes(
-            base64.b64decode(settings.lab_signing_key, validate=True)
-        )
+        return Ed25519PrivateKey.from_private_bytes(base64.b64decode(raw, validate=True))
     except (ValueError, TypeError):
         return None
 
 
-def lab_auto_public_key(settings: Settings) -> str | None:
-    key = lab_auto_key(settings)
+def server_public_key(settings: Settings, party: str) -> str | None:
+    key = server_key(settings, party)
     if key is None:
         return None
     return base64.b64encode(key.public_key().public_bytes_raw()).decode()
 
 
-def lab_auto_certificate(settings: Settings) -> dict[str, Any] | None:
-    """The certificate the lab's root gave the server's signing key, from
-    AIAB_LAB_CERTIFICATE, or None when unset or not JSON."""
-    if not settings.lab_signing_certificate:
+def server_certificate(settings: Settings, party: str) -> dict[str, Any] | None:
+    """The certificate the party's root gave the server's signing key, or None when unset
+    or not JSON."""
+    _, text = _server_secrets(settings, party)
+    if not text:
         return None
-    return parse_certificate(settings.lab_signing_certificate)
+    return parse_certificate(text)
+
+
+def server_problem(settings: Settings, party: str) -> str | None:
+    """Why the server cannot sign as `party` right now: a malformed key, no certificate, or
+    a certificate the party's root on production did not make for this key. None when it
+    can, and None when it holds no key for the party (nothing to fix)."""
+    raw, _ = _server_secrets(settings, party)
+    if not raw:
+        return None
+    key_env, cert_env = SERVER_KEY_ENV[party]
+    public = server_public_key(settings, party)
+    if public is None:
+        return f"{key_env} is not a base64 Ed25519 private key"
+    certificate = server_certificate(settings, party)
+    if certificate is None:
+        return f"{cert_env} is not set, or is not the JSON line sign_digest.py certify printed"
+    try:
+        certified = certified_key(certificate, party, load_trust(settings))
+    except (AuditError, KeyError):
+        return f"{cert_env} was not made by the {party} root production trusts"
+    if certified != public:
+        return f"{cert_env} certifies another key, not the server's {party} key ({public})"
+    return None
+
+
+def server_signs(settings: Settings, party: str) -> bool:
+    """The server holds a working signing key for `party`."""
+    return server_key(settings, party) is not None and server_problem(settings, party) is None
+
+
+def _server_signature_current(settings: Settings, party: str, plan_digest: str) -> bool:
+    """The stored signature is the server's, for this version, under the current root."""
+    target = settings.plan_dir / "signatures" / f"{party}.sig"
+    if not target.is_file():
+        return False
+    try:
+        stored, _ = read_certificate(target.with_suffix(".cert"))
+        # The stored certificate must be the current root's, for this key: after a root
+        # rotation the signature is re-made with the new certificate.
+        public = server_public_key(settings, party)
+        if stored is None or certified_key(stored, party, load_trust(settings)) != public:
+            raise AuditError("invalid_certificate")
+        verify_signature(
+            public,
+            target.read_text(encoding="utf-8").strip(),
+            "plan-bundle",
+            {"plan_digest": plan_digest},
+        )
+        return True
+    except (AuditError, ValueError, KeyError):
+        return False
+
+
+def _write_server_signature(settings: Settings, party: str, plan_digest: str) -> None:
+    key = server_key(settings, party)
+    signature = base64.b64encode(
+        key.sign(sign_bytes("plan-bundle", {"plan_digest": plan_digest}))
+    ).decode()
+    target = settings.plan_dir / "signatures" / f"{party}.sig"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(signature + "\n", encoding="utf-8")
+    write_certificate(target.with_suffix(".cert"), server_certificate(settings, party))
+
+
+def sign_on_server(
+    settings: Settings, party: str, actor: dict[str, str], expected_digest: str = ""
+) -> tuple[str, str]:
+    """A party member pressed Sign and the server holds that party's key: sign the current
+    version with it. `expected_digest` is the version the person confirmed; a different
+    current version is refused. Returns (status, detail), status "ok" when signed."""
+    if not server_signs(settings, party):
+        return "error", server_problem(settings, party) or f"this server holds no {party} key"
+    plan_digest = file_digest(bundle_files(settings.plan_dir))
+    if expected_digest and expected_digest != plan_digest:
+        return "error", "the plan changed since you opened it; check this version and sign again"
+    if not _server_signature_current(settings, party, plan_digest):
+        _write_server_signature(settings, party, plan_digest)
+    record_change(
+        settings,
+        actor,
+        "signature",
+        f"signature: {party}",
+        f"signed version {plan_digest[7:19]} with the server's {party} key",
+    )
+    return "ok", "signed"
+
+
+# The lab's key signs by itself; these names are the lab's view of the functions above.
+def lab_auto_key(settings: Settings) -> Any | None:
+    return server_key(settings, "lab")
+
+
+def lab_auto_public_key(settings: Settings) -> str | None:
+    return server_public_key(settings, "lab")
+
+
+def lab_auto_certificate(settings: Settings) -> dict[str, Any] | None:
+    return server_certificate(settings, "lab")
 
 
 def lab_auto_problem(settings: Settings) -> str | None:
-    """Why the server cannot sign as the lab right now: no key, a malformed key, no
-    certificate, or a certificate the lab root production trusts did not make for this
-    key. None when it can."""
-    if not settings.lab_signing_key:
-        return None
-    public = lab_auto_public_key(settings)
-    if public is None:
-        return "AIAB_LAB_KEY is not a base64 Ed25519 private key"
-    certificate = lab_auto_certificate(settings)
-    if certificate is None:
-        return (
-            "AIAB_LAB_CERTIFICATE is not set, or is not the JSON line sign_digest.py certify"
-            " printed"
-        )
-    try:
-        certified = certified_key(certificate, "lab", load_trust(settings))
-    except (AuditError, KeyError):
-        return "AIAB_LAB_CERTIFICATE was not made by the lab root production trusts"
-    if certified != public:
-        return f"AIAB_LAB_CERTIFICATE certifies another key, not the server's lab key ({public})"
-    return None
+    return server_problem(settings, "lab")
 
 
 def ensure_lab_signature(settings: Settings, actor: dict[str, str] | None = None) -> bool:
     """Sign the current version as the lab with the server's key, unless there is no key, it
     is not the trusted one, or a valid lab signature is already there. True when it signed."""
-    key = lab_auto_key(settings)
-    if key is None or lab_auto_problem(settings) is not None:
+    if not server_signs(settings, "lab"):
         return False
     plan_digest = file_digest(bundle_files(settings.plan_dir))
-    public = lab_auto_public_key(settings)
-    target = settings.plan_dir / "signatures" / "lab.sig"
-    if target.is_file():
-        try:
-            stored, _ = read_certificate(target.with_suffix(".cert"))
-            # The stored certificate must be the current root's, for this key: after a
-            # root rotation the signature is re-made with the new certificate.
-            if stored is None or certified_key(stored, "lab", load_trust(settings)) != public:
-                raise AuditError("invalid_certificate")
-            verify_signature(
-                public,
-                target.read_text(encoding="utf-8").strip(),
-                "plan-bundle",
-                {"plan_digest": plan_digest},
-            )
-            return False
-        except (AuditError, ValueError, KeyError):
-            pass
-    signature = base64.b64encode(
-        key.sign(sign_bytes("plan-bundle", {"plan_digest": plan_digest}))
-    ).decode()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(signature + "\n", encoding="utf-8")
-    write_certificate(target.with_suffix(".cert"), lab_auto_certificate(settings))
+    if _server_signature_current(settings, "lab", plan_digest):
+        return False
+    _write_server_signature(settings, "lab", plan_digest)
     who = f" after a change by {actor['username']}" if actor and actor.get("username") else ""
     record_change(
         settings,
