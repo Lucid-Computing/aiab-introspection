@@ -24,6 +24,7 @@ from aiab.baked.bundle import (
     file_digest,
     key_bytes,
     load_bundle,
+    make_certificate,
     restrictions,
     write_certificate,
 )
@@ -489,36 +490,24 @@ def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -
 
 AUTO_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for auto-signing
 
-# Prototype shortcut: the server may hold a certified signing key for a party and sign as
-# it. The lab's signs every version by itself; the auditor's signs when an auditor presses
-# Sign. Whoever controls the server can then sign as that party. THREAT_MODEL.md, "Prototype
-# shortcut", lists what changes for the real version.
-SERVER_KEY_ENV = {
-    "lab": ("AIAB_LAB_KEY", "AIAB_LAB_CERTIFICATE"),
-    "auditor": ("AIAB_AUDITOR_KEY", "AIAB_AUDITOR_CERTIFICATE"),
-}
+# Prototype shortcut: the server may hold the lab's certified signing key and sign every
+# version as the lab (AIAB_LAB_KEY), and the auditor's root and certify each auditor's
+# browser key (AIAB_AUDITOR_ROOT_KEY). Whoever controls the server can then sign as both
+# parties. THREAT_MODEL.md, "Prototype shortcut", lists what changes for the real version.
+SERVER_KEY_ENV = {"lab": ("AIAB_LAB_KEY", "AIAB_LAB_CERTIFICATE")}
+ROOT_KEY_ENV = {"auditor": "AIAB_AUDITOR_ROOT_KEY"}
 
 
 def _server_secrets(settings: Settings, party: str) -> tuple[str | None, str | None]:
     if party == "lab":
         return settings.lab_signing_key, settings.lab_signing_certificate
-    if party == "auditor":
-        return settings.auditor_signing_key, settings.auditor_signing_certificate
     return None, None
 
 
 def server_key(settings: Settings, party: str) -> Any | None:
     """The private key the server signs with as `party`, or None when its variable is unset
     or not a key."""
-    raw, _ = _server_secrets(settings, party)
-    if not raw:
-        return None
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    try:
-        return Ed25519PrivateKey.from_private_bytes(base64.b64decode(raw, validate=True))
-    except (ValueError, TypeError):
-        return None
+    return _private_key(_server_secrets(settings, party)[0])
 
 
 def server_public_key(settings: Settings, party: str) -> str | None:
@@ -599,27 +588,93 @@ def _write_server_signature(settings: Settings, party: str, plan_digest: str) ->
     write_certificate(target.with_suffix(".cert"), server_certificate(settings, party))
 
 
-def sign_on_server(
-    settings: Settings, party: str, actor: dict[str, str], expected_digest: str = ""
-) -> tuple[str, str]:
-    """A party member pressed Sign and the server holds that party's key: sign the current
-    version with it. `expected_digest` is the version the person confirmed; a different
-    current version is refused. Returns (status, detail), status "ok" when signed."""
-    if not server_signs(settings, party):
-        return "error", server_problem(settings, party) or f"this server holds no {party} key"
-    plan_digest = file_digest(bundle_files(settings.plan_dir))
-    if expected_digest and expected_digest != plan_digest:
-        return "error", "the plan changed since you opened it; check this version and sign again"
-    if not _server_signature_current(settings, party, plan_digest):
-        _write_server_signature(settings, party, plan_digest)
-    record_change(
-        settings,
-        actor,
-        "signature",
-        f"signature: {party}",
-        f"signed version {plan_digest[7:19]} with the server's {party} key",
-    )
-    return "ok", "signed"
+def _private_key(raw: str | None) -> Any | None:
+    if not raw:
+        return None
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    try:
+        return Ed25519PrivateKey.from_private_bytes(base64.b64decode(raw, validate=True))
+    except (ValueError, TypeError):
+        return None
+
+
+def issuer_root(settings: Settings, party: str) -> Any | None:
+    """The party's root private key, when this server holds it to certify browser keys."""
+    return _private_key(settings.auditor_root_key if party == "auditor" else None)
+
+
+def issuer_problem(settings: Settings, party: str) -> str | None:
+    """Why the server cannot certify keys for `party`: a malformed root, or not the root
+    production trusts. None when it can, or when it holds no root for the party."""
+    raw = settings.auditor_root_key if party == "auditor" else None
+    if not raw:
+        return None
+    root = issuer_root(settings, party)
+    if root is None:
+        return f"{ROOT_KEY_ENV[party]} is not a base64 Ed25519 private key"
+    public = root.public_key().public_bytes_raw()
+    try:
+        trusted = key_bytes(load_trust(settings).get(f"{party}_key", ""))
+    except AuditError:
+        trusted = b""
+    if public != trusted:
+        shown = base64.b64encode(public).decode()
+        return f"{ROOT_KEY_ENV[party]} ({shown[:8]}…) is not the {party} root production trusts"
+    return None
+
+
+def server_certifies(settings: Settings, party: str) -> bool:
+    """The server holds the party's trusted root and certifies its members' browser keys."""
+    return issuer_root(settings, party) is not None and issuer_problem(settings, party) is None
+
+
+def issued_log(settings: Settings) -> Path:
+    """Every certificate the server made, one JSON line each, next to the accounts."""
+    return settings.accounts_file.parent / "issued-certificates.jsonl"
+
+
+def issue_certificate(
+    settings: Settings, party: str, signing_key: str, actor: dict[str, str]
+) -> tuple[str, Any]:
+    """Certify the public key a logged-in member's browser made. Returns ("ok", the
+    certificate) or ("error", why). Refuses a root, the lab's server key and anything that
+    is not a canonical 32-byte key; records every certificate it makes."""
+    if not server_certifies(settings, party):
+        return "error", issuer_problem(settings, party) or f"this server holds no {party} root"
+    try:
+        raw = key_bytes(signing_key)
+    except AuditError:
+        return "error", "not an Ed25519 public key (base64 of 32 bytes)"
+    trust = load_trust(settings)
+    taken = set()
+    for role in PARTIES:
+        try:
+            taken.add(key_bytes(trust.get(f"{role}_key", "")))
+        except AuditError:
+            pass
+    lab = server_public_key(settings, "lab")
+    if lab:
+        taken.add(base64.b64decode(lab))
+    if raw in taken:
+        return "error", "that key is a root or the lab's key"
+    certificate = make_certificate(issuer_root(settings, party), party, signing_key)
+    if certified_key(certificate, party, trust) != signing_key:  # what the box will check
+        return "error", "the certificate does not verify against the trusted root"
+    from datetime import UTC, datetime
+
+    record = {
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "party": party,
+        "username": actor.get("username", ""),
+        "email": actor.get("email", ""),
+        "signing_key": signing_key,
+    }
+    log = issued_log(settings)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a", encoding="utf-8") as out:
+        out.write(json.dumps(record, sort_keys=True) + "\n")
+    return "ok", certificate
 
 
 # The lab's key signs by itself; these names are the lab's view of the functions above.

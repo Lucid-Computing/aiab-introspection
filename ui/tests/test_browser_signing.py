@@ -162,3 +162,59 @@ def test_set_up_signing_makes_a_root_and_a_signing_key_the_box_accepts(probe):
         verify_signature(
             flow["signing_key"], flow["signature"], "plan-bundle", {"plan_digest": DIGEST}
         )
+
+
+ENROLL_PROBE = """
+require(process.argv[1]);
+const S = globalThis.AiabSigning;
+(async () => {
+  const digest = process.argv[2];
+  const root = await S.generate(), stranger = await S.generate();
+  const rootKey = await S.importPrivate(root.pkcs8);
+  const strangerKey = await S.importPrivate(stranger.pkcs8);
+  // The server's side, stubbed: certify whatever public key arrives with the given root.
+  const issuer = (key, swap) => async (body) => {
+    const sent = swap ? (await S.generate()).publicKey : body.signing_key;
+    return { certificate: await S.certify(key, body.party, sent) };
+  };
+  const entry = await S.enroll("auditor", root.publicKey, issuer(rootKey));
+  const refused = async (post) => {
+    try { await S.enroll("auditor", root.publicKey, post); return false; } catch { return true; }
+  };
+  console.log(JSON.stringify({
+    root: root.publicKey,
+    signing_key: entry.publicKey,
+    certificate: S.certificateText(entry.certificate),
+    signature: await S.sign(entry.privateKey, digest),
+    private_key_extractable: entry.privateKey.extractable,
+    root_public_key: entry.rootPublicKey,
+    issued: entry.issued,
+    second_key_differs:
+      (await S.enroll("auditor", root.publicKey, issuer(rootKey))).publicKey !== entry.publicKey,
+    other_root_refused: await refused(issuer(strangerKey)),
+    swapped_key_refused: await refused(issuer(rootKey, true)),
+    error_reply_refused: await refused(async () => ({ error: "no" })),
+  }));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_browser_key_certified_by_the_server_is_one_the_box_accepts():
+    """First Sign with a server that holds the root: the page makes a non-extractable key,
+    sends the public half, and keeps it only if the certificate comes from the trusted root
+    and names that key. The box's own checker accepts the result."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    result = subprocess.run(
+        [node, "-e", ENROLL_PROBE, str(SIGN_JS), DIGEST], capture_output=True, text=True, timeout=60
+    )
+    if result.returncode != 0:
+        pytest.skip(f"node cannot run sign.js here: {result.stderr.strip()[-300:]}")
+    out = json.loads(result.stdout)
+    assert out["private_key_extractable"] is False and out["issued"] is True
+    assert out["root_public_key"] == out["root"] and out["second_key_differs"]
+    assert out["other_root_refused"] and out["swapped_key_refused"] and out["error_reply_refused"]
+    trust = {"auditor_key": out["root"], "lab_key": ROOT_KEY}
+    assert certified_key(json.loads(out["certificate"]), "auditor", trust) == out["signing_key"]
+    verify_signature(out["signing_key"], out["signature"], "plan-bundle", {"plan_digest": DIGEST})

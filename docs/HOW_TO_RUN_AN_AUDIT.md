@@ -6,7 +6,7 @@ This procedure uses the agreement UI against the live box. For the command-line 
 
 - You have a login. The lab account and the auditor account are different people.
 - The UI server holds the lab signing key in `AIAB_LAB_KEY` and its certificate in `AIAB_LAB_CERTIFICATE`. The server then signs each version as the lab.
-- The auditor can sign. On the prototype the UI server holds the auditor signing key in `AIAB_AUDITOR_KEY` and its certificate in `AIAB_AUDITOR_CERTIFICATE`, and Sign signs on the server. Without them, the auditor sets up signing in the browser first (see "Set up signing"). [THREAT_MODEL.md](THREAT_MODEL.md), "Prototype shortcut", says what this shortcut gives up.
+- The auditor can sign. On the prototype the UI server holds the auditor root in `AIAB_AUDITOR_ROOT_KEY`, and the first Sign in a browser makes that browser's key and has the server certify it. Without it, the auditor sets up signing in the browser first (see "Set up signing"). [THREAT_MODEL.md](THREAT_MODEL.md), "Prototype shortcut", says what this shortcut gives up.
 - The UI server holds `lab.token` and `logger.key` in `AIAB_DEMO_KEYS`. The box operator supplies them.
 - The release pins in the checkout match the release the box runs. If they do not, step 2 of the run refuses.
 - The Logs page shows at least one recorded session. Without a session, the run cannot start.

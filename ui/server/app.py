@@ -234,9 +234,12 @@ def render(request: Request, template: str, **context: Any) -> Response:
     context.setdefault("msg", request.query_params.get("msg"))
     context.setdefault("err", request.query_params.get("err"))
     context.setdefault("key_wait", _key_wait() if user_of(request) else None)
-    # Sign buttons sign on the server when it holds the person's party key (prototype).
+    # Sign buttons get the browser's key certified first when the server holds the party's
+    # root (prototype).
     who = user_of(request)
-    context.setdefault("server_signs", bool(who) and pv.server_signs(settings, who["party"]))
+    context.setdefault(
+        "server_certifies", bool(who) and pv.server_certifies(settings, who["party"])
+    )
     context.update(
         user=user_of(request),
         settings=settings,
@@ -1267,8 +1270,10 @@ async def sign(request: Request, aid: str) -> Response:
         keys=keys,
         copy=copy,
         auto_sign=bool(settings.lab_signing_key),
-        server_parties=[p for p in PARTIES if pv.server_signs(settings, p)],
-        server_problems={p: pv.server_problem(settings, p) for p in PARTIES},
+        issuer_parties=[p for p in PARTIES if pv.server_certifies(settings, p)],
+        server_problems={
+            p: pv.server_problem(settings, p) or pv.issuer_problem(settings, p) for p in PARTIES
+        },
         why=SIGN_WHY.get(request.query_params.get("why", "")),
     )
 
@@ -1301,32 +1306,27 @@ async def sign_upload(
     return back(_sign_next(aid, next), msg=f"{party} signature verified and stored.")
 
 
-@app.post("/a/{aid}/sign/server")
-async def sign_server(
-    request: Request,
-    aid: str,
-    party: Annotated[str, Form()],
-    digest: Annotated[str, Form()] = "",
-    next: Annotated[str, Form()] = "",
-) -> Response:
-    """Sign with the server's key for your party (prototype: AIAB_AUDITOR_KEY). `digest` is
-    the version the person confirmed; the server refuses if the plan has changed since."""
-    target, redirect = agreement(request, aid, write=True)
-    if redirect:
-        return redirect
+@app.post("/sign/certificate")
+async def sign_certificate(request: Request) -> Response:
+    """Certify the public key a logged-in member's browser just made, with the party root
+    this server holds (prototype: AIAB_AUDITOR_ROOT_KEY). JSON in and out; a form post from
+    another site cannot reach it (SameSite cookies, and a cross-site JSON post needs CORS)."""
     user = user_of(request)
-    here = f"/a/{aid}/sign"
-    if user is None or party != user["party"]:
-        return back(here, err="You can only sign as your own party.")
-    view, error = load_view(target)
-    if error or view is None or view.issue:
-        return back(here, err="The box would reject this plan; fix it before signing.")
-    status, detail = pv.sign_on_server(target, party, user, digest.strip())
+    if user is None:
+        return JSONResponse({"error": "Log in first."}, status_code=401)
+    if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+        return JSONResponse({"error": "Send JSON."}, status_code=415)
+    try:
+        body = await request.json()
+        party, signing_key = str(body["party"]), str(body["signing_key"])
+    except (ValueError, KeyError, TypeError):
+        return JSONResponse({"error": "Send party and signing_key."}, status_code=422)
+    if party != user["party"]:
+        return JSONResponse({"error": "Only your own party's key can be certified."}, 403)
+    status, result = pv.issue_certificate(settings, party, signing_key, user)
     if status != "ok":
-        return back(here, err=f"Not signed: {detail}")
-    editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
-    saved(user)
-    return back(_sign_next(aid, next), msg=f"Signed this version as the {party}.")
+        return JSONResponse({"error": result}, status_code=409)
+    return JSONResponse({"certificate": result})
 
 
 @app.post("/a/{aid}/sign/remove")
@@ -1361,12 +1361,12 @@ async def set_key(
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
         return back(here, err="You can only replace your own party's root key.")
-    if pv.server_signs(settings, party):
-        key_env, cert_env = pv.SERVER_KEY_ENV[party]
+    if pv.server_signs(settings, party) or pv.server_certifies(settings, party):
+        held = pv.SERVER_KEY_ENV.get(party) or (pv.ROOT_KEY_ENV[party],)
         return back(
             here,
-            err=f"This server signs as the {party} with a key the current root certified; a "
-            f"new root would stop that. Unset {key_env} and {cert_env} first.",
+            err=f"This server signs for the {party} under the current root; a new root would "
+            f"stop that. Unset {' and '.join(held)} first.",
         )
     public_key, problem = pv.normalize_public_key(public_key)
     if problem or public_key is None:
