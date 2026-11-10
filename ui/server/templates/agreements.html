@@ -19,14 +19,12 @@
 </div>
 
 <table class="table">
-  <thead><tr><th>Agreement</th><th>Version</th><th>State</th><th></th></tr></thead>
+  <thead><tr><th>Agreement</th><th>State</th><th></th></tr></thead>
   <tbody>
   {% for r in rows %}
   <tr>
-    <td><strong>{{ r.plan_id }}</strong><br>
-      <span class="text-muted">agreements/{{ r.id }}</span>
+    <td><strong>{{ r.plan_id }}</strong>{% if r.digest %} <code class="hash" title="{{ r.digest }}">{{ r.digest[7:15] }}</code>{% endif %}
       {% if r.editor %}<br><span class="text-muted" style="font-size: var(--text-xs)">{{ r.editor.user }} ({{ r.editor.party }}) is editing since {{ r.editor.since | hhmm }}</span>{% endif %}</td>
-    <td>{% if r.digest %}<code class="hash" title="{{ r.digest }}">{{ r.digest[7:15] }}</code>{% else %}—{% endif %}</td>
     {% set why = "fix the plan first" if (r.error or r.issue) else ("needs both signatures" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("being edited" if r.editor else ""))) %}
     <td class="state-icons">{% if r.error %}<span class="state-icon bad" title="{{ r.state }}: {{ r.error }}" aria-label="{{ r.state }}">{{ icon('alert') }}</span>
       {% else %}{% for party in ("lab", "auditor") %}{% set st = r.signatures.get(party, "missing") %}<span class="state-icon {{ {'ok': 'ok', 'invalid': 'bad'}.get(st, 'none') }}" title="{{ party | capitalize }}: {{ {'ok': 'signed this version', 'invalid': 'signature expired, sign this version again'}.get(st, 'not signed') }}" aria-label="{{ party }}: {{ st }}">{{ icon(party) }}</span>{% endfor %}{% endif %}
@@ -44,7 +42,7 @@
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="4" class="text-muted">No agreements yet. New agreement makes one from a minimal plan.</td></tr>
+  <tr><td colspan="3" class="text-muted">No agreements yet. New agreement makes one from a minimal plan.</td></tr>
   {% endfor %}
   </tbody>
 </table>
