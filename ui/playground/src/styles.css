@@ -55,76 +55,83 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .card-over:has(.insp--classifier) { border-left-color: var(--amber); }
 .card-over:has(.insp--run_llm) { border-left-color: var(--amber-ink); }
 
-/* ---- New block: a button on the diagram with the block kinds ---- */
-.newblock { position: absolute; top: 12px; left: 12px; z-index: 6; }
-/* While a block's card covers the diagram half, the button would sit on the card: hide it. */
+/* Data types: one colour and one shape each, used on ports, edges, the legend and type badges.
+   Shapes are angular (swiss.css allows no radius): square, hexagon, diamond, triangle. */
+.app { --t-LogRecords: var(--ink-2); --t-Items: var(--accent, #2F55D4); --t-Classifications: #B7861A; --t-Value: var(--ok, #2F6B2A); --t-Report: var(--ink-1); }
+.pshape { display: inline-block; flex: none; width: 10px; height: 10px; box-sizing: border-box; vertical-align: -1px; }
+.pshape--LogRecords { background: var(--t-LogRecords); }
+.pshape--Items { background: var(--t-Items); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); width: 12px; }
+.pshape--Classifications { background: var(--t-Classifications); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); width: 12px; height: 12px; }
+.pshape--Value { background: var(--t-Value); clip-path: polygon(0 0, 100% 0, 50% 100%); width: 12px; }
+.pshape--Report { background: var(--paper-1); border: 3px double var(--t-Report); }
+.pshape--unknown { border: 1.5px dashed var(--ink-3); }
+
+/* Block kinds: an icon in a coloured tile, on the blocks, the rail and the settings header. */
+.ktile { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; color: var(--paper-1); }
+.ktile .ic { width: 22px; height: 22px; }
+.ktile--sm { width: 26px; height: 26px; }
+.ktile--sm .ic { width: 16px; height: 16px; }
+.ktile--input_logs { background: var(--ink-2); }
+.ktile--classifier { background: var(--accent-tint, #EEF2FD); color: var(--accent-ink, #2444B0); box-shadow: inset 0 0 0 1.5px var(--accent, #2F55D4); }
+.ktile--run_python { background: var(--ink-1); }
+.ktile--run_llm { background: var(--accent, #2F55D4); }
+.ktile--final_report { background: var(--paper-1); color: var(--ink-1); outline: 3px double var(--ink-1); outline-offset: -4px; }
+.ic-strike { stroke: var(--destructive); }
+
+/* ---- block rail: one icon per block kind; click adds, drag places ---- */
+.newblock { position: absolute; top: 12px; left: 12px; z-index: 6; display: flex; flex-direction: column; gap: 4px; padding: 4px; background: var(--paper-1); border: var(--border-strong); }
+/* While a block's card covers the diagram half, the rail would sit on the card: hide it. */
 .graph:has(.card-over) .newblock { display: none; }
-.newblock-menu { position: absolute; top: 100%; left: 0; margin-top: 4px; min-width: 240px; display: flex; flex-direction: column; background: var(--paper-1); border: var(--border-ink); box-shadow: var(--shadow-offset); }
-.pal { display: flex; align-items: center; gap: 8px; text-align: left; padding: 9px 12px; border-left: 3px solid transparent; font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); }
-.pal:hover { background: var(--paper-2); }
+.newblock-item { display: block; padding: 3px; cursor: grab; line-height: 0; }
+.newblock-item:hover { background: var(--paper-2); }
+.newblock-item:active { cursor: grabbing; }
+.newblock-item:focus-visible { outline: 2px solid var(--amber); }
+.newblock-item .ktile { width: 32px; height: 32px; }
+.newblock-item .ktile .ic { width: 18px; height: 18px; }
 
-/* Per-type identity, shared by the New block menu and the cards: a coloured left bar and header. */
-.pal--input_logs, .pn--input_logs { border-left-color: var(--ink-3); }
-.pal--classifier, .pn--classifier { border-left-color: var(--amber); }
-.pal--run_python, .pn--run_python { border-left-color: var(--ink-1); }
-.pal--run_llm, .pn--run_llm { border-left-color: var(--amber-ink); border-left-style: dashed; }
-.pal--final_report, .pn--final_report { border-left-color: var(--ink-1); border-left-style: double; border-left-width: 5px; }
+.legend { position: absolute; right: 12px; bottom: 12px; z-index: 4; display: flex; gap: 12px; padding: 4px 8px; background: var(--paper-1); border: var(--border-hairline); font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); pointer-events: none; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
 
-/* ---- nodes ---- */
-/* Fixed line heights throughout the card: layout.ts predicts the height from the row count. */
-.pn { position: relative; width: 320px; background: var(--paper-1); border: 1px solid var(--rule-strong); border-left-width: 4px; padding: 8px 12px 0; font-size: var(--text-sm); }
+/* ---- blocks: fixed size (layout.ts NODE_W x NODE_H) ---- */
+.pn { position: relative; box-sizing: border-box; width: 280px; height: 64px; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 11px; background: var(--paper-1); border: 1px solid var(--rule-strong); font-size: var(--text-sm); }
 .pn.is-selected { border-color: var(--ink-1); box-shadow: 3px 3px 0 0 var(--ink-1); }
 .pn.has-error { border-color: var(--destructive); }
-/* Unfinished (nothing connected yet, no fields yet): dashed and quiet, not red. */
-.pn.is-unfinished { border-top-style: dashed; border-right-style: dashed; border-bottom-style: dashed; border-top-color: var(--ink-3); border-right-color: var(--ink-3); border-bottom-color: var(--ink-3); }
-.pn-head { display: flex; align-items: center; height: 16px; line-height: 16px; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); }
-.pn--classifier .pn-head { color: var(--amber-ink); }
-.pn-err { margin-left: auto; color: var(--paper-1); background: var(--destructive); font-weight: 600; padding: 0 5px; }
-.pn-hint { margin-left: auto; color: var(--ink-3); text-transform: none; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-glyph { font-family: var(--font-mono); }
-.pn-title { height: 24px; line-height: 24px; margin-top: 2px; font-size: 16px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-line { height: 18px; line-height: 18px; margin-top: 2px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn--run_python .pn-line { font-family: var(--font-mono); font-size: 12px; }
+.pn.is-unfinished { border-style: dashed; border-color: var(--ink-3); }
+.pn-body { min-width: 0; flex: 1; }
+.pn-title { font-size: 14px; font-weight: 600; line-height: 20px; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-chips { display: flex; align-items: center; gap: 10px; height: 18px; margin-top: 2px; font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); overflow: hidden; white-space: nowrap; }
+.pn-chip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.pn-chip .ic { width: 13px; height: 13px; flex: none; }
+.pn-chip--todo { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
+.pn-chip--err { color: var(--destructive); overflow: hidden; text-overflow: ellipsis; }
+.pn-dot { display: inline-block; width: 9px; height: 9px; border: 1px solid var(--ink-2); box-sizing: border-box; }
+.pn-dot.is-flag { background: var(--destructive); border-color: var(--destructive); }
 
-/* I/O footer: inputs on the left edge, the output on the right edge, one row each. */
-.pn-io { margin: 8px -12px 0 -12px; font-family: var(--font-mono); font-size: 11.5px; }
-.pn-ins { border-top: var(--border-hairline); padding: 2px 0; }
-.pn-out { border-top: var(--border-hairline); padding: 3px 0 5px; background: var(--paper-2); }
-.pn-row { position: relative; display: flex; align-items: center; gap: 8px; height: 24px; line-height: 24px; padding: 0 12px; white-space: nowrap; }
-.pn-row--out { padding-right: 14px; }
-.pn-port-name { color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; }
-.pn-row--out .pn-port-name { font-weight: 600; }
-.pn-port-type { color: var(--ink-3); }
-.pn-port-type.is-unbound { color: var(--ink-3); }
-.pn-row--none { color: var(--ink-3); }
-.pn-row--new { color: var(--ink-3); opacity: 0.45; }
-.pn:hover .pn-row--new, .pn-row--new:has(.connectingto) { opacity: 1; }
-.pn-shape { height: 18px; line-height: 18px; padding: 0 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-out--report .pn-shape { color: var(--ink-1); }
-
-/* Type badges: the same look on a node's output, on the inputs that read it and in the
-   inspector, so the two ends of an edge can be compared at a glance. The output badge is
-   filled: it is the thing to look for. A red input badge is a type the node does not accept. */
-.tbadge { display: inline-block; padding: 0 6px; height: 18px; line-height: 18px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--ink-1); color: var(--ink-1); background: var(--paper-1); white-space: nowrap; }
-.tbadge::before { display: inline-block; width: 1em; margin-right: 2px; font-weight: 400; }
-.tbadge--LogRecords::before { content: "▤"; }
-.tbadge--Items::before { content: "≡"; }
-.tbadge--Classifications::before { content: "◆"; }
-.tbadge--Value::before { content: "#"; }
-.tbadge--Report::before { content: "■"; }
+/* Type badges in the settings pane: the port shape, then the type name. */
+.tbadge { display: inline-flex; align-items: center; gap: 5px; padding: 0 6px; height: 18px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--rule-strong); color: var(--ink-1); background: var(--paper-1); white-space: nowrap; }
 .tbadge--unknown { border-style: dashed; color: var(--ink-3); }
-.pn-row--out .tbadge { background: var(--ink-1); color: var(--paper-1); }
-.pn-out--report .pn-row--out .tbadge { background: var(--paper-1); color: var(--ink-1); border-style: double; border-width: 3px; height: 18px; line-height: 12px; }
 .tbadge.is-bad { background: var(--destructive); border-color: var(--destructive); color: var(--paper-1); }
-.pn-handle.react-flow__handle { width: 9px; height: 9px; background: var(--paper-1); border: 1.5px solid var(--ink-2); }
-.pn-handle.react-flow__handle:hover, .react-flow__handle.connectingto, .react-flow__handle.connectionindicator.valid { background: var(--amber); border-color: var(--ink-1); }
-.pn-handle--new.react-flow__handle { border-style: dashed; }
+
+/* Ports: the handle is a transparent hit area; the shape inside it is the data type. */
+.pn-handle.react-flow__handle { width: 16px; height: 16px; display: grid; place-items: center; background: transparent; border: none; border-radius: 0; }
+.pn-handle .pshape { width: 12px; height: 12px; pointer-events: none; transition: transform 80ms; }
+.pn-handle .pshape--Classifications, .pn-handle .pshape--Value { width: 14px; height: 14px; }
+.pn-handle .pshape--unknown { background: var(--paper-1); }
+.pn-handle:hover .pshape, .react-flow__handle.connectingto .pshape, .react-flow__handle.connectionindicator.valid:hover .pshape { transform: scale(1.35); }
+.pn-handle--new { opacity: 0.5; }
+.pn:hover .pn-handle--new, .pn-handle--new.connectingto { opacity: 1; }
+.pn-handle.is-bad { outline: 2px solid var(--destructive); outline-offset: 0; }
 
 /* React Flow chrome in the house style */
 .react-flow svg { max-width: none; } /* swiss.css caps svg at 100%, which hides edges */
 .react-flow__node { border-radius: 0; }
-.react-flow__edge-path { stroke: var(--ink-3); stroke-width: 1.25; }
-.react-flow__edge.selected .react-flow__edge-path { stroke: var(--amber-ink); stroke-width: 2.5; }
+.react-flow__edge-path { stroke: var(--ink-3); stroke-width: 2.5; }
+.react-flow__edge.edge--LogRecords .react-flow__edge-path { stroke: var(--t-LogRecords); }
+.react-flow__edge.edge--Items .react-flow__edge-path { stroke: var(--t-Items); }
+.react-flow__edge.edge--Classifications .react-flow__edge-path { stroke: var(--t-Classifications); }
+.react-flow__edge.edge--Value .react-flow__edge-path { stroke: var(--t-Value); }
+.react-flow__edge.edge--unknown .react-flow__edge-path { stroke-dasharray: 4 4; }
+.react-flow__edge.selected .react-flow__edge-path { stroke-width: 5; }
 .react-flow__edge.is-invalid .react-flow__edge-path { stroke: var(--destructive); stroke-dasharray: 6 4; }
 .react-flow__edge-text { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-1); }
 .react-flow__edge.is-invalid .react-flow__edge-text { fill: var(--destructive); }
