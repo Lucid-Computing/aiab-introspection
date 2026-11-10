@@ -1,6 +1,7 @@
-/* The Sign screen in a real browser: make a key, have production trust it (by writing the
-   fixture's trust file), sign, see the signature stored; then forget the key and bring it
-   back from the backup file. Requires Playwright and Chrome; sign_server.py must be running. */
+/* NOT UPDATED for Set up signing (MAC-432 follow-up): this manual Playwright script still
+   drives the earlier make-key and register-certificate flow and will fail on the current
+   Sign page. The setup, key-file and continue flows are covered under Node by
+   ui/tests/test_browser_signing.py, and were checked by hand on a Render preview. */
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -41,15 +42,26 @@ const dir = process.env.SIGN_TEST_DIR || '/tmp/aiab-sign-browser-test';
     assert.equal(publicKey, backup.public_key);
     assert.match(publicKey, /^[A-Za-z0-9+/]{43}=$/);
     assert(await box.locator('.browser-sign').isDisabled());
-    assert(await box.locator('.browser-key-submit').isVisible());
+    assert(await box.locator('.browser-certify-block').isVisible());
 
-    // Production trusts it (the fixture's trust file stands in for GitHub), so Sign works.
+    // A lab root production trusts (the fixture's trust file stands in for GitHub)
+    // certifies the browser's key; the certificate is registered, so Sign works.
+    const {subtle} = require('node:crypto').webcrypto;
+    const root = await subtle.generateKey({name: 'Ed25519'}, true, ['sign', 'verify']);
+    const rootKey = Buffer.from(await subtle.exportKey('raw', root.publicKey)).toString('base64');
+    const statement = '{"role":"lab","signing_key":"' + publicKey + '"}';
+    const certSig = Buffer.from(await subtle.sign({name: 'Ed25519'}, root.privateKey,
+      Buffer.from('AIAB/signing-key/v1\u0000' + statement))).toString('base64');
+    const certificate = '{"role":"lab","signature":"' + certSig + '","signing_key":"' + publicKey + '"}';
     const trustPath = path.join(dir, 'trust.json');
     const trust = JSON.parse(fs.readFileSync(trustPath, 'utf8'));
-    trust.lab_key = publicKey;
+    trust.lab_key = rootKey;
     fs.writeFileSync(trustPath, JSON.stringify(trust, null, 2) + '\n');
     await page.reload();
     await box.locator('[data-state="ready"]').waitFor({state: 'visible'});
+    await box.locator('#register-cert-lab').fill(certificate);
+    await box.getByRole('button', {name: 'Register the certificate', exact: true}).click();
+    await box.locator('.browser-key-verdict.ok').waitFor({state: 'visible'});
     assert(await box.locator('.browser-sign').isEnabled());
     await box.locator('.browser-sign').click();
     const dialog = page.locator('#confirm[open]');

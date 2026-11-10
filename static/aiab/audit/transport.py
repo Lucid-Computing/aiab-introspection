@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 
 from tinfoil import SecureClient
@@ -19,7 +20,10 @@ class FixedClient(SecureClient):
 
 
 class PinnedConnection:
-    def __init__(self, host: str, repo: str, release_digest: str):
+    """Attested TLS to one host. ``release_digest`` pins the exact measured release; None
+    accepts the repository's current release, as verified by the SDK through Sigstore."""
+
+    def __init__(self, host: str, repo: str, release_digest: str | None):
         self.host, self.repo, self.release_digest = host, repo, release_digest
         self.secure = None
         self.client = None
@@ -55,7 +59,11 @@ class PinnedConnection:
                 or doc.config_repo != self.repo
                 or doc.enclave_host != self.host
                 or self.secure.enclave != self.host
-                or "sha256:" + doc.release_digest != self.release_digest
+                or not re.fullmatch(r"[0-9a-f]{64}", doc.release_digest or "")
+                or (
+                    self.release_digest is not None
+                    and "sha256:" + doc.release_digest != self.release_digest
+                )
             ):
                 raise ValueError
             for name in ("fetch_digest", "verify_code", "verify_enclave", "compare_measurements"):
@@ -95,6 +103,7 @@ class PinnedConnection:
             ) as response:
                 if 300 <= response.status_code < 400:
                     raise AuditError("model_unavailable", 503)
+                self.check_response(response)
                 result = bytearray()
                 async for chunk in response.aiter_bytes():
                     result.extend(chunk)
@@ -106,6 +115,44 @@ class PinnedConnection:
             self.failed = True
             raise AuditError("model_unavailable", 503) from None
 
+    def check_response(self, response):
+        """Further checks on a response's headers before its body is read."""
+
+    @property
+    def release(self) -> str | None:
+        """The attested release digest, once verified."""
+        doc = self.secure.get_verification_document() if self.secure is not None else None
+        return "sha256:" + doc.release_digest if doc is not None and doc.release_digest else None
+
     async def close(self):
         if self.client is not None:
             await self.client.aclose()
+
+
+ROUTER_REPO = "tinfoilsh/confidential-model-router"
+ENCLAVE_HEADER = "tinfoil-enclave"
+
+
+class RoutedConnection(PinnedConnection):
+    """Attested TLS to Tinfoil's model router, which forwards each request to an enclave
+    serving the named model and verifies that enclave itself.
+
+    The router's code is its repository's current release (Sigstore-verified by the SDK);
+    the router publishes releases every few days, so no single digest is pinned. The box
+    cannot attest the model enclave behind it: it checks that the router names, for every
+    answer, an enclave of the expected model, and records which enclaves served it.
+    """
+
+    def __init__(self, host: str, model_id: str):
+        super().__init__(host, ROUTER_REPO, None)
+        self.enclave = re.compile(
+            re.escape(model_id) + r"-[a-z0-9-]+\.tinfoil\.containers\.tinfoil\.dev"
+        )
+        self.served: set[str] = set()
+
+    def check_response(self, response):
+        enclave = response.headers.get(ENCLAVE_HEADER, "")
+        if response.status_code == 200 and not self.enclave.fullmatch(enclave):
+            raise AuditError("model_unavailable", 503)
+        if enclave and self.enclave.fullmatch(enclave):
+            self.served.add(enclave)

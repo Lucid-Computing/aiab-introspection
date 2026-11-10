@@ -16,7 +16,7 @@ import uvicorn
 from server import app as web
 from server import plan_chat
 from server.auth import Account, hash_password, save_account
-from server.config import load_settings
+from server.config import load_settings, log_sources_from_env
 
 
 def node(plan, node_id):
@@ -91,7 +91,7 @@ def main():
             accounts_file=root / "accounts.json",
             push_drafts=False,
             anthropic_api_key="browser-test-only-key",
-            proxy_key=None,
+            log_sources=log_sources_from_env({}),
         )
         save_account(
             web.settings.accounts_file,

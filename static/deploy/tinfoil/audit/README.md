@@ -1,15 +1,16 @@
 # Dev audit service
 
-Current release: **v0.0.11**. The exact image, plan, release and policy digests are
-in [release.json](release.json). The measured config, trust and manifest alongside
-it match that release in the public
-[config repository](https://github.com/Lucid-Computing/aiab-tinfoil-staging-config/tree/v0.0.11).
+The current release (tag, image, plan, release and policy digests) is in
+[release.json](release.json). A push to `dev` that changes `static/` releases a new
+tag automatically (`.github/workflows/release.yml`), and that workflow commits the
+new pins here. The measured config, trust and manifest alongside match that tag in
+the public [config repository](https://github.com/Lucid-Computing/aiab-tinfoil-staging-config).
 
 - Endpoint: https://aiab-dev.lucid-computing.containers.tinfoil.dev
 - Health: https://aiab-dev.lucid-computing.containers.tinfoil.dev/aiab/health
 - Instance: `2f4ec6c2-ba3a-4ba4-bd46-bd1afe8a7ee1`, name `aiab-dev`.
-- Resources: two CPU cores, 8 GiB VM memory, no local GPU; separate attested
-  `gpt-oss-safeguard-120b` inference. CPU host uses AMD SEV-SNP.
+- Resources: two CPU cores, 8 GiB VM memory, no local GPU. CPU host uses AMD SEV-SNP.
+- Model: `gpt-oss-safeguard-120b` through Tinfoil's attested router (see below).
 - Measured application: `python -m aiab.baked.main`; no SSH/debug interface.
   Root filesystem read-only, tmpfs scratch. Plan subprocesses have a syscall
   allowlist, resource limits and no credentials or service sockets.
@@ -36,18 +37,24 @@ verified memory wipe, UI, agents and appeals are not claimed by this deployment.
 
 ## CVM security updates
 
-**Readiness blocked (2026-11-06):** the CVM is running and CLI attestation against
-v0.0.11 succeeds, but application endpoints return HTTP 502 after restart. The
-baked model dependency `gpt-oss-safeguard-120b-inf12.tinfoil.containers.tinfoil.dev`
-no longer resolves. Tinfoil's [inventory](https://atc.tinfoil.sh/inventory) lists
-`gpt-oss-safeguard-120b-inf7.tinfoil.containers.tinfoil.dev`; its
-[status](https://atc.tinfoil.sh/status) identifies model release v0.0.11, while
-GitHub's latest-release endpoint still selects v0.0.10. Direct attestation and
-health requests to the replacement host timed out from the development machine.
-The original model pin is retained. Recovery requires a reachable, independently
-verified model endpoint/release and, if replacing the baked binding, a rebuilt
-application and updated trust/policy pins. The CVM update is not a successful
-application-readiness verification.
+**Model access (since v0.0.13, 2026-11-09).** Tinfoil retired the model host the box
+pinned (`gpt-oss-safeguard-120b-inf12…`, model release v0.0.10). Its replacement
+(`…-inf7…`) refuses outside connections, and it serves model release v0.0.11 while
+the model repository's GitHub "latest" release is still v0.0.10, so it cannot be
+attested directly. From 2026-11-06 to 2026-11-09 the box therefore failed at start-up
+and returned HTTP 502.
+
+The box now attests Tinfoil's router, `inference.tinfoil.sh`
+(`tinfoilsh/confidential-model-router`), at its current Sigstore-verified release.
+No router digest is pinned, because the router releases every few days. When the
+router's TLS key changes, the box attests it again once and resends. The router
+verifies the model enclave; the box does not. The box checks that every answer names
+an enclave of `gpt-oss-safeguard-120b` (`tinfoil-enclave` header), and
+`/aiab/health` reports the attested router release and the enclaves that answered
+(`model_route`). The model binding in `static/aiab/audit/model.py` is release v0.0.11,
+which loads the same modelwrap root as v0.0.10. The router has no `/tokenize`, so the
+context check is a byte-based upper bound that refuses a prompt rather than truncating
+it. See PR #49.
 
 Dev was updated on 2026-11-06 from CVM 0.14.9 to **0.14.17**, retaining the
 application image and trust policy. This release includes the

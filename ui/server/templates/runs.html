@@ -109,12 +109,13 @@
 
   {% if runs %}
   <table class="table">
-    <thead><tr><th>Started</th><th>Agreement and input</th><th>By</th><th>State</th><th></th></tr></thead>
+    <thead><tr><th>Started</th><th>Agreement and input</th><th>Plan version</th><th>By</th><th>State</th><th></th></tr></thead>
     <tbody>
     {% for r in runs %}
     <tr>
       <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
       <td class="mono">{{ r.transcript }}</td>
+      <td>{% if r.plan and r.plan.digest %}<a class="link mono" href="/runs/{{ r.id }}/plan">{{ r.plan.digest[7:19] }}…</a><br><span class="text-muted">{{ "signed by both" if r.plan.signed else "signatures not verified" }}</span>{% else %}<span class="text-muted">not recorded</span>{% endif %}</td>
       <td>{{ r.by.user }} <span class="badge {% if r.by.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ r.by.party }}</span></td>
       <td>{{ r.outcome.title }}{% if r.outcome.verified %}<br><span class="text-muted">Report verified</span>{% endif %}</td>
       <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>

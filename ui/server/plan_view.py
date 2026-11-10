@@ -16,7 +16,18 @@ from pathlib import Path
 from typing import Any
 
 from aiab.audit.protocol import AuditError, canonical, decode, sign_bytes, verify_signature
-from aiab.baked.bundle import PLAN_FILE, bundle_files, file_digest, load_bundle, restrictions
+from aiab.baked.bundle import (
+    PLAN_FILE,
+    bundle_files,
+    certified_key,
+    certified_keys,
+    file_digest,
+    key_bytes,
+    load_bundle,
+    make_certificate,
+    restrictions,
+    write_certificate,
+)
 from aiab.baked.plan_ir import PLAN_VERSION, PlanError, output_port
 
 from server.config import Settings
@@ -168,17 +179,31 @@ def load_plan_view(settings: Settings) -> PlanView:
             signatures[role] = {"present": False, "status": "missing", "detail": "not uploaded"}
             continue
         text = path.read_text(encoding="utf-8").strip()
+        certificate, signing_key = read_certificate(plan_dir / "signatures" / f"{role}.cert")
         try:
-            verify_signature(
-                trust[f"{role}_key"], text, "plan-bundle", {"plan_digest": plan_digest}
-            )
+            if certificate is None:
+                raise AuditError("invalid_certificate")
+            signing_key = certified_key(certificate, role, trust)
+            verify_signature(signing_key, text, "plan-bundle", {"plan_digest": plan_digest})
             entry = {"status": "ok", "detail": "verifies for the current plan digest"}
         except (AuditError, ValueError, KeyError):
             entry = {
                 "status": "invalid",
-                "detail": "does not verify for the current digest (stale edit or wrong key)",
+                "detail": "does not verify for the current digest with a key the "
+                f"{role} root certifies (stale edit, wrong key or missing certificate)",
             }
-        signatures[role] = {"present": True, "signature": text, **entry}
+        signatures[role] = {
+            "present": True,
+            "signature": text,
+            "signing_key": signing_key,
+            **entry,
+        }
+    # The box refuses one signing key for both parties (certified_keys); so does this view.
+    if all(s["status"] == "ok" for s in signatures.values()) and len(
+        {key_bytes(s["signing_key"]) for s in signatures.values()}
+    ) < len(PARTIES):
+        for entry in signatures.values():
+            entry["status"], entry["detail"] = "invalid", "the same signing key for both parties"
     # With a lab key on the server, the lab signature is the server's own and never
     # freezes the plan: the server signs the next version again. Only the auditor's does.
     auto = lab_auto_key(settings) is not None
@@ -344,10 +369,36 @@ def save_plan(
     return file_digest({PLAN_FILE: raw}), []
 
 
+def read_certificate(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """A stored certificate and the key it names, or (None, None) when there is none or it
+    is not JSON. Whether the root signed it is the verifier's question, not this one."""
+    if not path.is_file() or path.stat().st_size > 1024:
+        return None, None
+    try:
+        certificate = decode(path.read_bytes())
+    except AuditError:
+        return None, None
+    key = certificate.get("signing_key") if isinstance(certificate, dict) else None
+    return certificate, key if isinstance(key, str) else None
+
+
+def parse_certificate(text: str) -> dict[str, Any] | None:
+    """The certificate as pasted or sent by the browser: one JSON object."""
+    text = text.strip()
+    if not text or len(text) > 1024:
+        return None
+    try:
+        certificate = decode(text.encode("utf-8"))
+    except (AuditError, UnicodeEncodeError):
+        return None
+    return certificate if isinstance(certificate, dict) else None
+
+
 def write_signature(
-    settings: Settings, role: str, content: bytes, actor: dict[str, str]
+    settings: Settings, role: str, content: bytes, actor: dict[str, str], certificate: str = ""
 ) -> tuple[str, str]:
-    """Verify an uploaded signature file against the pinned key, then store it."""
+    """Verify an uploaded signature against the key the party's root certifies, then store
+    the signature and the certificate together (``<role>.sig`` and ``<role>.cert``)."""
     try:
         # Joined, not just stripped: Linux base64 wraps long output at 76 columns.
         text = "".join(content.decode("ascii").split())
@@ -355,27 +406,72 @@ def write_signature(
         return "invalid", "that is not a base64 signature"
     if not text or len(text) > 256:
         return "invalid", "expected the base64 line the sign command printed"
+    parsed = parse_certificate(certificate)
+    if parsed is None:
+        return "invalid", (
+            "no certificate: paste the JSON line your root made for this signing key"
+            " (sign_digest.py certify)"
+        )
     plan_digest = file_digest(bundle_files(settings.plan_dir))
     trust = load_trust(settings)
     try:
-        verify_signature(trust[f"{role}_key"], text, "plan-bundle", {"plan_digest": plan_digest})
+        signing_key = certified_key(parsed, role, trust)
     except (AuditError, ValueError, KeyError):
-        return "invalid", "does not verify for the current plan digest with the pinned key"
+        return "invalid", (
+            f"the certificate is not one the {role} root production trusts made for this"
+            " role, or it names the root itself"
+        )
+    try:
+        verify_signature(signing_key, text, "plan-bundle", {"plan_digest": plan_digest})
+    except (AuditError, ValueError, KeyError):
+        return "invalid", "does not verify for the current plan digest with the certified key"
+    for other in PARTIES:
+        if other == role:
+            continue
+        stored, _ = read_certificate(settings.plan_dir / "signatures" / f"{other}.cert")
+        if stored is None:
+            continue
+        try:
+            certified_keys({role: parsed, other: stored}, trust)
+        except (AuditError, KeyError):
+            # Only a valid certificate of the other party can collide; an invalid one is
+            # that party's problem and shows on its card.
+            try:
+                certified_key(stored, other, trust)
+            except (AuditError, KeyError):
+                continue
+            return (
+                "invalid",
+                f"this signing key is already the {other}'s; the parties' keys must differ",
+            )
     target = settings.plan_dir / "signatures" / f"{role}.sig"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text + "\n", encoding="utf-8")
+    write_certificate(target.with_suffix(".cert"), parsed)
     record_change(
-        settings, actor, "signature", f"signature: {role}", f"signed version {plan_digest[7:19]}"
+        settings,
+        actor,
+        "signature",
+        f"signature: {role}",
+        f"signed version {plan_digest[7:19]} with certified key {signing_key[:12]}…",
     )
-    return "ok", "verified against the pinned key and stored"
+    return "ok", "verified against the certified key and stored"
+
+
+def _unlink_signature(folder: Path, role: str) -> bool:
+    """Both files of a party's signature; True when the signature itself was there."""
+    path = folder / "signatures" / f"{role}.sig"
+    present = path.is_file()
+    for file in (path, path.with_suffix(".cert")):
+        if file.is_file():
+            file.unlink()
+    return present
 
 
 def remove_signature(settings: Settings, role: str, actor: dict[str, str]) -> bool:
     """Drop one party's signature so that party can sign this same version again."""
-    path = settings.plan_dir / "signatures" / f"{role}.sig"
-    if not path.exists():
+    if not _unlink_signature(settings.plan_dir, role):
         return False
-    path.unlink()
     record_change(settings, actor, "signature", f"signature: {role}", "removed to sign again")
     return True
 
@@ -383,9 +479,7 @@ def remove_signature(settings: Settings, role: str, actor: dict[str, str]) -> bo
 def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -> int:
     removed = 0
     for role in PARTIES:
-        path = settings.plan_dir / "signatures" / f"{role}.sig"
-        if path.is_file():
-            path.unlink()
+        if _unlink_signature(settings.plan_dir, role):
             removed += 1
     if removed and actor:
         record_change(
@@ -396,68 +490,221 @@ def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -
 
 AUTO_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for auto-signing
 
+# Prototype shortcut: the server may hold the lab's certified signing key and sign every
+# version as the lab (AIAB_LAB_KEY), and the auditor's root and certify each auditor's
+# browser key (AIAB_AUDITOR_ROOT_KEY). Whoever controls the server can then sign as both
+# parties. THREAT_MODEL.md, "Prototype shortcut", lists what changes for the real version.
+SERVER_KEY_ENV = {"lab": ("AIAB_LAB_KEY", "AIAB_LAB_CERTIFICATE")}
+ROOT_KEY_ENV = {"auditor": "AIAB_AUDITOR_ROOT_KEY"}
 
-def lab_auto_key(settings: Settings) -> Any | None:
-    """The private key the server signs with as the lab, or None when AIAB_LAB_KEY is unset
+
+def _server_secrets(settings: Settings, party: str) -> tuple[str | None, str | None]:
+    if party == "lab":
+        return settings.lab_signing_key, settings.lab_signing_certificate
+    return None, None
+
+
+def server_key(settings: Settings, party: str) -> Any | None:
+    """The private key the server signs with as `party`, or None when its variable is unset
     or not a key."""
-    if not settings.lab_signing_key:
-        return None
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    try:
-        return Ed25519PrivateKey.from_private_bytes(
-            base64.b64decode(settings.lab_signing_key, validate=True)
-        )
-    except (ValueError, TypeError):
-        return None
+    return _private_key(_server_secrets(settings, party)[0])
 
 
-def lab_auto_public_key(settings: Settings) -> str | None:
-    key = lab_auto_key(settings)
+def server_public_key(settings: Settings, party: str) -> str | None:
+    key = server_key(settings, party)
     if key is None:
         return None
     return base64.b64encode(key.public_key().public_bytes_raw()).decode()
 
 
-def lab_auto_problem(settings: Settings) -> str | None:
-    """Why the server cannot sign as the lab right now: no key, a malformed key, or a key
-    production does not trust. None when it can."""
-    if not settings.lab_signing_key:
+def server_certificate(settings: Settings, party: str) -> dict[str, Any] | None:
+    """The certificate the party's root gave the server's signing key, or None when unset
+    or not JSON."""
+    _, text = _server_secrets(settings, party)
+    if not text:
         return None
-    public = lab_auto_public_key(settings)
+    return parse_certificate(text)
+
+
+def server_problem(settings: Settings, party: str) -> str | None:
+    """Why the server cannot sign as `party` right now: a malformed key, no certificate, or
+    a certificate the party's root on production did not make for this key. None when it
+    can, and None when it holds no key for the party (nothing to fix)."""
+    raw, _ = _server_secrets(settings, party)
+    if not raw:
+        return None
+    key_env, cert_env = SERVER_KEY_ENV[party]
+    public = server_public_key(settings, party)
     if public is None:
-        return "AIAB_LAB_KEY is not a base64 Ed25519 private key"
-    trusted = load_trust(settings).get("lab_key")
-    if public != trusted:
-        return f"the server's lab key ({public}) is not the lab key production trusts"
+        return f"{key_env} is not a base64 Ed25519 private key"
+    certificate = server_certificate(settings, party)
+    if certificate is None:
+        return f"{cert_env} is not set, or is not the JSON line sign_digest.py certify printed"
+    try:
+        certified = certified_key(certificate, party, load_trust(settings))
+    except (AuditError, KeyError):
+        return f"{cert_env} was not made by the {party} root production trusts"
+    if certified != public:
+        return f"{cert_env} certifies another key, not the server's {party} key ({public})"
     return None
+
+
+def server_signs(settings: Settings, party: str) -> bool:
+    """The server holds a working signing key for `party`."""
+    return server_key(settings, party) is not None and server_problem(settings, party) is None
+
+
+def _server_signature_current(settings: Settings, party: str, plan_digest: str) -> bool:
+    """The stored signature is the server's, for this version, under the current root."""
+    target = settings.plan_dir / "signatures" / f"{party}.sig"
+    if not target.is_file():
+        return False
+    try:
+        stored, _ = read_certificate(target.with_suffix(".cert"))
+        # The stored certificate must be the current root's, for this key: after a root
+        # rotation the signature is re-made with the new certificate.
+        public = server_public_key(settings, party)
+        if stored is None or certified_key(stored, party, load_trust(settings)) != public:
+            raise AuditError("invalid_certificate")
+        verify_signature(
+            public,
+            target.read_text(encoding="utf-8").strip(),
+            "plan-bundle",
+            {"plan_digest": plan_digest},
+        )
+        return True
+    except (AuditError, ValueError, KeyError):
+        return False
+
+
+def _write_server_signature(settings: Settings, party: str, plan_digest: str) -> None:
+    key = server_key(settings, party)
+    signature = base64.b64encode(
+        key.sign(sign_bytes("plan-bundle", {"plan_digest": plan_digest}))
+    ).decode()
+    target = settings.plan_dir / "signatures" / f"{party}.sig"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(signature + "\n", encoding="utf-8")
+    write_certificate(target.with_suffix(".cert"), server_certificate(settings, party))
+
+
+def _private_key(raw: str | None) -> Any | None:
+    if not raw:
+        return None
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    try:
+        return Ed25519PrivateKey.from_private_bytes(base64.b64decode(raw, validate=True))
+    except (ValueError, TypeError):
+        return None
+
+
+def issuer_root(settings: Settings, party: str) -> Any | None:
+    """The party's root private key, when this server holds it to certify browser keys."""
+    return _private_key(settings.auditor_root_key if party == "auditor" else None)
+
+
+def issuer_problem(settings: Settings, party: str) -> str | None:
+    """Why the server cannot certify keys for `party`: a malformed root, or not the root
+    production trusts. None when it can, or when it holds no root for the party."""
+    raw = settings.auditor_root_key if party == "auditor" else None
+    if not raw:
+        return None
+    root = issuer_root(settings, party)
+    if root is None:
+        return f"{ROOT_KEY_ENV[party]} is not a base64 Ed25519 private key"
+    public = root.public_key().public_bytes_raw()
+    try:
+        trusted = key_bytes(load_trust(settings).get(f"{party}_key", ""))
+    except AuditError:
+        trusted = b""
+    if public != trusted:
+        shown = base64.b64encode(public).decode()
+        return f"{ROOT_KEY_ENV[party]} ({shown[:8]}…) is not the {party} root production trusts"
+    return None
+
+
+def server_certifies(settings: Settings, party: str) -> bool:
+    """The server holds the party's trusted root and certifies its members' browser keys."""
+    return issuer_root(settings, party) is not None and issuer_problem(settings, party) is None
+
+
+def issued_log(settings: Settings) -> Path:
+    """Every certificate the server made, one JSON line each, next to the accounts."""
+    return settings.accounts_file.parent / "issued-certificates.jsonl"
+
+
+def issue_certificate(
+    settings: Settings, party: str, signing_key: str, actor: dict[str, str]
+) -> tuple[str, Any]:
+    """Certify the public key a logged-in member's browser made. Returns ("ok", the
+    certificate) or ("error", why). Refuses a root, the lab's server key and anything that
+    is not a canonical 32-byte key; records every certificate it makes."""
+    if not server_certifies(settings, party):
+        return "error", issuer_problem(settings, party) or f"this server holds no {party} root"
+    try:
+        raw = key_bytes(signing_key)
+    except AuditError:
+        return "error", "not an Ed25519 public key (base64 of 32 bytes)"
+    trust = load_trust(settings)
+    taken = set()
+    for role in PARTIES:
+        try:
+            taken.add(key_bytes(trust.get(f"{role}_key", "")))
+        except AuditError:
+            pass
+    lab = server_public_key(settings, "lab")
+    if lab:
+        taken.add(base64.b64decode(lab))
+    if raw in taken:
+        return "error", "that key is a root or the lab's key"
+    certificate = make_certificate(issuer_root(settings, party), party, signing_key)
+    if certified_key(certificate, party, trust) != signing_key:  # what the box will check
+        return "error", "the certificate does not verify against the trusted root"
+    from datetime import UTC, datetime
+
+    record = {
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "party": party,
+        # The login as the session carries it: for WorkOS the username is the email's
+        # local part, so two organizations' "alex" look alike here.
+        "username": actor.get("username", ""),
+        "display_name": actor.get("display_name", ""),
+        "signing_key": signing_key,
+    }
+    log = issued_log(settings)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a", encoding="utf-8") as out:
+        out.write(json.dumps(record, sort_keys=True) + "\n")
+    return "ok", certificate
+
+
+# The lab's key signs by itself; these names are the lab's view of the functions above.
+def lab_auto_key(settings: Settings) -> Any | None:
+    return server_key(settings, "lab")
+
+
+def lab_auto_public_key(settings: Settings) -> str | None:
+    return server_public_key(settings, "lab")
+
+
+def lab_auto_certificate(settings: Settings) -> dict[str, Any] | None:
+    return server_certificate(settings, "lab")
+
+
+def lab_auto_problem(settings: Settings) -> str | None:
+    return server_problem(settings, "lab")
 
 
 def ensure_lab_signature(settings: Settings, actor: dict[str, str] | None = None) -> bool:
     """Sign the current version as the lab with the server's key, unless there is no key, it
     is not the trusted one, or a valid lab signature is already there. True when it signed."""
-    key = lab_auto_key(settings)
-    if key is None or lab_auto_problem(settings) is not None:
+    if not server_signs(settings, "lab"):
         return False
     plan_digest = file_digest(bundle_files(settings.plan_dir))
-    trust = load_trust(settings)
-    target = settings.plan_dir / "signatures" / "lab.sig"
-    if target.is_file():
-        try:
-            verify_signature(
-                trust["lab_key"],
-                target.read_text(encoding="utf-8").strip(),
-                "plan-bundle",
-                {"plan_digest": plan_digest},
-            )
-            return False
-        except (AuditError, ValueError, KeyError):
-            pass
-    signature = base64.b64encode(
-        key.sign(sign_bytes("plan-bundle", {"plan_digest": plan_digest}))
-    ).decode()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(signature + "\n", encoding="utf-8")
+    if _server_signature_current(settings, "lab", plan_digest):
+        return False
+    _write_server_signature(settings, "lab", plan_digest)
     who = f" after a change by {actor['username']}" if actor and actor.get("username") else ""
     record_change(
         settings,
@@ -583,6 +830,8 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "digest": view.digest,
                     "state": view.state,
                     "signed": view.signed_by_both,
+                    "signatures": {r: s["status"] for r, s in view.signatures.items()},
+                    "public_keys": view.public_keys,
                     "error": None,
                     "issue": view.issue,
                 }
@@ -596,6 +845,8 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "digest": None,
                     "state": f"does not load: {type(exc).__name__}",
                     "signed": False,
+                    "signatures": {},
+                    "public_keys": {},
                     "error": str(exc),
                     "issue": None,
                 }

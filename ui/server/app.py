@@ -8,6 +8,7 @@ import re
 import secrets
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -233,6 +234,12 @@ def render(request: Request, template: str, **context: Any) -> Response:
     context.setdefault("msg", request.query_params.get("msg"))
     context.setdefault("err", request.query_params.get("err"))
     context.setdefault("key_wait", _key_wait() if user_of(request) else None)
+    # Sign buttons get the browser's key certified first when the server holds the party's
+    # root (prototype).
+    who = user_of(request)
+    context.setdefault(
+        "server_certifies", bool(who) and pv.server_certifies(settings, who["party"])
+    )
     context.update(
         user=user_of(request),
         settings=settings,
@@ -893,7 +900,11 @@ async def runs_start(request: Request) -> Response:
         run_id = runs.start_run(settings, user, chosen, target.plan_dir, records, label=label)
     except (ValueError, OSError) as exc:
         return back(here, err=str(exc))
-    pv.record_change(target, user, "run", "run", f"run {run_id} started ({len(records)} records)")
+    sent = (runs.load_run(settings, run_id) or {}).get("plan") or {}
+    version = f", version {sent['digest'][7:19]}" if sent.get("digest") else ""
+    pv.record_change(
+        target, user, "run", "run", f"run {run_id} started ({len(records)} records{version})"
+    )
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
 
@@ -905,6 +916,30 @@ async def run_page(request: Request, run_id: str) -> Response:
     if state is None:
         return back("/runs", err="No such run.")
     return render(request, "run.html", run=state)
+
+
+@app.get("/runs/{run_id}/plan")
+async def run_plan(request: Request, run_id: str) -> Response:
+    """The plan version a run sent, read only: the frozen copy in the run folder, not the
+    agreement as it is now."""
+    if user_of(request) is None:
+        return to_login(request)
+    state = runs.load_run(settings, run_id)
+    if state is None:
+        return back("/runs", err="No such run.")
+    view, error = load_view(replace(settings, plan_dir=settings.runs_dir / run_id / "plan"))
+    return render(
+        request,
+        "plan.html",
+        editor=None,
+        view=view,
+        error=error,
+        edit=False,
+        base=f"/a/{state['agreement']}",
+        aid=state["agreement"],
+        changes={},
+        snapshot=state,
+    )
 
 
 @app.get("/attest")
@@ -1190,6 +1225,30 @@ async def plan_bundle(request: Request, aid: str) -> Response:
     )
 
 
+def _sign_next(aid: str, next_path: str) -> str:
+    """Where a signature action returns to: the page the Sign button was on, if it names
+    one on this site, else the Sign screen."""
+    if next_path.startswith("/") and not next_path.startswith("//"):
+        return next_path
+    return f"/a/{aid}/sign"
+
+
+# What the Sign button found missing in the browser before it sent someone here.
+SIGN_WHY = {
+    "unsupported": "This browser cannot sign: it cannot make Ed25519 keys (needs Safari 17, "
+    "Firefox 130 or Chrome 137, or newer). Use the commands under Other ways to sign and paste "
+    "the signature below.",
+    "none": "Signing is not set up in this browser yet. Set it up below, once. After that, "
+    "Sign on the plan signs straight away.",
+    "waiting": "The box does not trust your key yet. Submit it below if you have not; Sign "
+    "works once the release is done.",
+    "old": "This browser has your key from before root keys. Continue with it below, then "
+    "Sign on the plan signs straight away.",
+    "stale": "This browser's key is not one the box trusts. Set up signing again below, or "
+    "use your key file.",
+}
+
+
 @app.get("/a/{aid}/sign")
 async def sign(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
@@ -1211,7 +1270,11 @@ async def sign(request: Request, aid: str) -> Response:
         keys=keys,
         copy=copy,
         auto_sign=bool(settings.lab_signing_key),
-        auto_problem=pv.lab_auto_problem(settings),
+        issuer_parties=[p for p in PARTIES if pv.server_certifies(settings, p)],
+        server_problems={
+            p: pv.server_problem(settings, p) or pv.issuer_problem(settings, p) for p in PARTIES
+        },
+        why=SIGN_WHY.get(request.query_params.get("why", "")),
     )
 
 
@@ -1221,8 +1284,11 @@ async def sign_upload(
     aid: str,
     party: Annotated[str, Form()],
     signature: Annotated[str, Form()] = "",
+    certificate: Annotated[str, Form()] = "",
+    next: Annotated[str, Form()] = "",
 ) -> Response:
-    # The default keeps an empty paste from being a 422; the browser sends "" for an empty box.
+    # The defaults keep an empty paste from being a 422; the browser sends "" for an empty box.
+    # `next` is the page the Sign button was on; a problem always shows on the Sign screen.
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
@@ -1232,17 +1298,42 @@ async def sign_upload(
         return back(here, err="Paste only your own party's signature.")
     if not signature.strip():
         return back(here, err="Paste the line the sign command printed first.")
-    status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user)
+    status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user, certificate)
     if status != "ok":
         return back(here, err=f"Signature not accepted: {detail}")
     editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
     saved(user)
-    return back(here, msg=f"{party} signature verified and stored.")
+    return back(_sign_next(aid, next), msg=f"{party} signature verified and stored.")
+
+
+@app.post("/sign/certificate")
+async def sign_certificate(request: Request) -> Response:
+    """Certify the public key a logged-in member's browser just made, with the party root
+    this server holds (prototype: AIAB_AUDITOR_ROOT_KEY). JSON in and out; a form post from
+    another site cannot reach it (SameSite cookies, and a cross-site JSON post needs CORS)."""
+    user = user_of(request)
+    if user is None:
+        return JSONResponse({"error": "Log in first."}, status_code=401)
+    if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+        return JSONResponse({"error": "Send JSON."}, status_code=415)
+    try:
+        body = await request.json()
+        party, signing_key = str(body["party"]), str(body["signing_key"])
+    except (ValueError, KeyError, TypeError):
+        return JSONResponse({"error": "Send party and signing_key."}, status_code=422)
+    if party != user["party"]:
+        return JSONResponse({"error": "Only your own party's key can be certified."}, 403)
+    status, result = pv.issue_certificate(settings, party, signing_key, user)
+    if status != "ok":
+        return JSONResponse({"error": result}, status_code=409)
+    return JSONResponse({"certificate": result})
 
 
 @app.post("/a/{aid}/sign/remove")
-async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()]) -> Response:
-    """Re-sign: remove your own signature for this version, then the paste form comes back."""
+async def sign_remove(
+    request: Request, aid: str, party: Annotated[str, Form()], next: Annotated[str, Form()] = ""
+) -> Response:
+    """Re-sign: remove your own signature for this version; the Sign button comes back."""
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
@@ -1253,7 +1344,7 @@ async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()])
     if not pv.remove_signature(target, party, user):
         return back(here, err="There is no signature of yours to remove.")
     saved(user)
-    return back(here, msg="Your signature is removed. Sign this version again below.")
+    return back(_sign_next(aid, next), msg="Your signature is removed. Sign this version again.")
 
 
 @app.post("/a/{aid}/sign/key")
@@ -1269,24 +1360,31 @@ async def set_key(
     user = user_of(request)
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
-        return back(here, err="You can only replace your own party's public key.")
+        return back(here, err="You can only replace your own party's root key.")
+    if pv.server_signs(settings, party) or pv.server_certifies(settings, party):
+        held = pv.SERVER_KEY_ENV.get(party) or (pv.ROOT_KEY_ENV[party],)
+        return back(
+            here,
+            err=f"This server signs for the {party} under the current root; a new root would "
+            f"stop that. Unset {' and '.join(held)} first.",
+        )
     public_key, problem = pv.normalize_public_key(public_key)
     if problem or public_key is None:
         return back(here, err=problem or "that is not an Ed25519 public key")
     if pv.load_trust(settings).get(f"{party}_key") == public_key:
-        return back(here, msg=f"Production already trusts this {party} key. Nothing to submit.")
+        return back(here, msg=f"Production already trusts this {party} root. Nothing to submit.")
     pushed = publish.push_key_change(
         settings.git_dir, party, public_key, user, base=settings.deploy_base
     )
     if pushed.error:
         return back(here, err=f"The {party} key was not submitted: {pushed.error}")
-    pv.record_change(target, user, "key", f"public key: {party}", f"submitted {public_key}")
+    pv.record_change(target, user, "key", f"root key: {party}", f"submitted {public_key}")
     where = pushed.pr_url or pushed.compare_url or f"branch {pushed.branch}"
     _remember_key(party, public_key, user, pushed.pr_url)  # every page blocks until the box has it
     return back(
         here,
-        msg=f"The {party} key is submitted ({where}). The check merges it within a minute and"
-        " the box is released with it; every page waits until the box trusts it.",
+        msg=f"The {party} root key is submitted ({where}). The check merges it within a minute"
+        " and the box is released with it; every page waits until the box trusts it.",
     )
 
 

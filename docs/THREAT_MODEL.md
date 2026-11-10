@@ -68,21 +68,133 @@ Every admitted conversation reaches Tinfoil classification; only policy-allowed
 messages reach Anthropic when both hosted overlays are enabled. Classifier
 verification does not make Anthropic answer inference confidential or attested.
 
-Party signing keys for the audit plan (lab and auditor, Ed25519) live with the parties,
-not in the service. In the agreement UI each party's key is made and kept in that party's
-browser as a non-extractable WebCrypto key, with a password-encrypted backup the party
-holds, and signs the plan digest in the browser; the UI server receives public keys and
-signatures only. One exception exists for the prototype: with `AIAB_LAB_KEY` set, the UI
-server holds the lab's private key and signs every plan version as the lab by itself, so
-whoever controls the server can sign as the lab, and the lab signature then shows only
-that the server saw the version. The auditor's signature still comes from outside the
-server. The UI server is otherwise trusted to serve honest JavaScript and an
+Party keys for the audit plan (lab and auditor, Ed25519) live with the parties, not in
+the service. Each party has a root key, whose public half is baked into the box image
+(`trust.json`) and covered by the attestation, and signing keys the root certifies: a
+certificate is the root's signature over `{"role", "signing_key"}`, and a run carries each
+party's certificate next to its plan signature. The box checks the certificate against
+the baked root, then the plan signature against the certified key, and refuses a
+certificate that names a root as the signing key, so a root cannot sign a plan through
+the normal path. The box cannot see where a root lives or how a certified key was made. A new signing key needs no release; only a root change
+goes through the trust file and a rebuild. The box keeps no state, so a certificate
+cannot be revoked: a lost signing key stays valid until its party's root is rotated,
+which is the same exposure a lost key had when keys were baked in. The box reads no
+clock, so certificates carry no expiry. In the agreement UI, Set up signing makes both
+keys in the party's browser: the root, which leaves the page only as a key file encrypted
+under the party's password (PBKDF2, AES-GCM), and a signing key the root certifies at
+once, kept in the browser as a non-extractable WebCrypto key with its certificate. The
+root is not stored in the browser; it is in page memory during setup, and again when the
+key file is opened to set up another browser. A page that serves malicious JavaScript at
+those moments can take the root, so the UI server is trusted to serve honest JavaScript
+for setup as it already is for signing. A party that wants its root never to touch the
+browser keeps it elsewhere and uses the commands under Other ways to sign. The UI server
+receives public keys, certificates and signatures only, except for the prototype
+shortcut below. The UI server is otherwise trusted to serve honest JavaScript and an
 honest digest, which is an active attack a party can detect by comparing the served page
 with the repository and the shown digest with the downloaded plan files, and the trust
-file change that admits a new public key is visible in GitHub history. Hosting both
-private keys on the UI server was rejected: one server compromise would then sign for
-both parties with no trace outside the server. Requiring the other party's approval of a
-key change in `approve-keys.yml` is still open.
+file change that admits a new public key is visible in GitHub history. Requiring the
+other party's approval of a key change in `approve-keys.yml` is still open.
+
+## Prototype shortcut: the server signs for the lab and certifies the auditors
+
+To make signing one click, the UI server can hold two secrets:
+
+- `AIAB_LAB_KEY` and `AIAB_LAB_CERTIFICATE`: a certified lab signing key. The server
+  signs every plan version as the lab by itself.
+- `AIAB_AUDITOR_ROOT_KEY`: the auditor root's private key. On an auditor's first Sign,
+  the browser makes its own Ed25519 signing key, non-extractable from the start, and
+  sends only the public half to `POST /sign/certificate`. The server certifies it for
+  the logged-in auditor and appends a record (who, when, which key) to
+  `issued-certificates.jsonl` next to the accounts file. The browser checks the
+  certificate against the trusted root before keeping the key, then signs. Each auditor,
+  and each browser, has a key of its own; nobody sets anything up.
+
+The box's check does not change: it still requires both signatures, each from a key the
+party's baked-in root certified. What changes is what a signature shows. With the lab
+key and the auditor root on the server, whoever controls the server, or breaks into it,
+can sign as the lab and can certify a new auditor key and sign with it. The two
+signatures then show only that the server approved the version. A signature under an
+existing auditor's key does show that this auditor's browser made it, because that
+private key never leaves the browser; but the server can always make another auditor
+key. The UI decides who is the auditor from the login (anyone not in `admins.json`), and
+the lab runs the server, so in this mode the lab can sign as the auditor. A root on the
+server also has more authority than a signing key would: the keys it certifies never
+expire. The lab root's private half is not on the server.
+
+What the real version changes, in order:
+
+1. Each party makes its own root, on its own machine or with Set up signing in its own
+   browser, and submits the public half. One PR and one release replace the roots, so
+   no root's private half has ever been on the server or with the operator.
+2. Unset `AIAB_LAB_KEY`, `AIAB_LAB_CERTIFICATE` and `AIAB_AUDITOR_ROOT_KEY`. The lab
+   loses automatic signing and presses Sign like the auditor.
+3. Each party runs its own certificate signer (the same protocol as
+   `/sign/certificate`), on its own infrastructure, out of the lab's reach, authenticating
+   its members with its own identity provider; or the root holder certifies members'
+   keys by hand (`sign_digest.py certify`).
+4. Each party confirms that the released box is one it approved; see the review below
+   for why checking only the trust file is not enough.
+
+Limits that remain in the real version: certificates cannot be revoked or expire (the
+box keeps no state and reads no clock), so cutting off a key means rotating the root.
+
+### Red-team review, 2026-11-10
+
+An adversarial review of this design (each party keeps its own root and signer) found
+that separate roots protect a party's approval only if the party also controls the page
+it signs on and approves the box release itself. Findings, most severe first; CONFIRMED
+means checked in the code, PLAUSIBLE means reasoned:
+
+1. **The signing page is served by the lab (critical, CONFIRMED).** `sign.js` signs the
+   digest the page gives it, with the key in IndexedDB, behind a confirmation the page
+   itself draws. A malicious page can show plan A and sign plan B, or sign without a
+   click; a non-extractable key cannot be read out but can still be used. A separate
+   signer does not stop this while the auditor signs on the lab's site. Needed: the
+   party signs on a page or client it controls, which shows the plan and computes the
+   digest itself.
+2. **Checking the trusted root is not enough (critical, PLAUSIBLE).** The lab controls the
+   repository, `approve-keys.yml` (which checks the format and merges, without the other
+   party's approval) and `release.yml` (which updates the pins itself). It can keep the
+   auditor's root and release a box that does not check signatures; the attestation
+   then truthfully measures that box. Needed: both parties approve and pin the box's
+   measurement and build, and check the attestation outside the lab's UI
+   (`static/auditor/audit.py` already verifies attestation; the UI's box status uses
+   plain HTTPS, `ui/server/box.py`).
+3. **A root on a server is a minting authority (critical).** Anyone with the server's
+   root certifies keys that never expire. In this prototype the server can sign as the
+   auditor anyway, so this adds little here; it must not carry into the real version.
+4. **Key substitution at enrollment (high, PLAUSIBLE).** A malicious page can let the
+   real auditor log in to the auditor's own signer and submit an attacker's public key
+   instead of the browser's. Proving possession of a key does not help, since the
+   attacker holds it. Needed: enrollment through an interface the auditor controls,
+   binding the authenticated person, the role and the key their own device made.
+5. **Login means auditor (high, CONFIRMED).** `ui/server/auth.py` treats every admitted
+   login that is not in `admins.json` as the auditor. With automatic certificates, that
+   is a permanent auditor key. Needed: explicit authorization to represent the party.
+6. **No revocation; insiders keep their keys (high, CONFIRMED).** A departed or malicious
+   member keeps a valid certificate until the root rotates, and an older box image still
+   accepts it after. One insider cannot forge the other party's signature, but can abuse
+   their own party's blanket authority.
+7. **Approvals can be reused (medium, CONFIRMED).** A signature binds only the plan bytes,
+   so an old signed bundle can be resubmitted later or shown under another agreement
+   name; changing any byte, `plan_id` included, does break it. Per-boot deduplication
+   (`static/aiab/baked/runtime.py`) is not replay protection. Whether an approval is for
+   a plan or for one run is to be decided.
+
+Checked and holding (CONFIRMED): the box refuses either party's root as a signing key and
+one key for both parties, comparing bytes and rejecting non-canonical base64; a
+certificate binds its role and verifies only against that role's root; certificate and
+plan messages are domain-separated (`AIAB/signing-key/v1`, `AIAB/plan-bundle/v1`) and
+canonicalized with RFC 8785. A lab key or lab root alone cannot make an auditor
+certificate.
+
+Must-have for the real version, from the review: party-controlled signing pages or
+clients that render the plan and compute the digest; independent roots and signers, with
+enrollment bound to identity, role and the device's key; both parties approving and
+pinning the box measurement; defined reuse rules and compromise recovery; and the
+signer's identity and scope in certificates if per-person attribution is promised (a box
+schema change and a release). Nice to have: hardware-backed keys, a transparency log of
+issued certificates, and more than one approver per party. Tracked in MAC-433.
 
 ## Data handling and observable channels
 

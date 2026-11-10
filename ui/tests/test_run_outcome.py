@@ -39,6 +39,35 @@ def test_old_verified_failure_is_not_an_all_clear(tmp_path):
     assert "Finished and verified" not in html
     assert "execution_failed" in html
     assert "Report verification: passed" in html
+    # Saved before runs recorded their plan version, and with no copy on disk.
+    assert run["plan"] is None
+    assert "Plan version: not recorded for this run." in html
+
+
+def test_older_run_takes_its_plan_version_from_the_verify_step(tmp_path):
+    run_id = "20261026T093728Z-bb5894"
+    (tmp_path / run_id).mkdir()
+    state = {
+        "id": run_id,
+        "agreement": "bio",
+        "started": "2026-10-26T09:37:28Z",
+        "status": "done",
+        "steps": [
+            {
+                "key": "verify",
+                "status": "done",
+                "output": {"plan_digest": "sha256:" + "ab" * 32, "signatures_verified": True},
+            }
+        ],
+    }
+    (tmp_path / run_id / "state.json").write_text(json.dumps(state))
+    run = load_run(replace(load_settings(), runs_dir=tmp_path), run_id)
+    assert run["plan"] == {
+        "agreement": "bio",
+        "digest": "sha256:" + "ab" * 32,
+        "signed": True,
+        "checked": "derived",
+    }
 
 
 def test_verified_false_requires_completed_execution():
