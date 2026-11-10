@@ -666,8 +666,10 @@ def issue_certificate(
     record = {
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
         "party": party,
+        # The login as the session carries it: for WorkOS the username is the email's
+        # local part, so two organizations' "alex" look alike here.
         "username": actor.get("username", ""),
-        "email": actor.get("email", ""),
+        "display_name": actor.get("display_name", ""),
         "signing_key": signing_key,
     }
     log = issued_log(settings)
