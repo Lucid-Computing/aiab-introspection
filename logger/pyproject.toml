@@ -1,0 +1,34 @@
+[project]
+name = "aiab-logger"
+version = "0.1.0"
+description = "The logger's side of AIAB: log metadata for the agreement UI, records sealed to the box"
+requires-python = ">=3.12"
+dependencies = [
+    # The box's own sealing code and canonical JSON, and the Tinfoil SDK it pins, so a record
+    # is sealed here exactly as the box opens it.
+    "aiab-introspection",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    # The proxy's sealed segments are zstd-compressed.
+    "zstandard>=0.25.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9,<1",
+    "pytest>=8,<10",
+    "httpx>=0.28,<1",
+]
+
+[tool.uv.sources]
+aiab-introspection = { path = "../static", editable = true }
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

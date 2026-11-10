@@ -10,13 +10,14 @@ Live audit API: https://aiab-signed-audit.lucid-computing.containers.tinfoil.dev
 
 Explore a recorded run: [Inside an audit](https://aiab-signed-audit-run.surge.sh). Operator commands: [evaluation, offline verification and release automation](docs/AUDIT_OPERATIONS.md).
 
-The repository is split into three parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AIAB_DESIGN_SPEC.md) for the design.
+The repository is split into four parts. See [docs/AIAB_DESIGN_SPEC.md](docs/AIAB_DESIGN_SPEC.md) for the design.
 
 | Folder | Part | Owner | Changes |
 | --- | --- | --- | --- |
 | [`static/`](static/) | The box: runtime, auditor tooling, deployment, tests. Python project root. | Jonathan | With development |
 | [`plan/`](plan/) | An example audit plan: code, prompts, settings, both parties' signatures. The CLI commands in the docs use it. Agreements the UI edits live under `agreements/` (git-ignored) and travel to the box signed, with each run; nothing is baked into the image. | Jonathan | With every agreement |
 | [`ui/`](ui/) | The agreement UI: edit, review, sign and run agreements; show attestation and runs. Never part of the image. | Jonathan | Independently |
+| [`logger/`](logger/) | The logger's side: a server that runs next to the logging proxy, gives the UI log metadata and seals the chosen records to the box. Its own image; never part of the box image. | Teddy | Independently |
 
 Shared material lives at the root: `docs/` (specs), `.github/` (workflows), `.dockerignore` (the image build allowlist; the build context is this directory).
 
