@@ -11,7 +11,7 @@ from urllib.parse import unquote
 
 import pytest
 from aiab.audit.protocol import sign_bytes, verify_signature
-from aiab.baked.bundle import canonical, make_certificate
+from aiab.baked.bundle import canonical, certified_key, make_certificate
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
@@ -255,84 +255,83 @@ def test_the_builder_can_save_twice_and_the_sign_screen_shows_the_badge(
     assert "The server cannot sign as the lab" in html
 
 
-# ---- AIAB_AUDITOR_KEY: the server signs as the auditor when an auditor presses Sign ----
+# ---- AIAB_AUDITOR_ROOT_KEY: the server certifies each auditor's browser key ----
 
 
 @pytest.fixture
-def both(settings, keys):
-    return replace(
-        settings,
-        auditor_signing_key=raw(keys["auditor"]),
-        auditor_signing_certificate=cert_text(keys, "auditor"),
-    )
+def issuer(settings, keys):
+    return replace(settings, auditor_root_key=raw(keys["roots"]["auditor"]))
 
 
-def test_the_auditor_is_never_signed_automatically(both, keys):
-    target = create(both)
-    view = pv.load_plan_view(target)
-    assert view.signatures["auditor"]["status"] == "missing" and not view.frozen
+def browser_key():
+    return public(Ed25519PrivateKey.generate())
 
 
-def test_sign_on_the_server_as_the_auditor_freezes_the_plan(both, keys):
-    target = create(both)
+def test_the_server_certifies_a_browser_key_the_box_accepts(issuer, keys):
+    signing = Ed25519PrivateKey.generate()
+    status, certificate = pv.issue_certificate(issuer, "auditor", public(signing), AUDITOR)
+    assert status == "ok"
+    trust = json.loads(keys["trust"].read_text())
+    assert certified_key(certificate, "auditor", trust) == public(signing)
+    record = json.loads(pv.issued_log(issuer).read_text().splitlines()[-1])
+    assert record["username"] == "caleb" and record["signing_key"] == public(signing)
+    # Signed with that key and stored, the auditor signature verifies and freezes the plan.
+    target = create(issuer)
     digest = pv.file_digest(pv.bundle_files(target.plan_dir))
-    assert pv.sign_on_server(target, "auditor", AUDITOR, digest) == ("ok", "signed")
-    view = pv.load_plan_view(target)
-    assert view.signatures["auditor"]["status"] == "ok" and not view.signatures["auditor"].get(
-        "auto"
-    )
-    assert view.signatures["auditor"]["signing_key"] == public(keys["auditor"])
-    assert view.frozen
-    assert "caleb" == pv.load_history(target.plan_dir)[0]["user"]
+    sig = base64.b64encode(signing.sign(sign_bytes("plan-bundle", {"plan_digest": digest})))
+    status, _ = pv.write_signature(target, "auditor", sig, AUDITOR, canonical(certificate).decode())
+    assert status == "ok" and pv.load_plan_view(target).frozen
 
 
-def test_sign_on_the_server_refuses_a_changed_version_or_no_key(both, settings):
-    target = create(both)
-    status, detail = pv.sign_on_server(target, "auditor", AUDITOR, "sha256:" + "0" * 64)
-    assert status == "error" and "changed" in detail
-    status, detail = pv.sign_on_server(pv.for_agreement(settings, "auto"), "auditor", AUDITOR)
-    assert status == "error" and "holds no auditor key" in detail
-    wrong = replace(both, auditor_signing_certificate=cert_text_for_lab(both))
-    assert "not made by the auditor root" in pv.server_problem(wrong, "auditor")
+def test_the_server_certifies_no_root_no_lab_key_and_no_junk(issuer, keys):
+    for key in (
+        public(keys["roots"]["auditor"]),
+        public(keys["roots"]["lab"]),
+        public(keys["lab"]),
+    ):
+        status, detail = pv.issue_certificate(issuer, "auditor", key, AUDITOR)
+        assert status == "error" and "root or the lab" in detail
+    for junk in ("", "not a key", public(keys["lab"]).rstrip("=")):
+        assert pv.issue_certificate(issuer, "auditor", junk, AUDITOR)[0] == "error"
+    assert pv.issue_certificate(issuer, "lab", browser_key(), LAB)[0] == "error"  # no lab root
 
 
-def cert_text_for_lab(settings):
-    return settings.lab_signing_certificate
+def test_a_root_production_does_not_trust_certifies_nothing(issuer):
+    wrong = replace(issuer, auditor_root_key=raw(Ed25519PrivateKey.generate()))
+    assert "not the auditor root production trusts" in pv.issuer_problem(wrong, "auditor")
+    assert not pv.server_certifies(wrong, "auditor")
+    assert pv.issue_certificate(wrong, "auditor", browser_key(), AUDITOR)[0] == "error"
+    assert "not a base64" in pv.issuer_problem(replace(issuer, auditor_root_key="x"), "auditor")
 
 
-def test_the_sign_button_signs_on_the_server(both, keys, monkeypatch):
-    create(both)
-    client = client_for(monkeypatch, both)
-    target = pv.for_agreement(both, "auto")
-    digest = pv.file_digest(pv.bundle_files(target.plan_dir))
-    html = client.get("/a/auto/plan").text
-    assert 'action="/a/auto/sign/server"' in html and "quick-sign" not in html
-    assert 'action="/a/auto/sign/server"' in client.get("/agreements").text
-    assert "can sign as both parties" in client.get("/a/auto/sign").text
-    response = client.post(
-        "/a/auto/sign/server",
-        data={"party": "auditor", "digest": digest, "next": "/a/auto/plan"},
-    )
-    assert response.status_code == 303 and response.headers["location"].startswith("/a/auto/plan")
-    assert pv.load_plan_view(target).signatures["auditor"]["status"] == "ok"
-    # The lab cannot use the auditor's key.
-    lab = client_for(monkeypatch, both, party="lab")
-    refused = lab.post("/a/auto/sign/server", data={"party": "auditor", "digest": digest})
-    assert "own party" in unquote(refused.headers["location"])
+def test_the_certificate_route_is_json_and_own_party_only(issuer, monkeypatch):
+    client = client_for(monkeypatch, issuer)
+    body = {"party": "auditor", "signing_key": browser_key()}
+    response = client.post("/sign/certificate", json=body)
+    assert response.status_code == 200 and response.json()["certificate"]["role"] == "auditor"
+    assert client.post("/sign/certificate", data=body).status_code == 415  # no form posts
+    lab = client_for(monkeypatch, issuer, party="lab")
+    assert lab.post("/sign/certificate", json=body).status_code == 403
+    from server import app as web
+
+    anonymous = TestClient(web.app, follow_redirects=False)
+    assert anonymous.post("/sign/certificate", json=body).status_code == 401
 
 
-def test_without_the_auditor_key_the_sign_button_signs_in_the_browser(settings, monkeypatch):
+def test_sign_buttons_ask_for_a_certificate_and_no_page_offers_a_new_root(issuer, monkeypatch):
+    create(issuer)
+    client = client_for(monkeypatch, issuer)
+    assert 'data-certify="/sign/certificate"' in client.get("/a/auto/plan").text
+    assert 'data-certify="/sign/certificate"' in client.get("/agreements").text
+    html = client.get("/a/auto/sign").text
+    assert 'data-certify="/sign/certificate"' in html and "can sign as both parties" in html
+    assert 'class="browser-key"' not in html and 'id="key-form-auditor"' not in html
+    other = browser_key()
+    refused = client.post("/a/auto/sign/key", data={"party": "auditor", "public_key": other})
+    assert "Unset AIAB_AUDITOR_ROOT_KEY" in unquote(refused.headers["location"])
+
+
+def test_without_the_root_the_sign_button_is_browser_only(settings, monkeypatch):
     create(settings)
     html = client_for(monkeypatch, settings).get("/a/auto/plan").text
-    assert "quick-sign" in html and "/sign/server" not in html
-
-
-def test_while_the_server_signs_no_page_offers_a_new_auditor_root(both, monkeypatch):
-    create(both)
-    client = client_for(monkeypatch, both)
-    html = client.get("/a/auto/sign").text
-    assert 'class="browser-key"' not in html and 'id="key-form-auditor"' not in html
-    assert "Paste a signature made elsewhere" in html
-    other = public(Ed25519PrivateKey.generate())
-    refused = client.post("/a/auto/sign/key", data={"party": "auditor", "public_key": other})
-    assert "Unset AIAB_AUDITOR_KEY" in unquote(refused.headers["location"])
+    assert "quick-sign" in html and "data-certify" not in html

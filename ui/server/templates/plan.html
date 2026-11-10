@@ -35,10 +35,8 @@
   {% elif edit %}
   {# The builder saves in its frame, so this page's digest can be stale: the Sign screen re-reads it. #}
   <a class="btn btn--primary" href="{{ base }}/sign">Sign</a>
-  {% elif server_signs %}
-  <form method="post" action="{{ base }}/sign/server" class="inline" data-confirm="Sign this version, digest {{ view.digest }}, as the {{ user.party }}?"><input type="hidden" name="party" value="{{ user.party }}"><input type="hidden" name="digest" value="{{ view.digest }}"><input type="hidden" name="next" value="{{ base }}/plan"><button class="btn btn--primary">Sign</button></form>
   {% else %}
-  <a class="btn btn--ghost quick-sign" href="{{ base }}/sign" data-party="{{ user.party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[user.party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/plan">Sign</a>
+  <a class="btn btn--ghost quick-sign" href="{{ base }}/sign" data-party="{{ user.party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[user.party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/plan"{% if server_certifies %} data-certify="/sign/certificate"{% endif %}>Sign</a>
   {% endif %}
   <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>
   <a class="link" href="{{ base }}/sign">Keys and signatures</a>

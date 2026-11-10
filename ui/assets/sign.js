@@ -277,6 +277,42 @@
     return verifyCertificate(entry.certificate, trusted).then(function (ok) { return ok ? "ready" : "stale"; });
   }
 
+  // A signing key for a server-certified browser: made non-extractable from the start, so
+  // the private half never exists in a readable form; only the public half leaves.
+  function freshSigningKey() {
+    return subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]).then(function (pair) {
+      return publicKeyBase64(pair.publicKey).then(function (publicKey) {
+        return { privateKey: pair.privateKey, publicKey: publicKey };
+      });
+    });
+  }
+
+  // Get a fresh browser key certified by the party root the server holds. The certificate
+  // is checked here against the trusted root before the key is kept. `post` sends JSON and
+  // resolves to the parsed reply (fetch in the page; a stub in tests).
+  function enroll(party, trusted, post) {
+    return freshSigningKey().then(function (pair) {
+      return post({ party: party, signing_key: pair.publicKey }).then(function (reply) {
+        var certificate = reply && reply.certificate;
+        if (!certificate) throw new Error((reply && reply.error) || "the server did not certify the key");
+        if (certificate.role !== party || certificate.signing_key !== pair.publicKey) {
+          throw new Error("the server certified a different key");
+        }
+        return verifyCertificate(certificate, trusted).then(function (ok) {
+          if (!ok) throw new Error("the certificate is not from the " + party + " root the box trusts");
+          return {
+            privateKey: pair.privateKey,
+            publicKey: pair.publicKey,
+            certificate: certificate,
+            rootPublicKey: trusted,
+            made: new Date().toISOString(),
+            issued: true,
+          };
+        });
+      });
+    });
+  }
+
   root.AiabSigning = {
     PREFIX: PREFIX,
     CERTIFICATE_PREFIX: CERTIFICATE_PREFIX,
@@ -290,6 +326,8 @@
     fromKeyFile: fromKeyFile,
     fromStoredKey: fromStoredKey,
     standing: standing,
+    freshSigningKey: freshSigningKey,
+    enroll: enroll,
     supported: supported,
     generate: generate,
     importPrivate: importPrivate,
@@ -532,6 +570,16 @@
 
   function wireQuickSign(link) {
     var party = link.dataset.party, digest = link.dataset.digest, trusted = link.dataset.trusted || "";
+    var certifyUrl = link.dataset.certify || "";
+
+    function postJson(body) {
+      return root.fetch(certifyUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then(function (response) { return response.json(); });
+    }
 
     function fallBack(why, error) {
       var href = link.getAttribute("href");
@@ -549,9 +597,18 @@
       supported().then(function (ok) {
         if (!ok || !root.indexedDB) { fallBack("unsupported"); return; }
         return loadKey(party).then(function (entry) {
-          if (!entry) { fallBack("none"); return; }
-          return standing(entry, party, trusted).then(function (state) {
-            if (state !== "ready") { fallBack(state); return; }
+          if (!entry && !certifyUrl) { fallBack("none"); return; }
+          return (entry ? standing(entry, party, trusted) : Promise.resolve("none")).then(function (state) {
+            if (state !== "ready" && certifyUrl) {
+              // First Sign in this browser, or a key from before: make one and have it certified.
+              return enroll(party, trusted, postJson).then(function (fresh) {
+                return storeKey(party, fresh).then(function () { return fresh; });
+              });
+            }
+            if (state !== "ready") { fallBack(state); return null; }
+            return entry;
+          }).then(function (entry) {
+            if (!entry) return;
             return confirmDialog(signQuestion(digest, party)).then(function (yes) {
               if (!yes) { delete link.dataset.busy; return; }
               return sign(entry.privateKey, digest).then(function (signature) {

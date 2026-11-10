@@ -89,11 +89,12 @@ class Settings:
     # lab. The lab's root stays with the lab. Prototype only.
     lab_signing_key: str | None = field(default=None, repr=False)
     lab_signing_certificate: str | None = None
-    # AIAB_AUDITOR_KEY and AIAB_AUDITOR_CERTIFICATE: the same for the auditor, except that
-    # the server signs as the auditor only when an auditor presses Sign. Prototype only:
-    # whoever controls the server can then sign as both parties (THREAT_MODEL.md).
-    auditor_signing_key: str | None = field(default=None, repr=False)
-    auditor_signing_certificate: str | None = None
+    # AIAB_AUDITOR_ROOT_KEY: the auditor root's private key (base64 raw Ed25519). Set, the
+    # server certifies the signing key each logged-in auditor's browser makes on its first
+    # Sign, so every auditor has a key of their own and nobody sets anything up. Prototype
+    # only: whoever controls the server can then certify a key and sign as the auditor
+    # (THREAT_MODEL.md, "Prototype shortcut").
+    auditor_root_key: str | None = field(default=None, repr=False)
     # OpenID Connect login (WorkOS AuthKit; any provider with a discovery document). Issuer,
     # client id and secret set: Sign in goes through the provider; emails in admins_file are
     # the lab, everyone else is the auditor. oidc_group set: the ID token's groups claim must
@@ -206,8 +207,7 @@ def load_settings() -> Settings:
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
         lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
         lab_signing_certificate=env.get("AIAB_LAB_CERTIFICATE", "").strip() or None,
-        auditor_signing_key=env.get("AIAB_AUDITOR_KEY", "").strip() or None,
-        auditor_signing_certificate=env.get("AIAB_AUDITOR_CERTIFICATE", "").strip() or None,
+        auditor_root_key=env.get("AIAB_AUDITOR_ROOT_KEY", "").strip() or None,
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
         oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,
         oidc_client_secret=env.get("OIDC_CLIENT_SECRET", "").strip() or None,
