@@ -1,13 +1,14 @@
 {# The log source selector: one button per proxy the server reads (Prod Agent Logs, Dev
    Agent Logs, ...), the chosen one highlighted. ``base`` is the page's URL up to where
-   ``logs=<id>`` goes ("/logs?", "/runs?agreement=x&"); a source with no key configured is
-   shown but cannot be chosen. #}
+   ``logs=<id>`` goes ("/logs?", "/runs?agreement=x&"); a proxy with no key configured is
+   shown but cannot be chosen. Demo build: an export (Slack, GitHub) with no key or folder
+   is not shown at all. #}
 {% macro selector(sources, current, base) %}
 <nav class="srcsel" aria-label="Log source">
   {% for s in sources %}
   {% if s.configured %}
   <a class="srcsel-item {% if s.id == current.id %}on{% endif %}" href="{{ base }}logs={{ s.id }}" {% if s.id == current.id %}aria-current="true"{% endif %}>{{ s.label }}</a>
-  {% else %}
+  {% elif not s.chat %}
   <span class="srcsel-item srcsel-item--off {% if s.id == current.id %}on{% endif %}" aria-disabled="true" title="no key configured ({{ s.key_env }})">{{ s.label }}<span class="srcsel-note">no key</span></span>
   {% endif %}
   {% endfor %}

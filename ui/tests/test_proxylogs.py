@@ -377,7 +377,8 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
     unconfigured = _client(monkeypatch, _settings(tmp_path, prod_key=None)).get("/logs?logs=prod")
     assert "srcsel-item--off" in unconfigured.text and "AIAB_LOG_KEY" in unconfigured.text
     assert 'href="/logs?logs=prod"' not in unconfigured.text
-    assert "AIAB_SLACK_EXPORT" in unconfigured.text  # Slack Logs offered, disabled
+    # Demo build: an export with no key or folder (Slack, GitHub) is left out, not disabled.
+    assert "Slack Logs" not in unconfigured.text and "GitHub Logs" not in unconfigured.text
 
     settings = _slack_settings(tmp_path)
     _slack_export(settings.log_source("slack").path(settings))
