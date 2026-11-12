@@ -19,7 +19,9 @@
         <span class="text-muted">the plan only, not its signatures or history</span></label>
       {% endif %}
     </div>
-    <div class="field"><label for="problem">The question this audit answers</label><textarea id="problem" name="problem" class="question" required>{{ form.problem or '' }}</textarea></div>
+    <div class="field"><label for="problem">The question this audit answers</label><textarea id="problem" name="problem" class="question" required placeholder="Did any session send an API key or password to the model provider?" aria-describedby="problem-hint">{{ form.problem or '' }}</textarea>
+      <p id="problem-hint" class="field-hint">With the minimal plan, this text is the classifier's prompt as written. Nothing generates the plan for you.</p>
+    </div>
     {# "Create with AI" (chat=1) is hidden for now, with the chat card on the plan page. #}
     <div class="row">
       <button class="btn btn--primary">Create draft</button>
@@ -29,7 +31,8 @@
 <script>
   // The name is checked as it is typed, with the same rule the server applies, so the
   // reason appears under the field instead of after a round trip. An invalid name also
-  // blocks the submit (setCustomValidity).
+  // blocks the submit (setCustomValidity). Spaces become "-" and letters lowercase as they
+  // are typed; the server rule itself still allows capitals.
   (function () {
     var input = document.getElementById("plan_id"), hint = document.getElementById("plan_id-hint");
     if (!input || !hint) return;
@@ -46,7 +49,16 @@
       if (taken.indexOf(name) !== -1) return "An agreement called " + name + " already exists.";
       return "";
     }
+    // One character in, one character out, so the caret can stay where it was.
+    function tidy() {
+      var raw = input.value.replace(/^\s+/, ""), name = raw.replace(/\s/g, "-").toLowerCase();
+      if (name === input.value) return;
+      var cut = input.value.length - raw.length, at = input.selectionStart, end = input.selectionEnd;
+      input.value = name;
+      if (at !== null) input.setSelectionRange(Math.max(0, at - cut), Math.max(0, end - cut));
+    }
     function check() {
+      tidy();
       var name = input.value, why = problem(name);
       input.setCustomValidity(why);
       hint.textContent = why || (name ? "Available. Its page will be /a/" + name + "/plan." : neutral);
