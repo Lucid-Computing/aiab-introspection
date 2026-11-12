@@ -130,8 +130,13 @@ python3 sign_digest.py sign --digest {{ view.digest }} --key ~/{{ user.party }}.
   {% endfor %}
 
   <div class="notice">
-    <p>{{ view.state | capitalize }}. A signature is stored the moment it verifies; nothing else to confirm here.</p>
-    <a class="btn btn--primary" href="/agreements">Done</a>
+    {% if view.signed_by_both %}
+    <p>Signed by both. The agreement can run.</p>
+    <a class="btn btn--primary" href="/runs?agreement={{ aid | urlencode }}">Run</a>
+    {% else %}
+    <p>{% for party in parties %}{% set s = view.signatures[party] %}{% if s.status == 'ok' %}Signed by the {{ party }}{% elif s.status == 'missing' %}Waiting for the {{ party }}{% else %}The {{ party }} signed an older version{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}.</p>
+    <a class="btn btn--ghost" href="/agreements">Back to agreements</a>
+    {% endif %}
   </div>
 </div>
 {% endif %}
