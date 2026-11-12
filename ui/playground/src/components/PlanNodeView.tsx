@@ -2,6 +2,7 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 import { memo, useEffect } from "react";
 import { type FlowNode, NEW_INPUT } from "../plan/graph";
 import { accepts, INPUT_RULES } from "../plan/ports";
+import { isQuery } from "../plan/query";
 import type { PortType } from "../plan/types";
 import { BLOCK_META, kindOf, line } from "./nodeMeta";
 
@@ -35,7 +36,11 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
           : `${i.name}: not connected`,
       };
     }),
-    ...(rule.kind === "dynamic" ? [{ id: NEW_INPUT, bad: false, title: "Drop a connection here to add an input" }] : []),
+    // Code and LLM blocks may read several blocks, so they keep a spare port to drop a new
+    // connection on. A Query format block reads one: once connected it shows one port.
+    ...(rule.kind === "dynamic" && !(isQuery(n) && inputs.length > 0)
+      ? [{ id: NEW_INPUT, bad: false, title: "Drop a connection here to add an input" }]
+      : []),
   ];
 
   const hover = [
