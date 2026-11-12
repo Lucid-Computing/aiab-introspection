@@ -111,6 +111,12 @@ export function addNode(plan: Plan, type: NodeType): { plan: Plan; id: string } 
   return { plan: { ...plan, nodes: [...plan.nodes, node] }, id };
 }
 
+/** Why the builder will not add a block of this kind to `plan` now, or null when it will. */
+export function cannotAdd(plan: Plan, type: string): string | null {
+  if (type === "final_report" && plan.nodes.some((n) => n.type === "final_report")) return "A plan has one report";
+  return null;
+}
+
 export function deleteNodes(plan: Plan, ids: string[]): Plan {
   const gone = new Set(ids);
   return {
