@@ -563,10 +563,13 @@ def outcome(state: dict) -> dict:
             "The plan worker failed to start or to compile the plan's Python steps. Check the "
             "runtime and the plan."
         ),
-        "plan_query_failed": ("The plan failed in its Input Logs step while selecting records."),
+        "plan_query_failed": (
+            "The plan failed while selecting records: in its Input filter, a Filter's rules, or "
+            "an AND or OR block."
+        ),
         "plan_classify_failed": (
-            "The plan failed in a classifier or model step: the model's answers did not fit, "
-            "or an item could not be prepared."
+            "The plan failed in a classifier or model step (an LLM Filter is one): the model's "
+            "answers did not fit, or an item could not be prepared."
         ),
         "plan_metric_failed": (
             "A Python step failed or returned a value that does not match its declared output. "
@@ -574,8 +577,9 @@ def outcome(state: dict) -> dict:
         ),
         "plan_report_failed": "The plan failed while producing the report from its input.",
         "execution_timeout": (
-            "A Python step used an hour of processor time without finishing; it was stopped. "
-            "Check its code for a loop that never ends."
+            "The plan used an hour of processor time without finishing; it was stopped. Check "
+            "Python steps for a loop that never ends, and Filter regexes for a slow pattern "
+            "over long records."
         ),
         "model_output_truncated": (
             "The classifier exhausted its output-token budget before completing its answer. "
@@ -633,10 +637,11 @@ def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list
 def run_counts(settings: Settings, state: dict) -> dict | None:
     """Sessions sent, dropped and classified for the run page. Sent and dropped come from
     what the UI sent (``sent_sessions``); what reaches the classifier is worked out from the
-    frozen plan when the classifier reads the Input filter directly; classified comes only
-    from fields of the verified report that count the classifier's items. Those are items,
-    not sessions: a session longer than the classifier's window is several items. None for
-    runs saved before runs recorded their sessions."""
+    frozen plan when the classifier reads the Input filter directly. With a Filter, AND or OR
+    between them the box decides which records go on, so it is not worked out here.
+    Classified comes only from fields of the verified report that count the classifier's
+    items. Those are items, not sessions: a session longer than the classifier's window is
+    several items. None for runs saved before runs recorded their sessions."""
     sent = state.get("input")
     if not sent:
         return None

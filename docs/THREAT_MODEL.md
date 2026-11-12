@@ -227,6 +227,9 @@ template; no application volume persists. Ordinary browser and traffic-generator
 connections use Web PKI HTTPS and do not independently attest the AIAB; only the
 auditor and explicitly verified SDK/CLI client paths make that channel claim.
 
+Filter and AND/OR steps run in the box on the records a run sent and release nothing new:
+only the Final Report leaves the box.
+
 The fixed report schema is not a fixed byte length or a proven bandwidth limit.
 Exact counts, particularly in short periods, can reveal information. Version 1 has
 no differential privacy, minimum-cell protection, constant-traffic release mechanism,

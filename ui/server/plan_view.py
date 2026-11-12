@@ -48,6 +48,8 @@ ISSUE_WHERE = {
 }
 NODE_LABELS = {
     "input_logs": "Input Logs",
+    "filter_logs": "Filter",
+    "combine_logs": "AND / OR",
     "classifier": "Classifier",
     "run_python": "Run Python",
     "run_llm": "Run LLM",
@@ -142,11 +144,15 @@ def node_views(plan: Any) -> tuple[NodeView, ...]:
             output = f"releases {len(fields)} field{'s' if len(fields) != 1 else ''}"
         else:
             output = f"{port[0]} · {port[1]}" if port else "?"
+        label = NODE_LABELS.get(kind, kind)
+        if kind == "combine_logs":
+            op = (n.get("config") or {}).get("op")
+            label = op.upper() if op in ("and", "or") else label
         out.append(
             NodeView(
                 id=n["id"],
                 type=kind,
-                label=NODE_LABELS.get(kind, kind),
+                label=label,
                 title=str(n.get("title") or n["id"]),
                 inputs=tuple(f"{k} ← {v}" for k, v in inputs.items()),
                 output=output,
