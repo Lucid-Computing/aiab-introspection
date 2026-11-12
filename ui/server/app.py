@@ -90,6 +90,8 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="AIAB agreement UI", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
 )
+
+
 @app.exception_handler(405)
 async def button_address_opened_as_a_page(request: Request, exc: Exception) -> Response:
     """A button's address opened as a page (an old link, or a login that returned to it):
@@ -101,7 +103,6 @@ async def button_address_opened_as_a_page(request: Request, exc: Exception) -> R
         return RedirectResponse(f"/a/{found.group(1)}/{'sign' if found.group(2) else 'plan'}", 303)
     first = request.url.path.split("/")[1] if "/" in request.url.path[1:] else ""
     return RedirectResponse(f"/{first}" if first in ("runs", "logs") else "/agreements", 303)
-
 
 
 app.mount("/assets", StaticFiles(directory=UI_ROOT / "assets"), name="assets")
@@ -487,6 +488,24 @@ def _run_source(request: Request, folder: Path | None, form: Any = None) -> tupl
     return _log_source(request, form), False
 
 
+def _named_elsewhere(source: LogSource, named: set[str]) -> list[tuple[LogSource, Any]]:
+    """Sessions the agreement names that live in another log source than its own: an
+    agreement may name sessions of several sources, and a run sends them all. A source
+    that cannot be read here is skipped."""
+    found = []
+    if not named:
+        return found
+    for other in settings.log_sources:
+        if other.id == source.id or not other.configured:
+            continue
+        try:
+            sessions = proxylogs.sessions(proxylogs.load_index(settings, other))
+        except (OSError, ValueError):
+            continue
+        found.extend((other, s) for s in sessions if s.id in named)
+    return found
+
+
 def _log_source(request: Request, form: Any = None) -> LogSource:
     """The log source a page works on, from its ``logs`` query parameter (or form field):
     ``prod`` for Prod Agent Logs, ``dev`` for Dev Agent Logs, the default."""
@@ -852,9 +871,7 @@ async def _run_preflight(folder: Path | None) -> dict:
             pre = runs.preflight(settings, folder)
     if _pins_differ(pre, box):
         tag = (pre.get("release") or {}).get("tag", "?")
-        pre["missing"].append(
-            f"the box is on another release than {tag}; try again in a minute"
-        )
+        pre["missing"].append(f"the box is on another release than {tag}; try again in a minute")
         pre["ok"] = False
     return pre
 
@@ -941,6 +958,18 @@ async def runs_index(request: Request) -> Response:
             "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
         }
         (outside if item["notes"] else empty if not recs else fits).append(item)
+    labels = [source.label]
+    for other, s in _named_elsewhere(source, named):
+        recs = proxylogs.box_records(s.records)
+        item = {
+            "session": s,
+            "notes": [],
+            "records": len(recs),
+            "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
+        }
+        (fits if recs else empty).append(item)
+        if recs and other.label not in labels:
+            labels.append(other.label)
     totals = {
         "records": sum(i["records"] for i in fits),
         "kb": round(sum(i["kb"] for i in fits), 1),
@@ -953,6 +982,7 @@ async def runs_index(request: Request) -> Response:
         chosen=chosen,
         log_source=source,
         log_sources=settings.log_sources,
+        source_labels=labels,
         source_fixed=source_fixed,
         fits=fits,
         outside=outside,
@@ -991,13 +1021,17 @@ async def runs_start(request: Request) -> Response:
             for s in proxylogs.sessions(proxylogs.load_index(settings, source))
             if s.id in chosen_sessions
         ]
+        named = runs.plan_sessions(target.plan_dir) & chosen_sessions
+        elsewhere = _named_elsewhere(source, named)
+        picked += [s for _, s in elsewhere]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
         records = proxylogs.box_records([r for s in picked for r in s.records])
         if not records:
             return back(here, err="The chosen sessions hold no text to audit.")
         label = (
-            f"{chosen} · {len(picked)} recorded session(s) from {source.label}, "
+            f"{chosen} · {len(picked)} recorded session(s) from "
+            f"{', '.join(dict.fromkeys([source.label, *(o.label for o, _ in elsewhere)]))}, "
             f"{len(records)} records"
         )
         run_id = runs.start_run(settings, user, chosen, target.plan_dir, records, label=label)

@@ -317,10 +317,7 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
   return (
     <>
       <Field label="Log source" hint="The logs this agreement may read. A run takes its records from here.">
-        <Select value={c.source} onChange={(e) => {
-            const { sessions: _drop, ...rest } = c.filter;
-            cfg({ source: e.target.value, filter: rest });
-          }}>
+        <Select value={c.source} onChange={(e) => cfg({ source: e.target.value })}>
           {!SOURCE_OPTIONS.some((o) => o.id === c.source) && <option value={c.source}>{c.source} (not a log source)</option>}
           {SOURCE_OPTIONS.map((o) => (
             <option key={o.id} value={o.id}>
@@ -455,37 +452,56 @@ function SessionPicker({
   value: string[];
   onChange: (sessions: string[]) => void;
 }) {
-  const [rows, setRows] = useState<SessionRow[] | null>(null);
+  // Every log source's sessions, so a session ticked in one source stays in Selected
+  // (with its title) after the pane moves to another source.
+  const [bySource, setBySource] = useState<Record<string, SessionRow[]> | null>(null);
   const [q, setQ] = useState("");
+  // Unticking Select all clears the ticks on screen. The plan itself cannot name "no
+  // session": none named means every session of the log source, which Selected says.
+  const [cleared, setCleared] = useState(false);
   useEffect(() => {
     let live = true;
-    setRows(null);
     if (!AGREEMENT) return;
-    fetch(`/logs/sessions.json?logs=${encodeURIComponent(source)}`, { credentials: "same-origin" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => live && setRows(body && body.source === source ? (body.sessions as SessionRow[]) : []))
-      .catch(() => live && setRows([]));
+    Promise.all(
+      SOURCE_OPTIONS.map((o) =>
+        fetch(`/logs/sessions.json?logs=${encodeURIComponent(o.id)}`, { credentials: "same-origin" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((body) => [o.id, body && body.source === o.id ? (body.sessions as SessionRow[]) : []] as const)
+          .catch(() => [o.id, [] as SessionRow[]] as const),
+      ),
+    ).then((pairs) => live && setBySource(Object.fromEntries(pairs)));
     return () => {
       live = false;
     };
-  }, [source]);
+  }, []);
+  useEffect(() => setCleared(false), [source]);
+  const rows = bySource ? (bySource[source] ?? []) : null;
+  const ids = (rows ?? []).map((r) => r.id);
+  const here = new Set(ids);
   const chosen = new Set(value);
-  const known = new Set((rows ?? []).map((r) => r.id));
-  const gone = value.filter((id) => rows !== null && !known.has(id));
+  const where = new Map<string, { title: string; source: string }>();
+  for (const [id, list] of Object.entries(bySource ?? {}))
+    for (const r of list) where.set(r.id, { title: r.title, source: sourceLabel(id) });
   const needle = q.trim().toLowerCase();
   const shown = (rows ?? []).filter((r) => !needle || `${r.title} ${r.who} ${r.id}`.toLowerCase().includes(needle));
-  // Unticking Select all clears the ticks on screen. The plan itself cannot name "no
-  // session": none named means every session, which the Selected line says.
-  const [cleared, setCleared] = useState(false);
-  useEffect(() => setCleared(false), [source]);
-  const all = value.length === 0 && !cleared;
-  const ids = (rows ?? []).map((r) => r.id);
-  // None named means every session, so unticking one of "all" names all the others.
+  // None named means every session of this source. Otherwise this source is "all" when
+  // each of its sessions is named.
+  const implicit = value.length === 0 && !cleared;
+  const all = implicit || (ids.length > 0 && ids.every((id) => chosen.has(id)));
   const toggle = (id: string) => {
     setCleared(false);
-    onChange(all ? ids.filter((x) => x !== id) : chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+    onChange(implicit ? ids.filter((x) => x !== id) : chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
   };
-  const titles = new Map((rows ?? []).map((r) => [r.id, r.title]));
+  const toggleAll = () => {
+    if (all) {
+      setCleared(true);
+      onChange(value.filter((x) => !here.has(x)));
+    } else {
+      setCleared(false);
+      const others = value.filter((x) => !here.has(x));
+      onChange(others.length ? [...others, ...ids] : []);
+    }
+  };
   return (
     <div className="f">
       <span className="f-label">Sessions</span>
@@ -501,49 +517,54 @@ function SessionPicker({
           <div className="sess-pick">
             {rows.length > 0 && (
               <label className="sess-all">
-                <input
-                  type="checkbox"
-                  checked={all}
-                  onChange={() => {
-                    setCleared(all);
-                    onChange([]);
-                  }}
-                />
+                <input type="checkbox" checked={all} onChange={toggleAll} />
                 <span>Select all</span>
               </label>
             )}
             {shown.map((r) => (
               <label key={r.id}>
-                <input type="checkbox" checked={all || chosen.has(r.id)} onChange={() => toggle(r.id)} />
+                <input type="checkbox" checked={implicit || chosen.has(r.id)} onChange={() => toggle(r.id)} />
                 <span>
                   {r.title}
                   <span className="muted"> · {r.records} records</span>
                 </span>
               </label>
             ))}
-            {shown.length === 0 && gone.length === 0 && (
+            {shown.length === 0 && (
               <span className="f-hint">
                 {SOURCE_OPTIONS.some((o) => o.id === source) ? "No session here." : "Pick a log source first."}
               </span>
             )}
           </div>
           <span className="f-label">Selected</span>
-          {all ? (
-            <span className="f-hint">All {rows.length} sessions</span>
+          {implicit ? (
+            <span className="f-hint">
+              All {rows.length} sessions of {sourceLabel(source)}
+            </span>
           ) : value.length === 0 ? (
             <span className="f-hint">None. Until one is ticked, the plan reads every session.</span>
           ) : (
             <ul className="sess-chosen">
-              {value.map((id) => (
-                <li key={id}>
-                  <span className={titles.has(id) ? undefined : "danger"}>
-                    {titles.get(id) ?? `${id} · not in this log source`}
-                  </span>
-                  <button type="button" aria-label="Remove" onClick={() => onChange(value.filter((x) => x !== id))}>
-                    ×
-                  </button>
-                </li>
-              ))}
+              {value.map((id) => {
+                const at = where.get(id);
+                return (
+                  <li key={id}>
+                    <span className={at ? undefined : "danger"}>
+                      {at ? (
+                        <>
+                          <span className="muted">{at.source} · </span>
+                          {at.title}
+                        </>
+                      ) : (
+                        `${id} · not in any log source here`
+                      )}
+                    </span>
+                    <button type="button" aria-label="Remove" onClick={() => onChange(value.filter((x) => x !== id))}>
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </>
