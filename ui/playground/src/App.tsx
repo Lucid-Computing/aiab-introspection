@@ -3,6 +3,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AGREEMENT, loadAgreement, READONLY, saveAgreement, type ServerIssue } from "./agreement";
 import Canvas from "./components/Canvas";
 import CodePane from "./components/CodePane";
+import { Select } from "./components/fields";
 import Inspector from "./components/Inspector";
 import { badBindings, lintPlan } from "./plan/lint";
 import { SAMPLE_SOURCES, samplePlan } from "./plan/samples";
@@ -197,18 +198,17 @@ export default function App() {
             {AGREEMENT ? `Plan builder · ${AGREEMENT}` : "Plan playground"}
           </span>
           {!AGREEMENT && (
-            <select
+            <Select
               className="bar-select"
               value={state.sample}
               onChange={(e) => loadSample(e.target.value)}
-              title="Sample plans"
             >
               {SAMPLE_SOURCES.map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.label}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
           <button
             className={`bar-status ${state.codeIssues.length ? "bad" : nErr ? "bad" : nWarn ? "warn" : "ok"}`}

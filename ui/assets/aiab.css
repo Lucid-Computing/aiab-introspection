@@ -553,3 +553,17 @@ code.hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var
 .plan-digest { margin: var(--space-1) 0 var(--space-3); font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-2); overflow-wrap: anywhere; }
 .plan-history { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--ink-2); text-decoration: none; font-size: var(--text-sm); }
 .plan-history:hover { color: var(--ink-1); }
+
+/* The site's own dropdown (assets/select.js): a button, and a list that opens under it. */
+select[hidden] { display: none !important; }
+.sel { position: relative; display: inline-block; min-width: 10rem; max-width: 100%; vertical-align: middle; }
+.sel-btn { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); width: 100%; height: 40px; padding: 0 var(--space-3); font-family: var(--font-sans); font-size: var(--text-sm); color: var(--ink-1); background: var(--paper-1); border: var(--border-strong); text-align: left; cursor: pointer; }
+.sel-btn:focus-visible, .sel.is-open .sel-btn { outline: 2px solid var(--accent); outline-offset: -1px; }
+.sel-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sel-caret { flex: none; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--ink-2); }
+.sel.is-open .sel-caret { transform: rotate(180deg); }
+.sel-list { position: absolute; left: 0; top: 100%; z-index: 20; min-width: 100%; max-width: min(90vw, 28rem); max-height: 280px; overflow-y: auto; margin: 0; padding: 0; list-style: none; background: var(--paper-1); border: var(--border-strong); border-top: none; }
+.sel-list[hidden] { display: none; }
+.sel-list button { display: block; width: 100%; padding: var(--space-2) var(--space-3); font-family: var(--font-sans); font-size: var(--text-sm); color: var(--ink-1); background: none; border: none; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.sel-list button:hover { background: var(--paper-2); }
+.sel-list button.on { background: var(--paper-2); font-weight: 600; }

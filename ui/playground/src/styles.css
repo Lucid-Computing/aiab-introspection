@@ -22,7 +22,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 /* ---- toolbar ---- */
 .bar { display: flex; align-items: center; gap: var(--space-4); padding: 8px var(--space-4); border-bottom: var(--border-strong); background: var(--paper-1); flex-wrap: wrap; }
 .bar-brand { display: flex; align-items: center; gap: var(--space-2); margin-right: var(--space-2); }
-.bar-select { width: auto; font-family: var(--font-mono); font-size: var(--text-xs); height: 28px; border-color: var(--rule-strong); }
+.bar-select { width: auto; min-width: 280px; }
+.bar-select .sel-btn { font-family: var(--font-mono); font-size: var(--text-xs); height: 28px; }
+.bar-select .sel-list { position: absolute; left: 0; top: 100%; z-index: 20; min-width: 100%; border-top: var(--border-strong); }
 .bar-spacer { flex: 1; }
 .bar-link { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-2); }
 .bar-link:hover { color: var(--ink-1); text-decoration: underline; text-underline-offset: 3px; }
