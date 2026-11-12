@@ -9,6 +9,26 @@
 {% if run.plan and run.plan.digest %}Plan: <a class="link" href="/runs/{{ run.id }}/plan">{{ run.plan.agreement }} · <span class="mono">{{ run.plan.digest[7:19] }}…</span></a>, {% if run.plan.signed %}signed by both parties{% else %}signatures not verified{% if run.plan.problem %} ({{ run.plan.problem }}){% endif %}{% endif %}{% if run.plan.checked == "derived" %} (derived for a run saved before plan versions were recorded){% else %} when the run started{% endif %}.{% else %}Plan version: not recorded for this run.{% endif %}
 {% if run.status == "running" %}Running. This page refreshes itself every few seconds.{% elif run.status == "failed" %}Stopped: a step failed. Nothing after it ran.{% elif run.status == "interrupted" %}Interrupted: the server restarted while this run was going. Start a new one.{% else %}{{ run.outcome.title }}.{% endif %}</p>
 
+{% if result is not defined %}{% set result = {"rows": [], "records": none, "seconds": none, "model": none, "image": none} %}{% endif %}
+{% if run.status != "running" %}
+<div class="result">
+  <p class="result-title {{ 'bad' if run.outcome.title == 'Flagged' or run.outcome.execution == 'failed' else '' }}">{{ run.outcome.title }}</p>
+  {% if result.rows %}
+  <table class="table result-table">
+    <thead><tr><th>Field</th><th>Value</th><th>Meaning</th></tr></thead>
+    <tbody>
+    {% for f in result.rows %}
+    <tr><td class="mono">{{ f.name }}</td><td class="result-value">{% if f.value is sameas true %}yes{% elif f.value is sameas false %}no{% else %}{{ f.value }}{% endif %}</td><td class="text-muted">{{ f.description }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% elif run.outcome.error %}
+  <p>Error: <code>{{ run.outcome.error }}</code>. {{ run.outcome.help }}</p>
+  {% endif %}
+  <p class="result-facts text-muted">{% if result.records is not none %}{{ result.records }} records sent{% endif %}{% if result.seconds is not none %} · {{ result.seconds }} s{% endif %}{% if result.model %} · model {{ result.model }}{% endif %}{% if result.image %} · box <span class="mono">{{ result.image[7:15] }}</span>{% endif %} · report {{ "verified" if run.outcome.verified else "not verified" }}</p>
+</div>
+{% endif %}
+
 {# which step is "now": the running one, else the failed one, else the last done one #}
 {% set ns = namespace(idx=0) %}
 {% for s in run.steps %}{% if s.status in ["running", "failed"] %}{% set ns.idx = loop.index0 %}{% elif s.status == "done" %}{% set ns.idx = loop.index0 %}{% endif %}{% endfor %}
@@ -78,7 +98,6 @@
       <p>Report verification: {{ 'passed — signature and commitments match' if run.outcome.verified else 'not complete' }}.</p>
       {% if run.outcome.error %}<p>Error: <code>{{ run.outcome.error }}</code>. {{ run.outcome.help }}</p>{% endif %}
       {% if run.result.run_id %}<p>Executor run ID: <code>{{ run.result.run_id }}</code></p>{% endif %}
-      {% if run.outcome.verified and run.outcome.execution == 'completed' %}<pre>{{ run.outcome.result | tojson }}</pre>{% endif %}
     </div>
     {% if now.output %}
     <details class="info" style="margin-top: var(--space-4)">

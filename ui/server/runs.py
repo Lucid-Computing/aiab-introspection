@@ -479,6 +479,49 @@ def list_runs(settings: Settings) -> list[dict]:
     return runs
 
 
+def result_view(settings: Settings, state: dict) -> dict:
+    """What the run page shows of the result: one row per released field with the plan's
+    own description of it (read from the frozen plan copy in the run folder), and a few
+    facts about the run. Empty rows when there is no verified, completed report."""
+    steps = {step["key"]: step for step in state["steps"]}
+    out = state["outcome"]
+    result = out.get("result") if out.get("verified") else None
+    described: dict[str, str] = {}
+    try:
+        plan = json.loads(
+            (settings.runs_dir / state["id"] / "plan" / "plan.json").read_text(encoding="utf-8")
+        )
+        for node in plan.get("nodes", []):
+            if node.get("type") == "final_report":
+                for f in node.get("config", {}).get("fields", []):
+                    described[f.get("name", "")] = f.get("description", "")
+    except (OSError, ValueError, AttributeError):
+        pass
+    rows = [
+        {"name": k, "value": v, "description": described.get(k, "")}
+        for k, v in (result.items() if isinstance(result, dict) else [])
+    ]
+    manifest = (steps.get("attest", {}).get("output") or {}).get("manifest") or {}
+    seconds = None
+    try:
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        seconds = int(
+            (
+                datetime.strptime(state["finished"], fmt)
+                - datetime.strptime(state["started"], fmt)
+            ).total_seconds()
+        )
+    except (KeyError, ValueError, TypeError):
+        pass
+    return {
+        "rows": rows,
+        "records": (steps.get("export", {}).get("output") or {}).get("records"),
+        "seconds": seconds,
+        "model": (manifest.get("model_binding") or {}).get("id"),
+        "image": manifest.get("image_digest"),
+    }
+
+
 def outcome(state: dict) -> dict:
     """Derive the verdict from the report, including runs saved by older UI versions."""
     steps = {step["key"]: step for step in state["steps"]}

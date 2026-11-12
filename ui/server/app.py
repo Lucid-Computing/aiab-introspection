@@ -1023,7 +1023,7 @@ async def run_page(request: Request, run_id: str) -> Response:
     state = runs.load_run(settings, run_id)
     if state is None:
         return back("/runs", err="No such run.")
-    return render(request, "run.html", run=state)
+    return render(request, "run.html", run=state, result=runs.result_view(settings, state))
 
 
 @app.get("/runs/{run_id}/plan")

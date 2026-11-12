@@ -2,6 +2,8 @@
 {% set active = "runs" %}
 {% block title %}Runs · AIAB agreement{% endblock %}
 {% block content %}
+{# Jonathan's party marks: a flask for the lab, a magnifier for the auditor. #}
+{% macro party_icon(party) %}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{% if party == "lab" %}<path d="M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2"/><path d="M6.453 15h11.094"/><path d="M8.5 2h7"/>{% else %}<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>{% endif %}</svg>{% endmacro %}
 <h1>Runs</h1>
 
 <div class="stack">
@@ -44,15 +46,16 @@
   </form>
   <div class="runs-table">
   <table class="table">
-    <thead><tr><th>Started</th><th>Agreement and input</th><th>Plan version</th><th>By</th><th>State</th><th></th></tr></thead>
+    <thead><tr><th>Started</th><th>Agreement</th><th>Plan</th><th>By</th><th>State</th><th></th></tr></thead>
     <tbody>
     {% for r in past.shown %}
+    {% set name = r.agreement or (r.plan.agreement if r.plan else "") or r.transcript %}
     <tr>
       <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
-      <td class="mono">{{ r.transcript }}</td>
-      <td>{% if r.plan and r.plan.digest %}<a class="link mono" href="/runs/{{ r.id }}/plan">{{ r.plan.digest[7:19] }}…</a><br><span class="text-muted">{{ "signed by both" if r.plan.signed else "signatures not verified" }}</span>{% else %}<span class="text-muted">not recorded</span>{% endif %}</td>
-      <td>{{ r.by.user }} <span class="badge badge--ink">{{ r.by.party }}</span></td>
-      <td>{{ r.outcome.title }}{% if r.outcome.verified %}<br><span class="text-muted">Report verified</span>{% endif %}</td>
+      <td title="{{ r.transcript }}">{{ name }}</td>
+      <td>{% if r.plan and r.plan.digest %}<a class="link mono" href="/runs/{{ r.id }}/plan" title="{{ r.plan.digest }} · {{ "signed by both" if r.plan.signed else "signatures not verified" }}">{{ r.plan.digest[7:15] }}</a>{% if not r.plan.signed %} <span class="text-muted">unsigned</span>{% endif %}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td><span class="party-icon" title="{{ r.by.party }}" aria-label="{{ r.by.party }}">{{ party_icon(r.by.party) }}</span>{{ r.by.user }}</td>
+      <td>{{ r.outcome.title }}{% if r.outcome.verified %} <span class="text-muted">· verified</span>{% endif %}</td>
       <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>
     </tr>
     {% else %}

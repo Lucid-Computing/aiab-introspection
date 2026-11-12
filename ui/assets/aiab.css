@@ -582,3 +582,17 @@ select[hidden] { display: none !important; }
 .sign-state.bad { color: var(--destructive); }
 .sign-root { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .sign-root input { flex: 1 1 16rem; min-width: 0; height: 40px; padding: 0 var(--space-3); border: var(--border-strong); background: var(--paper-1); font-family: var(--font-mono); font-size: var(--text-xs); }
+
+/* Header mark; past runs: one line per row */
+.nav-brand { display: inline-flex; align-items: center; gap: var(--space-2); }
+.nav-logo { display: block; height: 28px; width: auto; }
+.runs-table .table td { padding-top: var(--space-2); padding-bottom: var(--space-2); white-space: nowrap; vertical-align: middle; }
+.party-icon { display: inline-flex; vertical-align: -3px; margin-right: var(--space-2); color: var(--ink-2); cursor: help; }
+
+/* Run page: the result first */
+.result { margin: var(--space-6) 0; }
+.result-title { font-size: var(--text-2xl); font-weight: 600; margin: 0 0 var(--space-3); }
+.result-title.bad { color: var(--destructive); }
+.result-table td { padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.result-value { font-weight: 600; }
+.result-facts { font-size: var(--text-sm); margin: var(--space-3) 0 0; }
