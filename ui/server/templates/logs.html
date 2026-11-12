@@ -6,7 +6,7 @@
 {% from "_logmsgs.html" import block, message %}
 {% from "_logsource.html" import selector %}
 {% set src = "logs=" ~ source.id %}
-{% set filters = "&" ~ src ~ "&who=" ~ (who | urlencode) ~ "&q=" ~ (q | urlencode) %}
+{% set filters = "&" ~ src ~ "&who=" ~ (who | urlencode) ~ "&q=" ~ (q | urlencode) ~ ("&empty=1" if show_empty else "") %}
 {% set keep = filters ~ "&page=" ~ page %}
 {% set chat = source.chat %}{# posts people wrote (_logslack.html, _loggithub.html), not calls a model answered #}
 {% set unit = "post" if source.kind == "github" else "msg" if chat else "rec" if source.kind == "plant" else "req" %}
@@ -27,14 +27,14 @@
     {% elif fetch.running %}fetching now
     {% elif fetch.error %}last fetch failed: {{ fetch.error }}
     {% elif fetch.ago is not none %}fetched {% if fetch.ago < 5 %}just now{% else %}{{ fetch.ago }} s ago{% endif %}, again every {{ fetch.every }} s in the background
-    {% else %}not fetched yet{% endif %}</p>
+    {% else %}not fetched yet{% endif %}{% if empty %} · <a class="link" href="/logs?{{ src }}&who={{ who | urlencode }}&q={{ q | urlencode }}{% if not show_empty %}&empty=1{% endif %}">{% if show_empty %}hide{% else %}show{% endif %} the {{ empty }} with no records</a>{% endif %}</p>
 
 <div class="logs">
   <aside class="logs-list">
     {% for s in shown %}
     <a class="logs-item {% if current and s.id == current.id %}on{% endif %}" href="/logs?session={{ s.id | urlencode }}{{ keep }}">
       <span class="logs-title">{{ s.title }}</span>
-      <span class="logs-meta">{{ s.who }} · {{ s.started_short }} · {{ s.records | length }} {{ unit }}{% if s.model %} · {{ s.model }}{% endif %}</span>
+      <span class="logs-meta">{% if chat or source.kind == "github" %}{{ s.who }} · {{ s.started_short }} · {% endif %}{{ s.records | length }} {{ unit }}{% if s.model %} · {{ s.model }}{% endif %}</span>
     </a>
     {% else %}
     <p class="text-muted" style="padding: var(--space-4)">{% if total_requests %}Nothing matches.{% else %}No records on disk yet for {{ source.label }}.{% endif %}</p>

@@ -476,7 +476,12 @@ async def logs_page(request: Request) -> Response:
     records = proxylogs.load_index(settings, source)
     all_sessions = proxylogs.sessions(records)
     whos = sorted({s.who for s in all_sessions})
+    show_empty = request.query_params.get("empty") == "1"
     matched = [s for s in all_sessions if not who or s.who == who]
+    # A session with nothing the box could read (no text in any record) is hidden by default.
+    empty = sum(1 for s in matched if not proxylogs.box_records(s.records))
+    if not show_empty and empty:
+        matched = [s for s in matched if proxylogs.box_records(s.records)]
     if q:
         needle = q.lower()
         matched = [s for s in matched if needle in s.title.lower()]
@@ -516,6 +521,8 @@ async def logs_page(request: Request) -> Response:
         pages=pages,
         recent=LOGS_RECENT,
         matched=len(matched),
+        empty=empty,
+        show_empty=show_empty,
         total_requests=len(records),
         fetch=proxylogs.status(source),
         plant=(
