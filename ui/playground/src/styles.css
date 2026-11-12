@@ -51,94 +51,51 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .side { border-left: var(--border-hairline); overflow-y: auto; background: var(--paper-1); }
 /* With the text open, the selected block grows into a card over the diagram half. */
 .card-over { position: absolute; inset: 14px; overflow-y: auto; z-index: 5; background: var(--paper-1); border: 1px solid var(--ink-1); border-left-width: 6px; box-shadow: 4px 4px 0 0 var(--ink-1); }
-.card-over .insp--input_logs { border-left-color: var(--ink-3); }
-.card-over:has(.insp--classifier) { border-left-color: var(--amber); }
-.card-over:has(.insp--run_llm) { border-left-color: var(--amber-ink); }
-
-/* Data types: one colour and one shape each, used on ports, edges, the legend and type badges.
-   Shapes are angular (swiss.css allows no radius): square, hexagon, diamond, triangle. */
-.app { --t-LogRecords: var(--ink-2); --t-Items: var(--accent, #2F55D4); --t-Classifications: #B7861A; --t-Value: var(--ok, #2F6B2A); --t-Report: var(--ink-1); }
-.pshape { display: inline-block; flex: none; width: 10px; height: 10px; box-sizing: border-box; vertical-align: -1px; }
-.pshape--LogRecords { background: var(--t-LogRecords); }
-.pshape--Items { background: var(--t-Items); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); width: 12px; }
-.pshape--Classifications { background: var(--t-Classifications); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); width: 12px; height: 12px; }
-.pshape--Value { background: var(--t-Value); clip-path: polygon(0 0, 100% 0, 50% 100%); width: 12px; }
-.pshape--Report { background: var(--paper-1); border: 3px double var(--t-Report); }
-.pshape--unknown { border: 1.5px dashed var(--ink-3); }
-
-/* Block kinds: an icon in a coloured tile, on the blocks, the rail and the settings header. */
-.ktile { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; color: var(--paper-1); }
-.ktile .ic { width: 22px; height: 22px; }
-.ktile--sm { width: 26px; height: 26px; }
-.ktile--sm .ic { width: 16px; height: 16px; }
-.ktile--input_logs { background: var(--ink-2); }
-.ktile--classifier { background: var(--accent-tint, #EEF2FD); color: var(--accent-ink, #2444B0); box-shadow: inset 0 0 0 1.5px var(--accent, #2F55D4); }
-.ktile--run_python { background: var(--ink-1); }
-.ktile--run_llm { background: var(--accent, #2F55D4); }
-.ktile--final_report { background: var(--paper-1); color: var(--ink-1); outline: 3px double var(--ink-1); outline-offset: -4px; }
-.ic-strike { stroke: var(--destructive); }
 
 /* ---- block rail: one icon per block kind; click adds, drag places ---- */
 .newblock { position: absolute; top: 12px; left: 12px; z-index: 6; display: flex; flex-direction: column; gap: 4px; padding: 4px; background: var(--paper-1); border: var(--border-strong); }
 /* While a block's card covers the diagram half, the rail would sit on the card: hide it. */
 .graph:has(.card-over) .newblock { display: none; }
-.newblock-item { display: block; padding: 3px; cursor: grab; line-height: 0; }
+.newblock-item { display: block; text-align: left; padding: 4px 10px; cursor: grab; font-size: var(--text-sm); color: var(--ink-1); }
 .newblock-item:hover { background: var(--paper-2); }
 .newblock-item:active { cursor: grabbing; }
-.newblock-item:focus-visible { outline: 2px solid var(--amber); }
-.newblock-item .ktile { width: 32px; height: 32px; }
-.newblock-item .ktile .ic { width: 18px; height: 18px; }
+.newblock-item:focus-visible { outline: 2px solid var(--accent); }
 
-.legend { position: absolute; right: 12px; bottom: 12px; z-index: 4; display: flex; gap: 12px; padding: 4px 8px; background: var(--paper-1); border: var(--border-hairline); font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); pointer-events: none; }
-.legend span { display: inline-flex; align-items: center; gap: 5px; }
-
-/* ---- blocks: fixed size (layout.ts NODE_W x NODE_H) ---- */
-.pn { position: relative; box-sizing: border-box; width: 280px; height: 64px; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 11px; background: var(--paper-1); border: 1px solid var(--rule-strong); font-size: var(--text-sm); }
+/* ---- blocks: fixed size (layout.ts NODE_W x NODE_H): kind, title, one line ---- */
+.pn { position: relative; box-sizing: border-box; width: 280px; height: 64px; padding: 7px 12px; background: var(--paper-1); border: 1px solid var(--rule-strong); font-size: var(--text-sm); }
 .pn.is-selected { border-color: var(--ink-1); box-shadow: 3px 3px 0 0 var(--ink-1); }
 .pn.has-error { border-color: var(--destructive); }
 .pn.is-unfinished { border-style: dashed; border-color: var(--ink-3); }
-.pn-body { min-width: 0; flex: 1; }
-.pn-title { font-size: 14px; font-weight: 600; line-height: 20px; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-chips { display: flex; align-items: center; gap: 10px; height: 18px; margin-top: 2px; font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); overflow: hidden; white-space: nowrap; }
-.pn-chip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
-.pn-chip .ic { width: 13px; height: 13px; flex: none; }
-.pn-chip--todo { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
-.pn-chip--err { color: var(--destructive); overflow: hidden; text-overflow: ellipsis; }
-.pn-dot { display: inline-block; width: 9px; height: 9px; border: 1px solid var(--ink-2); box-sizing: border-box; }
-.pn-dot.is-flag { background: var(--destructive); border-color: var(--destructive); }
+.pn-kind { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); line-height: 14px; }
+.pn-title { font-size: 14px; font-weight: 600; line-height: 18px; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-line { font-size: 12px; line-height: 16px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-line.is-todo { color: var(--ink-3); }
+.pn-line.is-bad { color: var(--destructive); }
 
-/* Type badges in the settings pane: the port shape, then the type name. */
-.tbadge { display: inline-flex; align-items: center; gap: 5px; padding: 0 6px; height: 18px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--rule-strong); color: var(--ink-1); background: var(--paper-1); white-space: nowrap; }
-.tbadge--unknown { border-style: dashed; color: var(--ink-3); }
-.tbadge.is-bad { background: var(--destructive); border-color: var(--destructive); color: var(--paper-1); }
+/* The data type of a port in the settings pane, as text. */
+.tbadge { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
+.tbadge.is-bad { color: var(--destructive); font-weight: 600; }
 
-/* Ports: the handle is a transparent hit area; the shape inside it is the data type. */
-.pn-handle.react-flow__handle { width: 16px; height: 16px; display: grid; place-items: center; background: transparent; border: none; border-radius: 0; }
-.pn-handle .pshape { width: 12px; height: 12px; pointer-events: none; transition: transform 80ms; }
-.pn-handle .pshape--Classifications, .pn-handle .pshape--Value { width: 14px; height: 14px; }
-.pn-handle .pshape--unknown { background: var(--paper-1); }
-.pn-handle:hover .pshape, .react-flow__handle.connectingto .pshape, .react-flow__handle.connectionindicator.valid:hover .pshape { transform: scale(1.35); }
-.pn-handle--new { opacity: 0.5; }
+/* Ports: one small square each. */
+.pn-handle.react-flow__handle { width: 10px; height: 10px; background: var(--ink-2); border: 1px solid var(--paper-1); border-radius: 0; }
+.pn-handle:hover, .react-flow__handle.connectingto, .react-flow__handle.connectionindicator.valid:hover { background: var(--ink-1); transform: translate(-50%, 0) scale(1.4); }
+.pn-handle--new { opacity: 0.4; }
 .pn:hover .pn-handle--new, .pn-handle--new.connectingto { opacity: 1; }
-.pn-handle.is-bad { outline: 2px solid var(--destructive); outline-offset: 0; }
+.pn-handle.is-bad { background: var(--destructive); }
 
 /* React Flow chrome in the house style */
 .react-flow svg { max-width: none; } /* swiss.css caps svg at 100%, which hides edges */
 .react-flow__node { border-radius: 0; }
-.react-flow__edge-path { stroke: var(--ink-3); stroke-width: 2.5; }
-.react-flow__edge.edge--LogRecords .react-flow__edge-path { stroke: var(--t-LogRecords); }
-.react-flow__edge.edge--Items .react-flow__edge-path { stroke: var(--t-Items); }
-.react-flow__edge.edge--Classifications .react-flow__edge-path { stroke: var(--t-Classifications); }
-.react-flow__edge.edge--Value .react-flow__edge-path { stroke: var(--t-Value); }
+.react-flow__edge-path { stroke: var(--ink-2); stroke-width: 1.5; }
 .react-flow__edge.edge--unknown .react-flow__edge-path { stroke-dasharray: 4 4; }
-.react-flow__edge.selected .react-flow__edge-path { stroke-width: 5; }
+.react-flow__edge.selected .react-flow__edge-path { stroke: var(--ink-1); stroke-width: 3; }
 .react-flow__edge.is-invalid .react-flow__edge-path { stroke: var(--destructive); stroke-dasharray: 6 4; }
 .react-flow__edge-text { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-1); }
 .react-flow__edge.is-invalid .react-flow__edge-text { fill: var(--destructive); }
 .react-flow__edge-textbg { fill: var(--paper-1); }
 .react-flow__controls { box-shadow: none; border: var(--border-strong); }
 .react-flow__controls-button { background: var(--paper-1); border-bottom: var(--border-hairline); }
-.react-flow__connectionline path { stroke: var(--amber-ink); stroke-width: 2; }
+.react-flow__connectionline path { stroke: var(--ink-1); stroke-width: 1.5; }
 
 /* ---- inspector ---- */
 .iostrip { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: baseline; font-size: var(--text-xs); padding: 6px 8px; border: var(--border-strong); background: var(--paper-2); }
@@ -156,7 +113,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .insp-id { margin-left: auto; width: 150px; border-color: transparent; background: transparent; text-align: right; text-transform: none; letter-spacing: 0; color: var(--ink-2); }
 .insp-id:hover { border-color: var(--rule-strong); }
 .insp-head { border-bottom-color: var(--rule-strong) !important; }
-.insp--classifier .insp-head { box-shadow: inset 0 -3px 0 0 var(--amber); }
 .insp-blurb { color: var(--ink-2); font-size: var(--text-sm); }
 .insp-issues { list-style: none; border: var(--border-strong); }
 .insp-issues li { padding: 4px 8px; font-size: var(--text-xs); border-bottom: var(--border-hairline); }

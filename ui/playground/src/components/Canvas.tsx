@@ -16,7 +16,6 @@ import { connect, deleteNodes, disconnect } from "../plan/ops";
 import { type Issue, NODE_TYPES, type NodeType } from "../plan/types";
 import type { Action, State } from "../state/store";
 import NewBlock, { BLOCK_DRAG, placeBlock } from "./NewBlock";
-import { PortShape } from "./icons";
 import PlanNodeView from "./PlanNodeView";
 
 const nodeTypes = {
@@ -167,21 +166,7 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
         </Controls>
       </ReactFlow>
       <NewBlock plan={plan} layout={layout} dispatch={dispatch} />
-      <TypeLegend />
     </div>
   );
 }
 
-/** Which port shape is which data type. */
-function TypeLegend() {
-  return (
-    <div className="legend" aria-label="Port shapes">
-      {(["LogRecords", "Items", "Classifications", "Value"] as const).map((t) => (
-        <span key={t}>
-          <PortShape type={t} />
-          {t}
-        </span>
-      ))}
-    </div>
-  );
-}

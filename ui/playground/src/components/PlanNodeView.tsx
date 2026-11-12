@@ -3,16 +3,12 @@ import { memo, useEffect } from "react";
 import { type FlowNode, NEW_INPUT } from "../plan/graph";
 import { accepts, INPUT_RULES } from "../plan/ports";
 import type { PortType } from "../plan/types";
-import { Icon, KindTile, PortShape } from "./icons";
-import { chips, labelDots, NODE_META } from "./nodeMeta";
+import { line, NODE_META } from "./nodeMeta";
 
 /**
- * One block per node: the kind as an icon tile, the title, and a row of icon chips for the
- * settings worth seeing at a glance. The plan flows top to bottom: inputs are ports on the
- * top edge (left to right in row order), the output is a port on the bottom edge. A port's
- * shape and colour are its data type, and an edge takes the colour of the type it carries,
- * so a mismatch shows as two different shapes on one edge. Names, types and value shapes
- * are in the hover text. The block has a fixed size (layout.ts NODE_W x NODE_H).
+ * One block per node: the kind, the title, one line. The plan flows top to bottom: inputs
+ * are ports on the top edge (left to right in row order), the output is a port on the bottom
+ * edge. Names, types and value shapes are in the hover text. Fixed size (layout.ts).
  */
 function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
@@ -32,16 +28,13 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
       const bad = i.type !== null && !accepts(n.type, i.type);
       return {
         id: i.name,
-        type: i.ref ? i.type : null,
         bad,
         title: i.ref
           ? `${i.name} ← ${i.ref}: ${i.type ?? "?"}${i.shape ? `\n${i.shape}` : ""}${bad ? `\n${meta.label} does not accept ${i.type}` : ""}`
           : `${i.name}: not connected`,
       };
     }),
-    ...(rule.kind === "dynamic"
-      ? [{ id: NEW_INPUT, type: null, bad: false, title: "Drop a connection here to add an input" }]
-      : []),
+    ...(rule.kind === "dynamic" ? [{ id: NEW_INPUT, bad: false, title: "Drop a connection here to add an input" }] : []),
   ];
 
   const hover = [
@@ -51,13 +44,13 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
     ...data.issues.map((i) => `! ${i.message.replace(`${n.id}: `, "")}`),
   ].join("\n");
 
-  const dots = labelDots(n);
   // Issue messages start with the node id ("report: …" or "report.result: …"); the block already says which.
   const short = (m: string) => m.replace(new RegExp(`^${n.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[.:]\\s*`), "");
+  const note = errors.length ? short(errors[0].message) : todo ? short(todo.message) : line(n);
 
   return (
     <div
-      className={`pn pn--${n.type}${selected ? " is-selected" : ""}${errors.length ? " has-error" : todo ? " is-unfinished" : ""}`}
+      className={`pn${selected ? " is-selected" : ""}${errors.length ? " has-error" : todo ? " is-unfinished" : ""}`}
       title={hover}
     >
       {rule.kind !== "none" &&
@@ -70,40 +63,11 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
             title={h.title}
             className={`pn-handle${h.id === NEW_INPUT ? " pn-handle--new" : ""}${h.bad ? " is-bad" : ""}`}
             style={{ left: `${((k + 1) / (all.length + 1)) * 100}%` }}
-          >
-            <PortShape type={h.type as PortType | null} />
-          </Handle>
+          />
         ))}
-      <KindTile type={n.type} />
-      <div className="pn-body">
-        <div className="pn-title">{n.title || n.id}</div>
-        <div className="pn-chips">
-          {errors.length > 0 ? (
-            <span className="pn-chip pn-chip--err">
-              <Icon name="warn" />
-              {short(errors[0].message)}
-            </span>
-          ) : todo ? (
-            <span className="pn-chip pn-chip--todo">{short(todo.message)}</span>
-          ) : (
-            <>
-              {dots.length > 0 && (
-                <span className="pn-chip" title={dots.map((d) => `${d.flag ? "⚑ " : ""}${d.name}${d.description ? `: ${d.description}` : ""}`).join("\n")}>
-                  {dots.map((d) => (
-                    <span key={d.name} className={`pn-dot${d.flag ? " is-flag" : ""}`} />
-                  ))}
-                </span>
-              )}
-              {chips(n).map((c, k) => (
-                <span key={k} className="pn-chip" title={c.title}>
-                  {c.icon && <Icon name={c.icon} />}
-                  {c.text}
-                </span>
-              ))}
-            </>
-          )}
-        </div>
-      </div>
+      <div className="pn-kind">{meta.label}</div>
+      <div className="pn-title">{n.title || n.id}</div>
+      <div className={`pn-line${errors.length ? " is-bad" : todo ? " is-todo" : ""}`}>{note}</div>
       {output && output.type !== "Report" && (
         <Handle
           type="source"
@@ -111,22 +75,15 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
           id={output.name}
           className="pn-handle"
           title={`${output.name}: ${output.type}\n${output.shape}`}
-        >
-          <PortShape type={output.type} />
-        </Handle>
+        />
       )}
     </div>
   );
 }
 
-/** The port type, styled the same wherever it appears; the shape matches the ports on the diagram. */
+/** The data type of a port, as plain text; red when the block does not accept it. */
 export function TypeBadge({ type, bad = false }: { type: PortType | "Report" | null; bad?: boolean }) {
-  return (
-    <span className={`tbadge tbadge--${type ?? "unknown"}${bad ? " is-bad" : ""}`}>
-      <PortShape type={type} />
-      {type ?? "?"}
-    </span>
-  );
+  return <span className={`tbadge${bad ? " is-bad" : ""}`}>{type ?? "?"}</span>;
 }
 
 export default memo(PlanNodeView);

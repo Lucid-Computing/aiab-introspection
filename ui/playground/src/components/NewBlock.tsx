@@ -3,13 +3,15 @@ import type { Dispatch } from "react";
 import { READONLY } from "../agreement";
 import { NODE_H, NODE_W } from "../plan/layout";
 import { addNode } from "../plan/ops";
-import { NODE_TYPES, type NodeType, type Plan } from "../plan/types";
+import type { NodeType, Plan } from "../plan/types";
 import type { Action, State } from "../state/store";
-import { KindTile } from "./icons";
 import { NODE_META } from "./nodeMeta";
 
 /** dataTransfer type for a block kind dragged from the rail onto the diagram. */
 export const BLOCK_DRAG = "application/x-aiab-block";
+
+/** The kinds a person adds by hand. Metric and Agent stay in the format and open when a plan has them. */
+export const OFFERED: NodeType[] = ["input_logs", "classifier", "final_report"];
 
 /** Add a block of `type` centred on `at` (flow coordinates), moved down until it overlaps no other block. */
 export function placeBlock(
@@ -26,7 +28,7 @@ export function placeBlock(
   dispatch({ type: "setPlan", plan: next, layout: { ...layout, [id]: p }, select: id });
 }
 
-/** The block rail on the diagram: one icon per block kind. Click adds one near the centre; drag places it. */
+/** The block rail on the diagram: one button per kind. Click adds one near the centre; drag places it. */
 export default function NewBlock({
   plan,
   layout,
@@ -47,11 +49,11 @@ export default function NewBlock({
 
   return (
     <div className="newblock" role="toolbar" aria-label="Add a block">
-      {NODE_TYPES.map((t) => (
+      {OFFERED.map((t) => (
         <button
           key={t}
           className="newblock-item"
-          title={`${NODE_META[t].label}\n${NODE_META[t].blurb}\nClick to add, or drag onto the diagram`}
+          title="Click to add, or drag onto the diagram"
           aria-label={`Add ${NODE_META[t].label}`}
           draggable
           onDragStart={(e) => {
@@ -60,7 +62,7 @@ export default function NewBlock({
           }}
           onClick={(e) => addAtCentre(t, e.currentTarget)}
         >
-          <KindTile type={t} small />
+          + {NODE_META[t].label}
         </button>
       ))}
     </div>

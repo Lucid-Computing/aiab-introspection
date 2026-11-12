@@ -21,7 +21,6 @@ import {
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
 import { CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
-import { KindTile } from "./icons";
 import { NODE_META } from "./nodeMeta";
 import { TypeBadge } from "./PlanNodeView";
 
@@ -49,7 +48,7 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
   return (
     <div className={`insp insp--${node.type}`}>
       <div className="insp-head" title={meta.blurb}>
-        <KindTile type={node.type} small /> {meta.label}
+        {meta.label}
         <CommitInput className="insp-id mono" value={node.id} onCommit={(v) => op(renameNode(plan, node.id, v), v)} />
         <button className="x" title="Close" onClick={() => dispatch({ type: "select", id: null })}>
           ×
