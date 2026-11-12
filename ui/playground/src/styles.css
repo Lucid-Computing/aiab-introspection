@@ -214,3 +214,9 @@ details.f > summary { cursor: pointer; }
   .work--two { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .side, .work--two .code { border-left: none; border-top: var(--border-ink); }
 }
+
+.sess-pick .sess-all { font-weight: 600; position: sticky; top: 0; background: var(--paper-1); }
+.sess-chosen { list-style: none; margin: 0; padding: 0; border: var(--border-strong); max-height: 160px; overflow-y: auto; }
+.sess-chosen li { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 4px 8px; border-bottom: var(--border-hairline); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.sess-chosen li:last-child { border-bottom: none; }
+.sess-chosen button { border: none; background: none; cursor: pointer; font-size: var(--text-base); line-height: 1; color: var(--ink-2); padding: 0 2px; }

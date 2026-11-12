@@ -317,7 +317,10 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
   return (
     <>
       <Field label="Log source" hint="The logs this agreement may read. A run takes its records from here.">
-        <Select value={c.source} onChange={(e) => cfg({ source: e.target.value })}>
+        <Select value={c.source} onChange={(e) => {
+            const { sessions: _drop, ...rest } = c.filter;
+            cfg({ source: e.target.value, filter: rest });
+          }}>
           {!SOURCE_OPTIONS.some((o) => o.id === c.source) && <option value={c.source}>{c.source} (not a log source)</option>}
           {SOURCE_OPTIONS.map((o) => (
             <option key={o.id} value={o.id}>
@@ -471,15 +474,15 @@ function SessionPicker({
   const gone = value.filter((id) => rows !== null && !known.has(id));
   const needle = q.trim().toLowerCase();
   const shown = (rows ?? []).filter((r) => !needle || `${r.title} ${r.who} ${r.id}`.toLowerCase().includes(needle));
-  const toggle = (id: string) => onChange(chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  const all = value.length === 0;
+  const ids = (rows ?? []).map((r) => r.id);
+  // None named means every session, so unticking one of "all" names all the others.
+  const toggle = (id: string) =>
+    onChange(all ? ids.filter((x) => x !== id) : chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  const titles = new Map((rows ?? []).map((r) => [r.id, r.title]));
   return (
     <div className="f">
       <span className="f-label">Sessions</span>
-      <span className="f-hint">
-        {value.length === 0
-          ? "Every session of the log source. Tick sessions to read only those."
-          : `${value.length} session${value.length === 1 ? "" : "s"} chosen. Untick all to read every session.`}
-      </span>
       {!AGREEMENT || rows === null ? (
         !AGREEMENT ? (
           <LinesInput value={value} onChange={onChange} />
@@ -490,19 +493,19 @@ function SessionPicker({
         <>
           {rows.length > 8 && <input value={q} placeholder="Search sessions" onChange={(e) => setQ(e.target.value)} />}
           <div className="sess-pick">
+            {rows.length > 0 && (
+              <label className="sess-all">
+                <input type="checkbox" checked={all} disabled={all} onChange={() => onChange([])} />
+                <span>Select all</span>
+              </label>
+            )}
             {shown.map((r) => (
               <label key={r.id}>
-                <input type="checkbox" checked={chosen.has(r.id)} onChange={() => toggle(r.id)} />
+                <input type="checkbox" checked={all || chosen.has(r.id)} onChange={() => toggle(r.id)} />
                 <span>
                   {r.title}
                   <span className="muted"> · {r.records} records</span>
                 </span>
-              </label>
-            ))}
-            {gone.map((id) => (
-              <label key={id}>
-                <input type="checkbox" checked onChange={() => toggle(id)} />
-                <span className="danger">{id} · not in this log source any more</span>
               </label>
             ))}
             {shown.length === 0 && gone.length === 0 && (
@@ -511,6 +514,23 @@ function SessionPicker({
               </span>
             )}
           </div>
+          <span className="f-label">Selected</span>
+          {all ? (
+            <span className="f-hint">All {rows.length} sessions</span>
+          ) : (
+            <ul className="sess-chosen">
+              {value.map((id) => (
+                <li key={id}>
+                  <span className={titles.has(id) ? undefined : "danger"}>
+                    {titles.get(id) ?? `${id} · not in this log source`}
+                  </span>
+                  <button type="button" aria-label="Remove" onClick={() => onChange(value.filter((x) => x !== id))}>
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </>
       )}
     </div>
