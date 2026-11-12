@@ -57,11 +57,10 @@ export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DATA/repo/static/deploy/tinfoil/
 # accounts work next to WorkOS, or alone without it; the accounts file is created on first
 # start from UI_BOOTSTRAP_ACCOUNTS="user:party:password,..." (new names only) and edited with
 # server.auth add.
-if [ -n "${OIDC_ISSUER:-}" ] && [ -n "${OIDC_CLIENT_ID:-}" ] && [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
-  echo "login: OpenID Connect ($OIDC_ISSUER) and local accounts"
-else
-  echo "login: local accounts only (no OIDC settings)"
-fi
+# Production only: the demo server has no WorkOS login, whatever the Render settings say.
+# Local password accounts are the only way in. dev keeps WorkOS; do not merge this to master.
+unset OIDC_ISSUER OIDC_CLIENT_ID OIDC_CLIENT_SECRET
+echo "login: local accounts only (WorkOS is off on production)"
 if [ -n "${UI_BOOTSTRAP_ACCOUNTS:-}" ]; then
   echo "login: local accounts from UI_BOOTSTRAP_ACCOUNTS (new ones only; existing passwords kept)"
   uv run --no-sync python -m server.auth bootstrap
