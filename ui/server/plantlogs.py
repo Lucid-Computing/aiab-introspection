@@ -158,7 +158,69 @@ def load_index(root: Path, paths: list[Path]) -> list[PlantRecord]:
                     box=r,
                 )
             )
+    out.extend(_tables(root, paths, len(paths)))
     out.sort(key=lambda r: (r.time, r.box["batch"], r.box["offset"]))
+    return out
+
+
+NETWORK_ROWS_PER_RECORD = 100
+TABLES = (  # file, the name its session carries, the column that dates a row
+    ("jobs.csv", "jobs", ("started_utc", "submitted_utc")),
+    ("network.csv", "network", ("start_utc",)),
+    ("scores.csv", "scores", ("model_saved_utc",)),
+)
+
+
+def _tables(root: Path, paths: list[Path], batch: int) -> list[PlantRecord]:
+    """A run's other logs as sessions of their own, so an agreement can read them next to,
+    or instead of, the transcript: its Slurm jobs, its network traffic and its scores. One
+    record per job or score row; network rows go in groups, as there are thousands. Each
+    table is one session named ``<run>-jobs``, ``<run>-network`` or ``<folder>-scores``."""
+    out: list[PlantRecord] = []
+    seen: set[Path] = set()
+    for run in sorted({p.parent.parent for p in paths}):
+        for name, label, clocks in TABLES:
+            path = run / name if (run / name).is_file() else run.parent / name
+            if not path.is_file() or path.resolve() in seen:
+                continue
+            seen.add(path.resolve())
+            rows = _read_csv(path)
+            if not rows:
+                continue
+            size = NETWORK_ROWS_PER_RECORD if label == "network" else 1
+            session = f"{path.parent.name}-{label}"
+            for offset, i in enumerate(range(0, len(rows), size)):
+                group = rows[i : i + size]
+                when = next((_time(group[0].get(c) or "") for c in clocks if group[0].get(c)), 0.0)
+                when = when or (out[-1].time if out else 0.0)
+                if size == 1:
+                    content = ", ".join(f"{k}={v}" for k, v in group[0].items())
+                else:
+                    content = (
+                        ",".join(group[0]) + "\n" + "\n".join(",".join(r.values()) for r in group)
+                    )
+                box = {
+                    "stream": "proxy",
+                    "batch": batch,
+                    "offset": offset,
+                    "agent_id": f"plant-{label}",
+                    "session_id": session,
+                    "ts": datetime.fromtimestamp(when, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "kind": "tool_result",
+                    "content": content,
+                }
+                out.append(
+                    PlantRecord(
+                        id=f"{batch}:{offset}",
+                        time=when,
+                        who=f"plant-{label}",
+                        session_id=session,
+                        kind="tool_result",
+                        run=str(run.relative_to(root)),
+                        box=box,
+                    )
+                )
+            batch += 1
     return out
 
 
