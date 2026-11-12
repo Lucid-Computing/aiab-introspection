@@ -6,7 +6,8 @@
 # that sits next to the Dockerfile).
 #
 # Nothing secret is in the image. The keys and the addresses come from the environment at
-# run time; see logger/README.md.
+# run time; see logger/README.md. The proxy's data volume is mounted read-only at
+# /proxy-data; the logger writes nothing, so the container can also run --read-only.
 FROM docker.io/astral/uv:0.11.6 AS uv
 
 FROM docker.io/library/python:3.12-slim
@@ -20,9 +21,8 @@ COPY logger/pyproject.toml logger/uv.lock /app/logger/
 WORKDIR /app/logger
 RUN uv sync --locked --no-dev
 COPY logger/logserver /app/logger/logserver
-# The proxy's segments are kept here between syncs; mount a volume to keep them over restarts.
-RUN useradd --uid 10001 --create-home logger && mkdir /data && chown logger /data
+RUN useradd --uid 10001 --create-home logger
 USER logger
-ENV DATA_DIR=/data PATH="/app/logger/.venv/bin:$PATH"
+ENV PATH="/app/logger/.venv/bin:$PATH"
 EXPOSE 8080
 CMD ["uvicorn", "--factory", "logserver.app:main", "--host", "0.0.0.0", "--port", "8080"]

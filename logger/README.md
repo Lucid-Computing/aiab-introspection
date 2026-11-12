@@ -12,11 +12,19 @@ So the agreement UI (on Render) picks the input from metadata and forwards ciphe
 readable logs stay on the proxy's machine (MAC-377).
 
 ```
-logging proxy ──/_logs──► this server ──metadata──────► agreement UI ──► the box
- (plain logs)             (reads, seals)  sealed records    (signs, forwards)   (opens)
-                                │
-                                └── attests the box, fetches its key (Tinfoil SDK)
+logging proxy ──proxy-data (read-only)──► this server ──metadata──────► agreement UI ──► the box
+ (plain logs)                             (reads, seals)  sealed records    (signs, forwards)   (opens)
+                                                │
+                                                └── attests the box, fetches its key (Tinfoil SDK)
 ```
+
+It reads the proxy's log files in place, from the proxy's data volume mounted read-only, the
+way the worm-outbox does: no key and no HTTP between the two. The proxy keeps its log as one
+stream of JSON lines in three kinds of files (its `segments.py`): sealed
+`segments/requests-<first>-<last>.jsonl.zst`, pending `segments/requests-<first>-<last>.jsonl`,
+then the live `requests.jsonl`. Each sealed or pending file is parsed once; the live file is
+read on from where the last read stopped, up to its last complete line. A file that cannot be
+read (gone, corrupt, truncated) is skipped and named in `/v1/status`; the rest is still served.
 
 ## The API
 
@@ -26,8 +34,8 @@ Every route but `/healthz` takes this server's key in the `x-log-key` header.
 |---|---|
 | `GET /v1/sessions` | `{"whos": [...], "sessions": [...]}`, newest session first. `?who=alice` keeps one person's. |
 | `POST /v1/export` | Body `{"sessions": ["<id>", ...]}`. The records of those sessions, sealed. |
-| `GET /v1/status` | The last sync with the proxy, the number of calls held, the box sealed to. |
-| `POST /v1/sync` | Asks the proxy for new segments now (it also happens every `SYNC_SECONDS`). |
+| `GET /v1/status` | The last read of the proxy's files (`at`, `error`, `result`), the files it could not read (`problems`), the number of calls held, the box sealed to. |
+| `POST /v1/sync` | Reads the proxy's files again now (it also happens every `SYNC_SECONDS`). Returns `{"new", "segments", "live", "calls"}`: files parsed this time, sealed and pending files listed, lines in the live file, calls held. |
 | `GET /healthz` | `{"ok": true}`. No key. |
 
 A session in `/v1/sessions`:
@@ -64,9 +72,12 @@ An export:
 }
 ```
 
+Every route answers from the last read; none reads a file. Until the first read after a
+start has finished, `/v1/sessions` is empty and `/v1/status` says `"at": null`.
+
 Errors: `401` without the key, `404` for a session id it does not hold, `422` for a body
-with any other field or sessions that hold no text, `502` when the proxy or the box does
-not answer or the box's attestation fails.
+with any other field or sessions that hold no text, `502` when the box does not answer or
+its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot be read.
 
 ## What it guarantees, and what it does not
 
@@ -80,8 +91,9 @@ not answer or the box's attestation fails.
 - **The export is not signed here.** The agreement UI signs the sealed records, as it does
   today, with the logger key the box trusts. Sealing hides the text; it does not prove where
   the records came from. Moving that key to this server is a later step and changes no format.
-- **This server holds plaintext**, on its disk (`DATA_DIR`) and in memory, like the proxy
-  beside it. It must run where the proxy runs.
+- **This server reads plaintext**, from the proxy's files, and holds the parts a run needs in
+  memory. It keeps no copy on disk and writes nothing to the proxy's volume. It must run where
+  the proxy runs.
 
 ## Running it
 
@@ -89,21 +101,18 @@ The image holds no secret; everything comes from the environment.
 
 | Variable | Meaning |
 |---|---|
-| `PROXY_URL` | The logging proxy's address, the one that serves `/_logs`. |
-| `PROXY_KEY` | The proxy's reader key. |
-| `PROXY_KEY_HEADER` | The header the proxy takes it in. Default `x-log-key`; the test proxy takes `x-proxy-key`. |
+| `PROXY_DIR` | The proxy's data directory (the one holding `requests.jsonl` and `segments/`), mounted read-only. Default `/proxy-data`. |
 | `API_KEY` | The key callers of this server send as `x-log-key`. Pick a long random one. |
 | `BOX_HOST` | The box to seal to, e.g. `aiab-dev.lucid-computing.containers.tinfoil.dev`. |
 | `BOX_REPO` | Its Tinfoil config repo, e.g. `Lucid-Computing/aiab-tinfoil-staging-config`. |
-| `DATA_DIR` | Where the proxy's segments are kept. Default `/data`. Optional volume. |
-| `SYNC_SECONDS` | How often to ask the proxy for new segments. Default `300`. |
+| `SYNC_SECONDS` | How often to read the proxy's files again. Default `300`. |
 
-A missing `PROXY_URL`, `PROXY_KEY`, `API_KEY`, `BOX_HOST` or `BOX_REPO` stops the server at
-start.
+A missing `API_KEY`, `BOX_HOST` or `BOX_REPO` stops the server at start. The image runs as
+uid 10001, which must be able to read the proxy's files.
 
 ```bash
-docker run -d -p 8080:8080 \
-  -e PROXY_URL=https://llm-proxy.example -e PROXY_KEY=… \
+docker run -d -p 8080:8080 --read-only \
+  -v proxy-data:/proxy-data:ro \
   -e API_KEY=… \
   -e BOX_HOST=aiab-dev.lucid-computing.containers.tinfoil.dev \
   -e BOX_REPO=Lucid-Computing/aiab-tinfoil-staging-config \
@@ -117,9 +126,9 @@ that touches this folder or the box's sealing code, and tagged with the commit a
 
 ```bash
 cd logger
-uv run --locked python -m pytest        # a stand-in proxy and a stand-in box, nothing mocked between
+uv run --locked python -m pytest        # a proxy directory in the real layout and a stand-in box
 uv run --locked ruff check . && uv run --locked ruff format --check .
-PROXY_URL=… PROXY_KEY=… API_KEY=… BOX_HOST=… BOX_REPO=… DATA_DIR=/tmp/logger-data \
+PROXY_DIR=/path/to/logging-proxy/logs API_KEY=… BOX_HOST=… BOX_REPO=… \
   uv run --locked uvicorn --factory logserver.app:main --port 8080
 ```
 
