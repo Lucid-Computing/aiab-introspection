@@ -64,27 +64,29 @@ async def remote(args, bundle):
                     for role in ("lab", "auditor")
                 },
             }
-            status, value = await client.request("POST", "/aiab/runs", submission)
+            # Admission checks every record before answering: no deadline on a large one.
+            status, value = await client.request("POST", "/aiab/runs", submission, timeout=None)
             if status != 202:
                 raise AuditError(value.get("error", "submission_failed"))
             value["input_commitment"] = commitment
         else:
-            async with asyncio.timeout(bundle.config["limits"]["max_runtime_seconds_per_run"] + 30):
-                while True:
-                    status, value = await client.request("GET", f"/aiab/runs/{args.run_id}/report")
-                    if status == 200:
-                        verify_report(
-                            value,
-                            client.identity,
-                            bundle,
-                            client.manifest,
-                            run_id=args.run_id,
-                            input_commitment=args.input_commitment,
-                        )
-                        break
-                    if status != 202:
-                        raise AuditError("report_unavailable")
-                    await asyncio.sleep(1)
+            # No deadline: a run takes as long as its records need. The box answers 202 while
+            # it runs; a restart ends the wait (unknown_run, or identity_changed).
+            while True:
+                status, value = await client.request("GET", f"/aiab/runs/{args.run_id}/report")
+                if status == 200:
+                    verify_report(
+                        value,
+                        client.identity,
+                        bundle,
+                        client.manifest,
+                        run_id=args.run_id,
+                        input_commitment=args.input_commitment,
+                    )
+                    break
+                if status != 202:
+                    raise AuditError("report_unavailable")
+                await asyncio.sleep(1)
         write_new(args.output, canonical(value) + b"\n")
     finally:
         await client.close()

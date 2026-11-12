@@ -27,12 +27,13 @@ from aiab.audit.protocol import AuditError
 from aiab.baked import plan_ir
 from aiab.baked.bundle import bundle_files, file_digest, load_bundle
 from aiab.baked.graph import select_records
-from aiab.baked.plan_ir import check_plan
 
 from server.config import STATIC_DIR, Settings
 
 RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}")
-STALE_SECONDS = 15 * 60  # a step still "running" after this long was interrupted
+# Runs this server process is performing. A run whose state says "running" but is not here
+# was cut off by a restart. Runs have no time limit, so how long one has taken says nothing.
+LIVE: set[str] = set()
 
 STEPS = (
     (
@@ -145,25 +146,6 @@ def scope_notes(folder: Path, who: str, first: float, last: float) -> list[str]:
     return notes
 
 
-def check_limits(folder: Path, records: list[dict]) -> None:
-    """Refuse here what the box would refuse as input_too_large."""
-    try:
-        limits = check_plan(_plan(folder)).limits
-    except (AuditError, TypeError, KeyError):
-        return
-    size = len(json.dumps(records, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-    if len(records) > limits["max_records_per_run"]:
-        raise ValueError(
-            f"{len(records)} records, the plan allows {limits['max_records_per_run']} per run;"
-            " pick fewer sessions"
-        )
-    if size > limits["max_input_utf8_bytes"]:
-        raise ValueError(
-            f"{size // 1024} KB of records, the plan allows"
-            f" {limits['max_input_utf8_bytes'] // 1024} KB per run; pick fewer sessions"
-        )
-
-
 def preflight(settings: Settings, folder: Path | None) -> dict:
     """What a run of this agreement needs, and what is missing. Shown before starting."""
     release = {}
@@ -245,7 +227,13 @@ def _write(folder: Path, state: dict) -> None:
     tmp.replace(folder / "state.json")
 
 
-def _cli(settings: Settings, folder: Path, *args: str, offline: bool = False) -> dict | None:
+def _cli(
+    settings: Settings,
+    folder: Path,
+    *args: str,
+    offline: bool = False,
+    timeout: float | None = 400,
+) -> dict | None:
     base = ["--folder", str(folder), "--trust", str(settings.trust_file), *args]
     if offline:
         # The same CLI, with sockets disabled, as the walkthrough does for the offline check.
@@ -257,7 +245,9 @@ def _cli(settings: Settings, folder: Path, *args: str, offline: bool = False) ->
         command = [sys.executable, "-c", code, *base]
     else:
         command = [sys.executable, "-m", "auditor.baked", *base]
-    done = subprocess.run(command, cwd=str(STATIC_DIR), capture_output=True, text=True, timeout=400)
+    done = subprocess.run(
+        command, cwd=str(STATIC_DIR), capture_output=True, text=True, timeout=timeout
+    )
     if done.returncode:
         raise RuntimeError(
             done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "failed"
@@ -330,6 +320,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 "--output",
                 str(files["submission"]),
                 *(("--seal-to", str(files["anchor"])) if sealed else ()),
+                timeout=None,  # as long as the records need
             )
             submission = json.loads(files["submission"].read_text())
             fixture.unlink(missing_ok=True)
@@ -349,6 +340,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 str(files["submission"]),
                 "--output",
                 str(files["admission"]),
+                timeout=None,
             )
             admission.update(json.loads(files["admission"].read_text()))
             return admission
@@ -364,6 +356,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 admission["input_commitment"],
                 "--output",
                 str(files["report"]),
+                timeout=None,  # the box runs as long as the records need; it says when done
             )
             return json.loads(files["report"].read_text())
         if key == "offline":
@@ -428,7 +421,6 @@ def start_run(
     sessions sent (``sent_sessions``) for the run page."""
     if not records:
         raise ValueError("no records chosen")
-    check_limits(folder, records)
     run_id = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(3)}"
     target = settings.runs_dir / run_id
     target.mkdir(parents=True, exist_ok=False)
@@ -453,8 +445,16 @@ def start_run(
         "result": None,
     }
     _write(target, state)
-    threading.Thread(target=_execute, args=(settings, target, state), daemon=True).start()
+    LIVE.add(run_id)
+    threading.Thread(target=_tracked, args=(settings, target, state), daemon=True).start()
     return run_id
+
+
+def _tracked(settings: Settings, folder: Path, state: dict) -> None:
+    try:
+        _execute(settings, folder, state)
+    finally:
+        LIVE.discard(state["id"])
 
 
 def load_run(settings: Settings, run_id: str) -> dict | None:
@@ -464,10 +464,8 @@ def load_run(settings: Settings, run_id: str) -> dict | None:
     if not path.is_file():
         return None
     state = json.loads(path.read_text(encoding="utf-8"))
-    if state["status"] == "running":
-        started = datetime.strptime(state["started"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-        if (datetime.now(UTC) - started).total_seconds() > STALE_SECONDS:
-            state["status"] = "interrupted"  # the server restarted while this run was going
+    if state["status"] == "running" and run_id not in LIVE:
+        state["status"] = "interrupted"  # the server restarted while this run was going
     if "plan" not in state:
         state["plan"] = _derived_plan(settings, state)
     state["outcome"] = outcome(state)
@@ -513,8 +511,9 @@ def outcome(state: dict) -> dict:
             "service before retrying."
         ),
         "input_too_large": (
-            "The records or assembled queries exceed the plan's limits. Select a smaller input "
-            "or review the plan limits."
+            "One model question did not fit the model's context window even after splitting "
+            "long items: a step that asks one question over all its input (a Value output), "
+            "or a prompt that is too long by itself. Review that step."
         ),
         "invalid_output": (
             "The plan returned a result outside its agreed report fields. Review the Final "
@@ -535,8 +534,8 @@ def outcome(state: dict) -> dict:
         ),
         "plan_report_failed": "The plan failed while producing the report from its input.",
         "execution_timeout": (
-            "The plan exceeded its signed runtime limit. Reduce the input or review and re-sign "
-            "the limit."
+            "A Python step used an hour of processor time without finishing; it was stopped. "
+            "Check its code for a loop that never ends."
         ),
         "model_output_truncated": (
             "The classifier exhausted its output-token budget before completing its answer. "

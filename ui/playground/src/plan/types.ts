@@ -67,10 +67,11 @@ export const InputLogsNode = z.strictObject({
         /** Empty keeps every record; otherwise a record must contain one keyword. */
         keywords: z.array(z.string()).default([]),
         /** Absent keeps every session of the source; otherwise only these sessions are read. */
-        sessions: z.array(z.string().min(1).max(256)).max(500).optional(),
+        sessions: z.array(z.string().min(1).max(256)).optional(),
       })
       .default({ kinds: [...RECORD_KINDS], keywords: [] }),
-    max_records: z.number().int().positive().default(2000),
+    /** Retired: plans signed with a record limit keep it; the box ignores it. */
+    max_records: z.number().int().positive().optional(),
   }),
 });
 
@@ -159,11 +160,15 @@ export const PlanNode = z.discriminatedUnion("type", [
   FinalReportNode,
 ]);
 
-/** The run limits the box enforces; the box's own ceilings are in static/aiab/baked/plan_ir.py. */
+/**
+ * Retired run limits. A run has no record, byte, model-call or time limit; plans signed when
+ * it had them still carry them, and they load and are ignored (static/aiab/baked/plan_ir.py).
+ * New plans have none.
+ */
 export const Limits = z.strictObject({
-  max_input_utf8_bytes: z.number().int().min(1).max(1_000_000_000_000).default(100_000),
-  max_model_calls_per_run: z.number().int().min(1).max(256).default(64),
-  max_runtime_seconds_per_run: z.number().int().min(1).max(300).default(120),
+  max_input_utf8_bytes: z.number().int().min(1).optional(),
+  max_model_calls_per_run: z.number().int().min(1).optional(),
+  max_runtime_seconds_per_run: z.number().int().min(1).optional(),
 });
 
 export const PlanSchema = z.strictObject({
@@ -172,7 +177,7 @@ export const PlanSchema = z.strictObject({
   plan_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/, "letters, digits, _ and -, not starting with _"),
   title: z.string().default(""),
   description: z.string().optional(),
-  limits: Limits.default({ max_input_utf8_bytes: 100_000, max_model_calls_per_run: 64, max_runtime_seconds_per_run: 120 }),
+  limits: Limits.optional(),
   nodes: z.array(PlanNode),
 });
 

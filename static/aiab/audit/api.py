@@ -1,4 +1,9 @@
-"""Authenticated audit API with bounded bodies and no exception reflection."""
+"""Authenticated audit API with no exception reflection.
+
+Request bodies have no fixed size cap: only an authenticated party can send one, and a run's
+records are as large as the selection the parties make. Run admission (schema, evidence
+chain, unsealing) runs in a thread with no deadline, so a large submission is admitted
+rather than cut off."""
 
 from __future__ import annotations
 
@@ -49,8 +54,11 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
                 if admissions.locked():
                     raise AuditError("capacity_exceeded", 429)
                 async with admissions:
-                    async with asyncio.timeout(15):
+                    if request.url.path == "/aiab/runs":
                         response = await call_next(request)
+                    else:
+                        async with asyncio.timeout(15):
+                            response = await call_next(request)
             else:
                 response = await call_next(request)
         except AuditError as exc:
@@ -64,7 +72,7 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
     async def audit_error(request, exc):
         return JSONResponse({"error": exc.code}, status_code=exc.status)
 
-    async def body(request):
+    async def read(request):
         if request.headers.get("content-encoding", "identity") != "identity":
             raise AuditError("unsupported_encoding", 415)
         if request.headers.get("content-type", "").split(";")[0] != "application/json":
@@ -72,9 +80,10 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
         raw = bytearray()
         async for chunk in request.stream():
             raw.extend(chunk)
-            if len(raw) > 2_097_152:
-                raise AuditError("input_too_large", 413)
-        return decode(bytes(raw))
+        return bytes(raw)
+
+    async def body(request):
+        return decode(await read(request))
 
     @app.post("/aiab/plans")
     async def plans(request: Request):
@@ -93,7 +102,14 @@ def create_app(runtime: AuditRuntime, tokens: dict[str, str]) -> FastAPI:
     async def runs(request: Request):
         if request.state.role not in {"logger", "lab"}:
             raise AuditError("forbidden", 403)
-        run = runtime.submit(await body(request), request.state.role)
+        prepare = getattr(runtime, "prepare", None)
+        if prepare is None:
+            run = runtime.submit(await body(request), request.state.role)
+        else:
+            # Reading and checking a large submission takes a while; the loop keeps serving.
+            raw = await read(request)
+            admission = await asyncio.to_thread(lambda: prepare(decode(raw)))
+            run = runtime.admit(admission, request.state.role)
         return JSONResponse(
             {
                 "run_id": run.run_id,

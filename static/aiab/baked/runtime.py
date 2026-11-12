@@ -46,6 +46,10 @@ REPORT = {
 }
 
 
+MAX_ACTIVE = 4  # runs executing at once; more wait their turn
+MAX_RETAINED = 128  # finished reports kept per boot; the oldest goes first
+
+
 @dataclass
 class Run:
     run_id: str
@@ -70,8 +74,9 @@ class Runtime:
             "parties": {k: trust[k] for k in ("lab_key", "auditor_key", "logger_key")},
             "report_schema": "aiab-report/v3",
             "plan_submission": "signed-bundle-per-run/v2",  # with each party's certificate
-            "max_active_runs": 4,
-            "max_retained_runs": 128,
+            # Runs beyond MAX_ACTIVE wait for a slot; none is refused for capacity.
+            "max_active_runs": MAX_ACTIVE,
+            "max_retained_runs": MAX_RETAINED,
             "retention": "in-memory-per-boot",
             "logger_evidence": "aiab-record-export/v1",
             "record_encryption": sealing.SCHEME,
@@ -79,6 +84,7 @@ class Runtime:
         }
         self.policy_digest = digest(self.manifest)
         self.runs, self.submissions = {}, {}
+        self.slots = asyncio.Semaphore(MAX_ACTIVE)
         self.healthy = True
 
     def plan(self, submission):
@@ -97,16 +103,21 @@ class Runtime:
             "policy_digest": self.policy_digest,
         }
 
-    def submit(self, submission, principal):
+    def prepare(self, submission):
+        """Check a submission and open its records; no run state changes. Safe in a thread."""
         validate(submission, records.SUBMISSION, "invalid_submission")
         bundle = self.plan(submission)
         commitment = records.verify(submission, bundle.config, self.trust["logger_key"])
         # The logger's signature and the scope were checked on the records as sent; only now
         # does the content become readable, inside the box, for this run.
         input_records = self.decryptor.unseal(submission["records"], self.boot_id)
-        records.check_size(input_records, bundle.config)
+        records.check_records(input_records)
+        return submission["submission_id"], bundle, input_records, commitment
+
+    def admit(self, admission, principal):
+        submission_id, bundle, input_records, commitment = admission
         fingerprint = digest({"plan_digest": bundle.digest, "input_commitment": commitment})
-        key = (principal, submission["submission_id"])
+        key = (principal, submission_id)
         if key in self.submissions:
             run = self.submissions[key]
             if run.fingerprint != fingerprint:
@@ -114,13 +125,25 @@ class Runtime:
             return run
         if not self.healthy:
             raise AuditError("model_unavailable", 503)
-        if len(self.runs) >= 128 or sum(r.envelope is None for r in self.runs.values()) >= 4:
-            raise AuditError("capacity_exceeded", 429)
+        self._evict()
         run = Run(uuid.uuid4().hex, fingerprint, bundle.digest)
         self.runs[run.run_id] = self.submissions[key] = run
         run.task = asyncio.create_task(self._execute(run, bundle, input_records, commitment))
         run.task.add_done_callback(lambda _: setattr(run, "task", None))
         return run
+
+    def submit(self, submission, principal):
+        return self.admit(self.prepare(submission), principal)
+
+    def _evict(self):
+        """Make room for one more run: hold at most MAX_RETAINED runs, dropping the oldest
+        finished ones first (their report then answers unknown_run, never "clean"). Runs
+        still going are never dropped, so the box never refuses a run for want of room."""
+        finished = [rid for rid, r in self.runs.items() if r.envelope is not None]
+        for rid in finished[: max(0, len(self.runs) - MAX_RETAINED + 1)]:
+            run = self.runs.pop(rid)
+            for key in [k for k, v in self.submissions.items() if v is run]:
+                del self.submissions[key]
 
     async def _execute(self, run, bundle, input_records, commitment):
         report = {
@@ -135,7 +158,8 @@ class Runtime:
             "egress_max_bits": capacity(bundle.config),
         }
         try:
-            result = await execute(bundle, input_records, self.model)
+            async with self.slots:
+                result = await execute(bundle, input_records, self.model)
             report.update(status="completed", result=result)
         except (Exception, asyncio.CancelledError) as exc:
             error = (

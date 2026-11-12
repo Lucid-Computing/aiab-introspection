@@ -9,24 +9,21 @@ import type { Output, Plan, PlanNode, RunPython } from "./types";
 
 export interface Query {
   per: "session" | "record";
-  /** Most records in one question (1 to 32). Only used per session. */
+  /** Most records in one question (1 or more). Only used per session. */
   window: number;
 }
 
 export const QUERY_DEFAULT: Query = { per: "session", window: 8 };
-export const QUERY_WINDOW_MAX = 32;
 export const QUERY_OUTPUT: Output = { name: "items", type: "Items", fields: {} };
 
-const MARK = /^# query-format per=(session|record) window=([1-9]\d?)$/;
+const MARK = /^# query-format per=(session|record) window=([1-9]\d*)$/;
 
 /** The settings of a Query format block, or null when the node is not one. */
 export function parseQuery(node: PlanNode): Query | null {
   if (node.type !== "run_python") return null;
   const m = MARK.exec(node.config.code.split("\n", 1)[0]);
   if (!m) return null;
-  const window = Number(m[2]);
-  if (window > QUERY_WINDOW_MAX) return null;
-  return { per: m[1] as Query["per"], window };
+  return { per: m[1] as Query["per"], window: Number(m[2]) };
 }
 
 export function isQuery(node: PlanNode): node is RunPython {

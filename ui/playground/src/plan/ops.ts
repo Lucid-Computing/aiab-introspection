@@ -22,7 +22,6 @@ export function newNode(type: NodeType, id: string): PlanNode {
           source: "dev",
           input_scope: { agents: [] },
           filter: { kinds: ["request", "response", "tool_call", "tool_result"], keywords: [] },
-          max_records: 2000,
         },
       };
     case "classifier":

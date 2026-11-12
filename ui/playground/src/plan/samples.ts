@@ -23,7 +23,6 @@ nodes:
       filter:
         kinds: [request, response, tool_call]
         keywords: []
-      max_records: 2000
   - id: physics
     type: classifier
     title: Physics research?

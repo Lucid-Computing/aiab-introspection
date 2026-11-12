@@ -1171,9 +1171,7 @@ async def plan_save(request: Request, aid: str) -> Response:
         return JSONResponse({"error": "Expected a JSON request."}, status_code=415)
     body = bytearray()
     async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > 1_000_000:
-            return JSONResponse({"error": "The plan is too large."}, status_code=413)
+        body.extend(chunk)  # no size cap: a plan may name every session of a log
     try:
         payload = json.loads(body)
     except ValueError:
