@@ -9,7 +9,6 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote, urlsplit
@@ -814,33 +813,24 @@ async def runs_index(request: Request) -> Response:
     if folder is None and chosen:
         pre["missing"].insert(0, f"no agreement called {chosen}")
         pre["ok"] = False
-    win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
-    lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
     source = _log_source(request)
     all_sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
-    whos = sorted({s.who for s in all_sessions})
-    sessions = []
+    # The agreement's input filter decides what is sent: sessions it takes, sessions outside
+    # its scope (the box would refuse them), and sessions with nothing to send.
+    fits, outside, empty = [], [], []
     for s in all_sessions:
         times = [r.time for r in s.records]
-        if (
-            (win["who"] and s.who != win["who"])
-            or (lo and max(times) < lo)
-            or (hi and min(times) > hi)
-        ):
-            continue
         recs = proxylogs.box_records(s.records)
-        sessions.append(
-            {
-                "session": s,
-                "notes": runs.scope_notes(folder, s.who, min(times), max(times)) if folder else [],
-                "records": len(recs),
-                "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
-            }
-        )
+        item = {
+            "session": s,
+            "notes": runs.scope_notes(folder, s.who, min(times), max(times)) if folder else [],
+            "records": len(recs),
+            "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
+        }
+        (outside if item["notes"] else empty if not recs else fits).append(item)
     totals = {
-        "records": sum(i["records"] for i in sessions),
-        "kb": round(sum(i["kb"] for i in sessions), 1),
-        "refused": sum(1 for i in sessions if i["notes"]),
+        "records": sum(i["records"] for i in fits),
+        "kb": round(sum(i["kb"] for i in fits), 1),
     }
     return render(
         request,
@@ -850,25 +840,17 @@ async def runs_index(request: Request) -> Response:
         chosen=chosen,
         log_source=source,
         log_sources=settings.log_sources,
-        sessions=sessions,
+        fits=fits,
+        outside=outside,
+        empty=empty,
+        show_outside=qp.get("outside") == "1",
+        show_empty=qp.get("empty") == "1",
         all_count=len(all_sessions),
-        whos=whos,
-        win=win,
         totals=totals,
-        source=qp.get("source", ""),
-        picked=set(qp.getlist("session")),
         scope=runs.plan_scope(folder) if folder else None,
         runs=runs.list_runs(settings),
         plan_digest=pre["plan_digest"],
     )
-
-
-def _local_ts(value: str) -> float | None:
-    """A datetime-local field value ("2026-10-15T09:00") as a UTC timestamp, or None."""
-    try:
-        return datetime.fromisoformat(value).replace(tzinfo=UTC).timestamp() if value else None
-    except ValueError:
-        return None
 
 
 @app.post("/runs/start")

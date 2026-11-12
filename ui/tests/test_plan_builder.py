@@ -169,9 +169,8 @@ def test_old_format_agreements_are_archived_not_listed_and_can_be_deleted(settin
     assert pv.for_agreement(settings, "_archive") is None
 
     web, client = client_for(monkeypatch, settings)
-    page = client.get("/agreements")
-    assert "Archived · 1 agreement in the previous plan format" in page.text
-    assert "bio-demo-001" in page.text
+    # The page no longer lists the archive; the folder stays on disk and the delete route works.
+    assert "bio-demo-001" not in client.get("/agreements").text
     assert client.get("/a/_archive/plan", follow_redirects=False).status_code == 303
     assert client.post("/archive/bio-demo/delete", follow_redirects=False).status_code == 303
     assert not (settings.agreements_dir / "_archive" / "bio-demo").exists()

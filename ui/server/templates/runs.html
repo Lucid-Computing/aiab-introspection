@@ -6,106 +6,70 @@
 <h1>Runs</h1>
 
 <div class="stack">
-  <div class="card">
-    <div class="card-header">Agreement</div>
-    <div class="card-body">
-      {% if choices %}
-      <form method="get" action="/runs" class="row" style="gap: var(--space-3); align-items: center">
-        <input type="hidden" name="logs" value="{{ log_source.id }}">
-        <label for="agreement">Signed by both parties:</label>
-        <select id="agreement" name="agreement">{% for c in choices %}<option value="{{ c.id }}" {% if c.id == chosen %}selected{% endif %}>{{ c.plan_id }} · {{ c.digest[7:19] }}…</option>{% endfor %}</select>
-        <button class="btn btn--ghost btn--sm">Choose</button>
-      </form>
-      <p class="explain">The chosen folder is copied when the run starts and sent with the records; the box verifies both signatures against the keys in its image and runs exactly that copy.</p>
-      {% else %}<p class="explain">No agreement is signed by both parties yet. Sign one under <a class="link" href="/agreements">Agreements</a>; it can be run as soon as both signatures verify.</p>{% endif %}
+  {% if choices %}
+  <form method="get" action="/runs" class="row" style="gap: var(--space-3); align-items: center">
+    <input type="hidden" name="logs" value="{{ log_source.id }}">
+    <label for="agreement">Agreement</label>
+    <select id="agreement" name="agreement">{% for c in choices %}<option value="{{ c.id }}" {% if c.id == chosen %}selected{% endif %}>{{ c.plan_id }} · {{ c.digest[7:19] }}…</option>{% endfor %}</select>
+    <button class="btn btn--ghost btn--sm">Choose</button>
+  </form>
+  {% else %}<p class="explain">No agreement is signed by both parties yet. Sign one under <a class="link" href="/agreements">Agreements</a>.</p>{% endif %}
+
+  <p class="runs-box">
+    {% if pre.release %}Box <span class="mono">{{ pre.release.host }}</span> · release <span class="mono">{{ pre.release.tag }}</span> · plan to send <span class="mono">{{ plan_digest or "none chosen" }}</span> · {% if pre.ok %}<span class="selected-label ok">ready</span>{% else %}<span class="selected-label bad">not ready: {{ pre.missing | join("; ") }}</span>{% endif %}
+    {% else %}<span class="selected-label bad">Release pins not found: {{ pre.missing | join(", ") }}</span>{% endif %}
+  </p>
+
+  <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"><input type="hidden" name="source" value="sessions">{% for item in fits %}<input type="hidden" name="session" value="{{ item.session.id }}">{% endfor %}</form>
+
+  {{ selector(log_sources, log_source, "/runs?agreement=" ~ (chosen | urlencode) ~ "&") }}
+  <p class="explain">{% if scope %}The agreement's input filter takes {% if scope.agents %}agents <span class="mono">{{ scope.agents | join(", ") }}</span>{% else %}every agent{% endif %}{% if scope.window_start or scope.window_end %} between <span class="mono">{{ (scope.window_start or "")[:10] or "the start" }}</span> and <span class="mono">{{ (scope.window_end or "")[:10] or "now" }}</span>{% endif %} from {{ log_source.label }}.{% else %}The agreement's input filter takes every session from {{ log_source.label }}.{% endif %}
+  {% if outside %} <a class="link" href="/runs?agreement={{ chosen | urlencode }}&logs={{ log_source.id }}{% if not show_outside %}&outside=1{% endif %}">{% if show_outside %}hide{% else %}show{% endif %} the {{ outside | length }} outside it</a>{% endif %}
+  {% if empty %} <a class="link" href="/runs?agreement={{ chosen | urlencode }}&logs={{ log_source.id }}{% if not show_empty %}&empty=1{% endif %}">{% if show_empty %}hide{% else %}show{% endif %} the {{ empty | length }} with no records</a>{% endif %}</p>
+
+  <div class="runs-list">
+    {% for item in fits %}
+    <div class="rl-row">
+      <span class="sess-title">{{ item.session.title }}</span>
+      <span class="sess-meta">{% if log_source.kind != "plant" %}{{ item.session.records | length }} {% if log_source.kind == "github" %}post{% elif log_source.chat %}msg{% else %}req{% endif %} · {% endif %}{{ item.records }} records · {{ item.kb }} KB</span>
+    </div>
+    {% else %}<p class="text-muted rl-row">{% if all_count %}No session in this source fits the filter.{% else %}No records on disk yet.{% endif %}</p>
+    {% endfor %}
+    {% if show_outside %}{% for item in outside %}
+    <div class="rl-row rl-row--out">
+      <span class="sess-title">{{ item.session.title }}</span>
+      <span class="sess-meta">{{ item.records }} records · outside the filter: {{ item.notes | join("; ") }}</span>
+    </div>
+    {% endfor %}{% endif %}
+    {% if show_empty %}{% for item in empty %}
+    <div class="rl-row rl-row--out">
+      <span class="sess-title">{{ item.session.title }}</span>
+      <span class="sess-meta">no records</span>
+    </div>
+    {% endfor %}{% endif %}
+    <div class="runs-bar">
+      <span class="mono">{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB</span>
+      {% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>
+      {% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}
     </div>
   </div>
 
-  <div class="card">
-    <div class="card-header">Before a run</div>
-    <div class="card-body">
-      {% if pre.release %}
-      <table class="kv">
-        <tr><th>Box</th><td class="mono">{{ pre.release.host }}</td></tr>
-        <tr><th>Release</th><td class="mono">{{ pre.release.tag }} · image {{ pre.release.image_digest[:19] }}…</td></tr>
-        <tr><th>Plan to send</th><td class="mono">{{ plan_digest or "none chosen" }}</td></tr>
-        <tr><th>Ready</th><td>{% if pre.ok %}<span class="badge badge--ok">yes</span>{% else %}<ul class="plain">{% for m in pre.missing %}<li class="bad">{{ m }}</li>{% endfor %}</ul>{% endif %}</td></tr>
-      </table>
-      {% else %}<p class="form-message error">Release pins not found: {{ pre.missing | join(", ") }}</p>{% endif %}
-      <details class="info" style="margin-top: var(--space-4)">
-        <summary>Check the box independently (attestation)</summary>
-        <div class="info-body">
-          <p class="explain">The manifest is what the box says about itself. Attestation is the hardware's signed statement of the same thing. The auditor's own check, from <span class="mono">static/</span>, with values approved independently, never copied from the box:</p>
+  <details class="info">
+    <summary>Check the box independently (attestation)</summary>
+    <div class="info-body">
+      <p class="explain">The auditor's own check, from <span class="mono">static/</span>, with values approved independently, never copied from the box:</p>
 <pre class="cmd">uv run python -m auditor.baked --folder ../agreements/{{ chosen or "NAME" }} pin-identity --release deploy/tinfoil/audit/release.json \
     --token-file /absolute/path/auditor.token --output /tmp/anchor.json</pre>
-        </div>
-      </details>
-      {% if not pre.ok %}
-      <details class="info" style="margin-top: var(--space-4)">
-        <summary>Where the credentials come from</summary>
-        <div class="info-body">
-          <p class="explain"><span class="mono">lab.token</span> is the lab's API token for the box and <span class="mono">logger.key</span> is the demo logger's private key, the one whose public key the box pins as the logger. Both are held by the box's operator (Jon) under <span class="mono">~/.local/share/aiab-audit-demo/</span> on his host. Copy them to the same path on the machine running this UI, or point <span class="mono">AIAB_DEMO_KEYS</span> at a folder holding them. Never commit them.</p>
-        </div>
-      </details>
-      {% endif %}
     </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">Input</div>
-    <div class="card-body">
-      <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"></form>
-      <p class="explain">Which recorded sessions go into this run. You choose here; the plan does not filter.{% if scope %} This plan pins an input scope (agents and a time window); the box refuses records outside it.{% endif %}</p>
-      {{ selector(log_sources, log_source, "/runs?agreement=" ~ (chosen | urlencode) ~ "&") }}
-      <div class="sources">
-        <div class="src">
-          <label class="src-head"><input type="hidden" name="source" value="sessions" form="run-form"><span class="src-title">Recorded sessions</span> <span class="src-sub">from {{ log_source.label }} on the <a class="link" href="/logs?logs={{ log_source.id }}">Logs</a> page, as the proxy recorded them{% if not all_count %} · none on disk yet{% endif %}</span></label>
-          {% if all_count %}
-          <form method="get" action="/runs" class="window">
-            <input type="hidden" name="source" value="sessions">
-            <input type="hidden" name="agreement" value="{{ chosen }}">
-            <input type="hidden" name="logs" value="{{ log_source.id }}">
-            <span class="lbl">window</span>
-            <input type="datetime-local" name="from" value="{{ win.from }}"> <span class="lbl">to</span> <input type="datetime-local" name="to" value="{{ win.to }}">
-            <span class="lbl">sender</span>
-            <select name="who"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == win.who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>
-            <button class="btn btn--ghost btn--sm">Show</button>
-            {% if win.from or win.to or win.who %}<a class="link" href="/runs?agreement={{ chosen | urlencode }}&logs={{ log_source.id }}">all time</a>{% endif %}
-          </form>
-          <p class="pick-sum">
-            <label class="choice"><input type="checkbox" onchange="for (const c of document.querySelectorAll('.sess input')) c.checked = this.checked"> select all shown</label>
-            <span>{{ sessions | length }} of {{ all_count }} session(s) shown · {{ totals.records }} records · {{ totals.kb }} KB{% if totals.refused %} · {{ totals.refused }} outside the plan's scope{% endif %}</span>
-          </p>
-          {% for item in sessions %}
-          <label class="sess{% if item.notes %} sess--refused{% endif %}">
-            <input type="checkbox" name="session" value="{{ item.session.id }}" form="run-form" {% if item.session.id in picked %}checked{% endif %}>
-            <span><span class="sess-title">{{ item.session.title }}</span>
-              <span class="sess-meta">{{ item.session.who }} · {{ item.session.started_short }} · {% if log_source.kind != "plant" %}{{ item.session.records | length }} {% if log_source.kind == "github" %}post{% elif log_source.chat %}msg{% else %}req{% endif %} · {% endif %}{{ item.records }} records · {{ item.kb }} KB</span>
-              {% for n in item.notes %}<span class="sess-warn">the box would refuse: {{ n }}</span>{% endfor %}</span>
-            {% if item.notes %}<span class="tag tag--refused">outside scope</span>{% endif %}
-          </label>
-          {% else %}<p class="text-muted" style="margin-left: var(--space-6)">No session in this window.</p>
-          {% endfor %}
-          {% if scope and sessions and totals.refused == sessions | length %}
-          <p class="scope-note">This agreement allows agents <span class="mono">{{ scope.agents | join(", ") }}</span> between <span class="mono">{{ scope.window_start[:10] }}</span> and <span class="mono">{{ scope.window_end[:10] }}</span>. The recorded sessions come from <span class="mono">{{ whos | join(", ") }}</span>. To run on real logs, widen the plan's input scope (Plan → Settings) and have both parties sign again.</p>
-          {% endif %}
-          {% endif %}
-        </div>
-      </div>
+  </details>
+  {% if not pre.ok %}
+  <details class="info">
+    <summary>Where the credentials come from</summary>
+    <div class="info-body">
+      <p class="explain"><span class="mono">lab.token</span> is the lab's API token for the box and <span class="mono">logger.key</span> is the demo logger's private key, the one whose public key the box pins as the logger. Both are held by the box's operator (Jon) under <span class="mono">~/.local/share/aiab-audit-demo/</span> on his host. Copy them to the same path on the machine running this UI, or point <span class="mono">AIAB_DEMO_KEYS</span> at a folder holding them. Never commit them.</p>
     </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">Start a run</div>
-    <div class="card-body">
-      {% if pre.ok %}
-      <p class="explain">Six steps: verify the agreement's signatures, attest the box, sign the chosen records with the stand-in logger key, send them in with the signed plan, wait for the signed report, verify it offline.</p>
-      <p><button class="btn btn--primary" form="run-form">Start the run</button></p>
-      {% else %}
-      <p><button class="btn btn--primary" disabled>Start the run</button> <span class="text-muted">Off until this is fixed: {{ pre.missing | join("; ") }}.</span></p>
-      {% endif %}
-    </div>
-  </div>
+  </details>
+  {% endif %}
 
   {% if runs %}
   <table class="table">
@@ -116,7 +80,7 @@
       <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
       <td class="mono">{{ r.transcript }}</td>
       <td>{% if r.plan and r.plan.digest %}<a class="link mono" href="/runs/{{ r.id }}/plan">{{ r.plan.digest[7:19] }}…</a><br><span class="text-muted">{{ "signed by both" if r.plan.signed else "signatures not verified" }}</span>{% else %}<span class="text-muted">not recorded</span>{% endif %}</td>
-      <td>{{ r.by.user }} <span class="badge {% if r.by.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ r.by.party }}</span></td>
+      <td>{{ r.by.user }} <span class="badge badge--ink">{{ r.by.party }}</span></td>
       <td>{{ r.outcome.title }}{% if r.outcome.verified %}<br><span class="text-muted">Report verified</span>{% endif %}</td>
       <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>
     </tr>
