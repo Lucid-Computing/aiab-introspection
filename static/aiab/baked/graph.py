@@ -43,14 +43,18 @@ def with_ids(records: list[dict]) -> list[dict]:
 
 
 def select_records(node: dict, records: list[dict]) -> list[dict]:
-    """The Input Logs step: kinds, keywords (any, case-insensitive) and agents, in order."""
+    """The Input Logs step: kinds, keywords (any, case-insensitive), agents and, when the
+    plan names them, sessions, in order."""
     cfg = node["config"]
     kinds = set(cfg["filter"]["kinds"])
     keywords = [k.lower() for k in cfg["filter"]["keywords"] if k]
     agents = set(cfg["input_scope"]["agents"])
+    sessions = set(cfg["filter"].get("sessions") or ())
     kept = []
     for r in records:
         if r["kind"] not in kinds or (agents and r["agent_id"] not in agents):
+            continue
+        if sessions and r["session_id"] not in sessions:
             continue
         if keywords and not any(k in r["content"].lower() for k in keywords):
             continue

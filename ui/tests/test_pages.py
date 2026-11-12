@@ -110,10 +110,7 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
     page = client.get("/runs?agreement=bio").text  # default: Dev Agent Logs
     assert "from Dev Agent Logs" in page and "from Prod Agent Logs" not in page
     assert 'name="logs" value="dev"' in page
-    assert (
-        'href="/runs?agreement=bio&amp;logs=prod"' in page
-        or 'href="/runs?agreement=bio&logs=prod"' in page
-    )
+    assert 'class="srcsel"' not in page  # the log is the agreement's choice, not the page's
     page = client.get("/runs?agreement=bio&logs=prod").text
     assert "from Prod Agent Logs" in page and "from Dev Agent Logs" not in page
 
@@ -375,3 +372,24 @@ def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, mon
     monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
     client.post("/runs/start", data={"agreement": "bio", "logs": "dev", "session": "shared"})
     assert [r["content"] for r in started["records"]] == ["prod prompt"]
+
+
+def test_the_input_filter_can_name_sessions_and_the_runs_page_follows(client, tmp_path):
+    """Sessions named in the agreement's Input filter are the only ones a run takes; the
+    builder reads the list of sessions from /logs/sessions.json."""
+    logs = tmp_path / "logs" / "dev"
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs / "live.jsonl").write_text(_record("dev-user", "dev prompt"))
+    listing = client.get("/logs/sessions.json?logs=dev").json()
+    assert listing["source"] == "dev" and len(listing["sessions"]) == 1
+    session = listing["sessions"][0]
+    assert session["records"] >= 1 and "prompt" not in json.dumps(listing)
+
+    plan_file = tmp_path / "agreements/bio/plan.json"
+    plan = json.loads(plan_file.read_text())
+    source = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+    source["config"]["filter"]["sessions"] = ["some-other-session"]
+    plan_file.write_text(json.dumps(plan))
+    import server.runs as runs_module
+
+    assert runs_module.plan_sessions(tmp_path / "agreements/bio") == {"some-other-session"}

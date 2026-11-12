@@ -1,4 +1,5 @@
-import type { Dispatch } from "react";
+import { type Dispatch, useEffect, useState } from "react";
+import { AGREEMENT } from "../agreement";
 import { connect, deleteNodes, disconnect, renameInput, renameOutput, updateNode } from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
@@ -22,7 +23,7 @@ import {
 } from "../plan/types";
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
-import { CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
+import { CommitInput, Field, LinesInput, NumberInput, PythonEditor, Select } from "./fields";
 import { BLOCK_META, kindOf, SOURCE_OPTIONS, sourceLabel } from "./nodeMeta";
 import { TypeBadge } from "./PlanNodeView";
 
@@ -262,7 +263,7 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
               </td>
               <td className="io-arrow">←</td>
               <td>
-                <select
+                <Select
                   value={node.inputs[name] ?? ""}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -280,7 +281,7 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
                       {s.id}.{out!.name} ({out!.type})
                     </option>
                   ))}
-                </select>
+                </Select>
                 {node.inputs[name] && (
                   <span className="io-type">
                     <TypeBadge type={inputType(plan, node, name)} />
@@ -301,7 +302,7 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
         </tbody>
       </table>
       {candidates.length > 0 && (
-        <select
+        <Select
           className="add-input"
           value=""
           onChange={(e) =>
@@ -314,7 +315,7 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
               {s.id}.{out!.name} ({out!.type})
             </option>
           ))}
-        </select>
+        </Select>
       )}
     </div>
   );
@@ -326,15 +327,23 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
   return (
     <>
       <Field label="Log source" hint="The logs this agreement may read. A run takes its records from here.">
-        <select value={c.source} onChange={(e) => cfg({ source: e.target.value })}>
+        <Select value={c.source} onChange={(e) => cfg({ source: e.target.value })}>
           {!SOURCE_OPTIONS.some((o) => o.id === c.source) && <option value={c.source}>{c.source} (not a log source)</option>}
           {SOURCE_OPTIONS.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
+      <SessionPicker
+        source={c.source}
+        value={c.filter.sessions ?? []}
+        onChange={(sessions) => {
+          const { sessions: _drop, ...rest } = c.filter;
+          cfg({ filter: sessions.length ? { ...rest, sessions } : rest });
+        }}
+      />
       <details className="f">
         <summary className="f-label">Narrow it down</summary>
         <div className="insp-more">
@@ -455,10 +464,10 @@ function QueryForm({
       <div className="row2">
         <label className="f-hint">
           one question per
-          <select value={query.per} onChange={(e) => put({ per: e.target.value as Query["per"] })}>
+          <Select value={query.per} onChange={(e) => put({ per: e.target.value as Query["per"] })}>
             <option value="session">session</option>
             <option value="record">record</option>
-          </select>
+          </Select>
         </label>
         <label className="f-hint">
           records per question (1 to 32)
@@ -466,6 +475,93 @@ function QueryForm({
         </label>
       </div>
       <LimitsFields limits={limits} setLimits={setLimits} />
+    </div>
+  );
+}
+
+interface SessionRow {
+  id: string;
+  title: string;
+  who: string;
+  started: string;
+  records: number;
+}
+
+/**
+ * Which sessions of the log source the agreement reads: none ticked means all of them.
+ * The list comes from the agreement UI by metadata only; without a server (the standalone
+ * playground) the ids are typed one per line.
+ */
+function SessionPicker({
+  source,
+  value,
+  onChange,
+}: {
+  source: string;
+  value: string[];
+  onChange: (sessions: string[]) => void;
+}) {
+  const [rows, setRows] = useState<SessionRow[] | null>(null);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    let live = true;
+    setRows(null);
+    if (!AGREEMENT) return;
+    fetch(`/logs/sessions.json?logs=${encodeURIComponent(source)}`, { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => live && setRows(body && body.source === source ? (body.sessions as SessionRow[]) : []))
+      .catch(() => live && setRows([]));
+    return () => {
+      live = false;
+    };
+  }, [source]);
+  const chosen = new Set(value);
+  const known = new Set((rows ?? []).map((r) => r.id));
+  const gone = value.filter((id) => rows !== null && !known.has(id));
+  const needle = q.trim().toLowerCase();
+  const shown = (rows ?? []).filter((r) => !needle || `${r.title} ${r.who} ${r.id}`.toLowerCase().includes(needle));
+  const toggle = (id: string) => onChange(chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div className="f">
+      <span className="f-label">Sessions</span>
+      <span className="f-hint">
+        {value.length === 0
+          ? "Every session of the log source. Tick sessions to read only those."
+          : `${value.length} session${value.length === 1 ? "" : "s"} chosen. Untick all to read every session.`}
+      </span>
+      {!AGREEMENT || rows === null ? (
+        !AGREEMENT ? (
+          <LinesInput value={value} onChange={onChange} />
+        ) : (
+          <span className="f-hint">Loading the sessions…</span>
+        )
+      ) : (
+        <>
+          {rows.length > 8 && <input value={q} placeholder="Search sessions" onChange={(e) => setQ(e.target.value)} />}
+          <div className="sess-pick">
+            {shown.map((r) => (
+              <label key={r.id}>
+                <input type="checkbox" checked={chosen.has(r.id)} onChange={() => toggle(r.id)} />
+                <span>
+                  {r.title}
+                  <span className="muted"> · {r.records} records</span>
+                </span>
+              </label>
+            ))}
+            {gone.map((id) => (
+              <label key={id}>
+                <input type="checkbox" checked onChange={() => toggle(id)} />
+                <span className="danger">{id} · not in this log source any more</span>
+              </label>
+            ))}
+            {shown.length === 0 && gone.length === 0 && (
+              <span className="f-hint">
+                {SOURCE_OPTIONS.some((o) => o.id === source) ? "No session here." : "Pick a log source first."}
+              </span>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -498,10 +594,10 @@ function ClassifierForm({
         <div className="row2">
           <label className="f-hint">
             one question per
-            <select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as Classifier["config"]["group_by"] })}>
+            <Select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as Classifier["config"]["group_by"] })}>
               <option value="session">session</option>
               <option value="record">record</option>
-            </select>
+            </Select>
           </label>
           <label className="f-hint">
             records per question (1 to 32)
@@ -512,11 +608,15 @@ function ClassifierForm({
         {!hasQuery && <LimitsFields limits={limits} setLimits={setLimits} />}
       </div>
       )}
-      <Field label="Instructions" hint="The question the model answers about each item. Examples go here too.">
+      <Field label="Prompt" hint="The question the model answers about each item. Examples go here too.">
         <textarea rows={5} value={c.instructions} onChange={(e) => cfg({ instructions: e.target.value })} />
       </Field>
-      <div className="f">
-        <span className="f-label">Labels</span>
+      <details className="f">
+        <summary className="f-label">Answers the model may give</summary>
+        <span className="f-hint">
+          The model must answer each question with one of these labels, never free text. That is why only counts
+          can leave the box. A flagged label counts as a finding in the report.
+        </span>
         <table className="io labels">
           <thead>
             <tr>
@@ -566,7 +666,7 @@ function ClassifierForm({
         >
           + label
         </button>
-      </div>
+      </details>
       <Field label="Confidence threshold" hint="Below it the item is labelled “abstain”.">
         <div className="inline-check">
           <input
@@ -602,11 +702,11 @@ function OutputEditor({
       <span className="f-label">Output</span>
       <div className="row2">
         <CommitInput className="mono" value={out.name} onCommit={(v) => op(renameOutput(plan, node.id, v))} />
-        <select value={out.type} onChange={(e) => put({ ...out, type: e.target.value as Output["type"] })}>
+        <Select value={out.type} onChange={(e) => put({ ...out, type: e.target.value as Output["type"] })}>
           {PORT_TYPES.map((t) => (
             <option key={t}>{t}</option>
           ))}
-        </select>
+        </Select>
       </div>
       {out.type === "Value" && (
         <>
@@ -626,14 +726,14 @@ function OutputEditor({
                     />
                   </td>
                   <td>
-                    <select
+                    <Select
                       value={t}
                       onChange={(e) => put({ ...out, fields: { ...out.fields, [name]: e.target.value as FieldType } })}
                     >
                       {FIELD_TYPES.map((f) => (
                         <option key={f}>{f}</option>
                       ))}
-                    </select>
+                    </Select>
                   </td>
                   <td>
                     <button
@@ -782,7 +882,7 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
                     />
                   </td>
                   <td>
-                    <select
+                    <Select
                       value={fieldPath(f)}
                       onChange={(e) => {
                         const path = e.target.value;
@@ -797,14 +897,14 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
                           {p.path}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </td>
                   <td>
-                    <select value={f.type} onChange={(e) => put({ type: e.target.value as FieldType })}>
+                    <Select value={f.type} onChange={(e) => put({ type: e.target.value as FieldType })}>
                       {FIELD_TYPES.map((t) => (
                         <option key={t}>{t}</option>
                       ))}
-                    </select>
+                    </Select>
                   </td>
                   <td>
                     <button className="x" onClick={() => cfg({ fields: c.fields.filter((_, j) => j !== k) })}>

@@ -124,10 +124,26 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .f-label { font-size: 14px; font-weight: 600; color: var(--ink-1); }
 .f-hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 details.f > summary { cursor: pointer; }
+/* The site's own dropdown: a button and a list that opens in the flow under it. */
+.sel { position: relative; width: 100%; }
+.sel-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 4px 6px; font: inherit; font-size: var(--text-sm); color: var(--ink-1); background: var(--paper-1); border: var(--border-strong); text-align: left; cursor: pointer; }
+.sel-btn:focus-visible, .sel.is-open .sel-btn { outline: 2px solid var(--accent); outline-offset: -1px; }
+.sel-value { min-width: 0; overflow-wrap: anywhere; }
+.sel-caret { flex: none; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--ink-2); }
+.sel.is-open .sel-caret { transform: rotate(180deg); }
+.sel-list { list-style: none; margin: 0; padding: 0; border: var(--border-strong); border-top: none; background: var(--paper-1); max-height: 240px; overflow-y: auto; }
+.sel-list button { display: block; width: 100%; padding: 5px 8px; font: inherit; font-size: var(--text-sm); color: var(--ink-1); text-align: left; overflow-wrap: anywhere; }
+.sel-list button:hover { background: var(--paper-2); }
+.sel-list button.on { background: var(--paper-2); font-weight: 600; }
+.sel.add-input .sel-btn { font-family: var(--font-mono); font-size: var(--text-xs); }
+.sess-pick { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; border: var(--border-strong); }
+.sess-pick label { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; border-bottom: var(--border-hairline); font-size: var(--text-sm); cursor: pointer; overflow-wrap: anywhere; }
+.sess-pick label:last-child { border-bottom: none; }
+.sess-pick .f-hint { padding: 6px 8px; }
 .insp-py { margin: 4px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; border: var(--border-strong); background: var(--paper-2); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; white-space: pre; color: var(--ink-1); }
 .insp-more { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-3); }
-.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); align-items: start; }
-.row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); align-items: end; }
+.row2 { display: grid; grid-template-columns: 1fr; gap: var(--space-2); align-items: start; }
+.row3 { display: grid; grid-template-columns: 1fr; gap: var(--space-2); align-items: end; }
 .row2 label, .row3 label { display: flex; flex-direction: column; gap: 3px; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--text-sm); }
 .checks label, .inline-check { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); }

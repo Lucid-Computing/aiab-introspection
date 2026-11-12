@@ -475,6 +475,28 @@ def _log_source(request: Request, form: Any = None) -> LogSource:
     return settings.log_source(str(wanted) if wanted else None)
 
 
+@app.get("/logs/sessions.json")
+async def logs_sessions(request: Request) -> Response:
+    """The sessions of one log source, by metadata only, for the Input filter's picker."""
+    if user_of(request) is None:
+        return JSONResponse({"error": "sign in"}, status_code=401)
+    source = _log_source(request)
+    out = []
+    for s in proxylogs.sessions(proxylogs.load_index(settings, source)):
+        records = len(proxylogs.box_records(s.records))
+        if records:
+            out.append(
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "who": s.who,
+                    "started": s.started_short,
+                    "records": records,
+                }
+            )
+    return JSONResponse({"source": source.id, "sessions": out})
+
+
 @app.get("/logs")
 async def logs_page(request: Request) -> Response:
     if user_of(request) is None:
@@ -888,12 +910,16 @@ async def runs_index(request: Request) -> Response:
     # The agreement's input filter decides what is sent: sessions it takes, sessions outside
     # its scope (the box would refuse them), and sessions with nothing to send.
     fits, outside, empty = [], [], []
+    named = runs.plan_sessions(folder) if folder else set()
     for s in all_sessions:
         times = [r.time for r in s.records]
         recs = proxylogs.box_records(s.records)
+        notes = runs.scope_notes(folder, s.who, min(times), max(times)) if folder else []
+        if named and s.id not in named:
+            notes = [*notes, "not one of the sessions the agreement names"]
         item = {
             "session": s,
-            "notes": runs.scope_notes(folder, s.who, min(times), max(times)) if folder else [],
+            "notes": notes,
             "records": len(recs),
             "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
         }

@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% set active = "runs" %}
 {% block title %}Runs · AIAB agreement{% endblock %}
-{% from "_logsource.html" import selector %}
 {% block content %}
 <h1>Runs</h1>
 
@@ -22,7 +21,6 @@
 
   <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"><input type="hidden" name="source" value="sessions">{% for item in fits %}<input type="hidden" name="session" value="{{ item.session.id }}">{% endfor %}</form>
 
-  {% if not source_fixed %}{{ selector(log_sources, log_source, "/runs?agreement=" ~ (chosen | urlencode) ~ "&") }}{% endif %}
   {% if show_bar %}
   <div class="runs-bar">
     <span>{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB from {{ log_source.label }}{% if source_fixed %}, as the agreement's input filter says{% elif scope %}, within the agreement's input filter{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the filter{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a></span>

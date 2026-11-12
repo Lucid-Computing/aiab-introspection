@@ -126,7 +126,12 @@ CONFIGS = {
                 {
                     "kinds": _list({"enum": list(KINDS)}, 4, minimum=1, unique=True),
                     "keywords": _list(SHORT, 32),
-                }
+                    # Optional: when present, only records of these sessions are read.
+                    "sessions": _list(
+                        {"type": "string", "minLength": 1, "maxLength": 256}, 500, unique=True
+                    ),
+                },
+                optional=("sessions",),
             ),
             "max_records": {
                 "type": "integer",

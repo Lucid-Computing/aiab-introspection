@@ -96,6 +96,17 @@ def plan_source(folder: Path) -> str | None:
         return None
 
 
+def plan_sessions(folder: Path) -> set[str]:
+    """The sessions the agreement's Input filter names (``filter.sessions``); empty when it
+    names none, which means every session of the source."""
+    plan = _plan(folder)
+    try:
+        source = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+        return {str(x) for x in source["config"]["filter"].get("sessions") or ()}
+    except (TypeError, KeyError, StopIteration, AttributeError):
+        return set()
+
+
 def plan_scope(folder: Path) -> dict | None:
     """What the agreement's Input Logs step pins (agents, a time window), or None when it
     pins nothing or the plan does not load."""

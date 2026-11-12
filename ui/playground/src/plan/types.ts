@@ -66,6 +66,8 @@ export const InputLogsNode = z.strictObject({
         kinds: z.array(RecordKind).default([...RECORD_KINDS]),
         /** Empty keeps every record; otherwise a record must contain one keyword. */
         keywords: z.array(z.string()).default([]),
+        /** Absent keeps every session of the source; otherwise only these sessions are read. */
+        sessions: z.array(z.string().min(1).max(256)).max(500).optional(),
       })
       .default({ kinds: [...RECORD_KINDS], keywords: [] }),
     max_records: z.number().int().positive().default(2000),

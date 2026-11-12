@@ -58,6 +58,7 @@ export function line(n: PlanNode): string {
       const c = n.config;
       const parts = [LOG_SOURCES[c.source]?.label ?? sourceLabel(c.source)];
       if (c.input_scope.agents.length) parts.push(`${c.input_scope.agents.length} agent${c.input_scope.agents.length === 1 ? "" : "s"}`);
+      if (c.filter.sessions?.length) parts.push(`${c.filter.sessions.length} session${c.filter.sessions.length === 1 ? "" : "s"}`);
       if (c.filter.keywords.length) parts.push(`${c.filter.keywords.length} keyword${c.filter.keywords.length === 1 ? "" : "s"}`);
       return parts.join(" · ");
     }

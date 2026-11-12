@@ -1,7 +1,7 @@
 /** Small form controls shared by the inspector. */
 import { python } from "@codemirror/lang-python";
 import CodeMirror from "@uiw/react-codemirror";
-import { type ReactNode, useEffect, useState } from "react";
+import { Children, Fragment, isValidElement, type ReactNode, useEffect, useRef, useState } from "react";
 
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
@@ -130,6 +130,99 @@ export function PythonEditor({ value, onChange }: { value: string; onChange: (v:
         minHeight="180px"
         maxHeight="420px"
       />
+    </div>
+  );
+}
+
+
+/** The text of a node: strings and numbers joined, elements' children followed. */
+function textOf(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (isValidElement(node)) return textOf((node.props as { children?: ReactNode }).children);
+  return "";
+}
+
+/** The <option> children of a Select, through fragments and arrays, as value and label. */
+function optionsOf(children: ReactNode, out: { value: string; label: string }[] = []) {
+  Children.forEach(children, (child) => {
+    if (!isValidElement(child)) return;
+    const props = child.props as { value?: string | number; children?: ReactNode };
+    if (child.type === Fragment) optionsOf(props.children, out);
+    else if (child.type === "option") {
+      const label = textOf(props.children);
+      out.push({ value: props.value === undefined ? label : String(props.value), label });
+    }
+  });
+  return out;
+}
+
+/**
+ * The site's own dropdown, used like a native <select> (value, onChange with
+ * `e.target.value`, <option> children). The list opens in the flow of the page, under
+ * the button, so nothing can clip or cover it.
+ */
+export function Select({
+  value,
+  onChange,
+  className,
+  children,
+}: {
+  value: string | number;
+  onChange: (e: { target: { value: string } }) => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const options = optionsOf(children);
+  const current = options.find((o) => o.value === String(value));
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  return (
+    <div className={`sel${open ? " is-open" : ""}${className ? ` ${className}` : ""}`} ref={box}>
+      <button
+        type="button"
+        className="sel-btn"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.preventDefault();
+          setOpen((x) => !x);
+        }}
+      >
+        <span className="sel-value">{current?.label ?? ""}</span>
+        <span className="sel-caret" aria-hidden="true" />
+      </button>
+      {open && (
+        <ul className="sel-list" role="listbox">
+          {options.map((o) => (
+            <li key={o.value} role="option" aria-selected={o.value === String(value)}>
+              <button
+                type="button"
+                className={o.value === String(value) ? "on" : ""}
+                onClick={(e) => {
+                  e.preventDefault();
+                  setOpen(false);
+                  if (o.value !== String(value)) onChange({ target: { value: o.value } });
+                }}
+              >
+                {o.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

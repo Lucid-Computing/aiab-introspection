@@ -35,9 +35,12 @@ const BODY: Record<PlanNode["type"], string> = {
     kinds = set(settings["kinds"])
     keywords = [k.lower() for k in settings["keywords"] if k]
     agents = set(settings["agents"])
+    sessions = set(settings["sessions"])
     kept = []
     for r in records:
         if r["kind"] not in kinds or (agents and r["agent_id"] not in agents):
+            continue
+        if sessions and r["session_id"] not in sessions:
             continue
         if keywords and not any(k in r["content"].lower() for k in keywords):
             continue
@@ -117,6 +120,7 @@ function settingsOf(node: PlanNode): Record<string, unknown> {
         window_end: c.input_scope.window_end ?? null,
         kinds: c.filter.kinds,
         keywords: c.filter.keywords,
+        sessions: c.filter.sessions ?? [],
         max_records: c.max_records,
       };
     }
