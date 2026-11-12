@@ -7,8 +7,8 @@
 <form method="post" action="/agreements/new" class="card" data-confirm="Create this agreement?">
   <div class="card-body stack">
     <div class="field"><label for="plan_id">Name</label>
-      <input id="plan_id" name="plan_id" value="{{ form.plan_id or '' }}" placeholder="destructive-commands-2" required autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,127}" aria-describedby="plan_id-hint">
-      <p id="plan_id-hint" class="field-hint" aria-live="polite">Letters, digits, _ and -, up to 128 characters. It becomes the address /a/&lt;name&gt;/plan.</p>
+      <input id="plan_id" name="plan_id" value="{{ form.plan_id or '' }}" placeholder="letters, digits, _ and -" required autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,127}" aria-describedby="plan_id-hint">
+      <p id="plan_id-hint" class="field-hint" aria-live="polite" hidden></p>
     </div>
     <div class="field"><label>Start from</label>
       <label class="choice"><input type="radio" name="source" value="template" {% if form.source != 'copy' %}checked{% endif %}> the baseline plan</label>
@@ -34,7 +34,7 @@
   (function () {
     var input = document.getElementById("plan_id"), hint = document.getElementById("plan_id-hint");
     if (!input || !hint) return;
-    var taken = {{ taken | tojson }}, neutral = hint.textContent;
+    var taken = {{ taken | tojson }};
     function problem(name) {
       if (!name) return "";
       var bad = name.replace(/[A-Za-z0-9_-]/g, "");
@@ -50,7 +50,8 @@
     function check() {
       var name = input.value, why = problem(name);
       input.setCustomValidity(why);
-      hint.textContent = why || (name ? "Available. Its page will be /a/" + name + "/plan." : neutral);
+      hint.textContent = why;
+      hint.hidden = !why;
       hint.classList.toggle("field-hint--error", !!why);
       input.classList.toggle("is-invalid", !!why);
     }

@@ -835,7 +835,7 @@ async def new_agreement(request: Request) -> Response:
         )
     saved(user_of(request))
     chat = "&chat=1" if form.get("chat") == "1" else ""
-    return back(f"/a/{created}/plan?edit=1{chat}", msg=f"New agreement {created}.")
+    return RedirectResponse(f"/a/{created}/plan?edit=1{chat}", status_code=303)
 
 
 def _pins_differ(pre: dict, box: dict) -> bool:
