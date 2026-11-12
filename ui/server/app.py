@@ -260,6 +260,9 @@ def render(request: Request, template: str, **context: Any) -> Response:
     context.setdefault(
         "server_certifies", bool(who) and pv.server_certifies(settings, who["party"])
     )
+    # Prototype: the server holds a working lab key, so the Sign screen offers Lab Sign to
+    # anyone logged in and every page says DEV MODE.
+    context.setdefault("lab_sign", pv.server_signs(settings, "lab"))
     context.update(
         user=user_of(request),
         settings=settings,
@@ -1034,11 +1037,19 @@ async def runs_start(request: Request) -> Response:
             f"{', '.join(dict.fromkeys([source.label, *(o.label for o, _ in elsewhere)]))}, "
             f"{len(records)} records"
         )
-        run_id = runs.start_run(settings, user, chosen, target.plan_dir, records, label=label)
+        sent = runs.sent_sessions(
+            target.plan_dir,
+            source.id,
+            [{"id": s.id, "title": s.title} for s in picked],
+            records,
+        )
+        run_id = runs.start_run(
+            settings, user, chosen, target.plan_dir, records, label=label, sent=sent
+        )
     except (ValueError, OSError) as exc:
         return back(here, err=str(exc))
-    sent = (runs.load_run(settings, run_id) or {}).get("plan") or {}
-    version = f", version {sent['digest'][7:19]}" if sent.get("digest") else ""
+    plan = (runs.load_run(settings, run_id) or {}).get("plan") or {}
+    version = f", version {plan['digest'][7:19]}" if plan.get("digest") else ""
     pv.record_change(
         target, user, "run", "run", f"run {run_id} started ({len(records)} records{version})"
     )
@@ -1052,7 +1063,13 @@ async def run_page(request: Request, run_id: str) -> Response:
     state = runs.load_run(settings, run_id)
     if state is None:
         return back("/runs", err="No such run.")
-    return render(request, "run.html", run=state, result=runs.result_view(settings, state))
+    return render(
+        request,
+        "run.html",
+        run=state,
+        result=runs.result_view(settings, state),
+        counts=runs.run_counts(settings, state),
+    )
 
 
 @app.get("/runs/{run_id}/plan")
@@ -1189,9 +1206,7 @@ async def plan_save(request: Request, aid: str) -> Response:
         return JSONResponse({"error": "Expected a JSON request."}, status_code=415)
     body = bytearray()
     async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > 1_000_000:
-            return JSONResponse({"error": "The plan is too large."}, status_code=413)
+        body.extend(chunk)  # no size cap: a plan may name every session of a log
     try:
         payload = json.loads(body)
     except ValueError:
@@ -1299,9 +1314,6 @@ async def start_editing(request: Request, aid: str) -> Response:
     if other:
         return back(f"/a/{aid}/plan", err=editing.describe(other) + ". Try again later.")
     removed = pv.delete_signatures(target, user_of(request))
-    # The version is unchanged, so the server's lab signature comes straight back.
-    if pv.ensure_lab_signature(target, user_of(request)):
-        removed -= 1
     saved(user_of(request))
     note = f" {removed} signature file(s) removed." if removed > 0 else ""
     form = await request.form()
@@ -1415,7 +1427,6 @@ async def sign(request: Request, aid: str) -> Response:
         aid=aid,
         keys=keys,
         copy=copy,
-        auto_sign=bool(settings.lab_signing_key),
         issuer_parties=[p for p in PARTIES if pv.server_certifies(settings, p)],
         server_problems={
             p: pv.server_problem(settings, p) or pv.issuer_problem(settings, p) for p in PARTIES
@@ -1450,6 +1461,25 @@ async def sign_upload(
     editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
     saved(user)
     return back(_sign_next(aid, next), msg=f"{party} signature verified and stored.")
+
+
+@app.post("/a/{aid}/sign/lab")
+async def sign_as_lab(request: Request, aid: str, digest: Annotated[str, Form()] = "") -> Response:
+    """Lab Sign, for the demo (prototype): anyone logged in, the auditor included, signs the
+    version they were shown as the lab with the server's lab key (AIAB_LAB_KEY)."""
+    target, redirect = agreement(request, aid, write=True)
+    if redirect:
+        return redirect
+    user = user_of(request)
+    here = f"/a/{aid}/sign"
+    if user is None:
+        return back(here, err="Log in first.")
+    status, detail = pv.lab_sign(target, user, digest)
+    if status != "ok":
+        return back(here, err=f"Lab Sign did not sign: {detail}.")
+    editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
+    saved(user)
+    return back(here, msg="Signed as the lab with the server's lab key.")
 
 
 @app.post("/sign/certificate")

@@ -86,8 +86,8 @@ def test_streamed_tool_only_reply_gives_a_tool_call_record_not_no_text():
     assert "(no text)" not in json.dumps(records)
 
 
-def test_long_tool_results_are_cut_and_empty_calls_give_nothing():
-    big = "x" * 10_000
+def test_long_tool_results_are_kept_whole_and_empty_calls_give_nothing():
+    big = "x" * 300_000
     messages = [
         {"role": "user", "content": FIRST},
         {
@@ -98,7 +98,7 @@ def test_long_tool_results_are_cut_and_empty_calls_give_nothing():
     ]
     records = P.to_box_records([P.parse_request(entry(messages, "{}"))])
     assert [r["kind"] for r in records] == ["tool_result"]
-    assert len(records[0]["content"]) < 2_100 and "cut here" in records[0]["content"]
+    assert records[0]["content"] == big
     # A harness reminder answered by an API error is not a record at all.
     reminder = [{"role": "user", "content": "<system-reminder>a file changed</system-reminder>"}]
     error = json.dumps({"type": "error", "error": {"type": "overloaded_error", "message": "x"}})

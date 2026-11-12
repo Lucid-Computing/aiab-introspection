@@ -119,7 +119,7 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
     async def ready(_folder):
         return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
 
-    def fake_start(settings, user, agreement, folder, records, label=None):
+    def fake_start(settings, user, agreement, folder, records, label=None, sent=None):
         started.update(records=records, label=label)
         return "run-1"
 
@@ -161,7 +161,7 @@ def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_pa
     async def ready(_folder):
         return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
 
-    def fake_start(settings, user, agreement, folder, records, label=None):
+    def fake_start(settings, user, agreement, folder, records, label=None, sent=None):
         started.update(records=records, label=label)
         return "run-1"
 
@@ -363,7 +363,7 @@ def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, mon
     async def ready(_folder):
         return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
 
-    def fake_start(settings, user, agreement, folder, records, label=None):
+    def fake_start(settings, user, agreement, folder, records, label=None, sent=None):
         started.update(records=records, label=label)
         return "run-1"
 

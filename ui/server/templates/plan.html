@@ -24,8 +24,7 @@
   {% if not edit %}
   <form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--primary">Edit this plan</button></form>
   {% endif %}
-  {% if mine.auto %}
-  {% elif mine.status == 'ok' %}
+  {% if mine.status == 'ok' %}
   <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?"><input type="hidden" name="party" value="{{ user.party }}"><input type="hidden" name="next" value="{{ base }}/plan"><button class="btn btn--ghost">Re-sign</button></form>
   {% elif view.issue %}
   <button class="btn btn--ghost" disabled title="The box would reject this plan: {{ view.issue }}">Sign</button>

@@ -19,7 +19,7 @@
     </div>
     <details class="add-description" {% if form.problem %}open{% endif %}>
       <summary>Add description</summary>
-      <textarea id="problem" name="problem" class="question" aria-label="Description">{{ form.problem or '' }}</textarea>
+      <textarea id="problem" name="problem" class="question" aria-label="Description" placeholder="Did any session send an API key or password to the model provider?">{{ form.problem or '' }}</textarea>
     </details>
     {# "Create with AI" (chat=1) is hidden for now, with the chat card on the plan page. #}
     <div class="row">
@@ -30,7 +30,8 @@
 <script>
   // The name is checked as it is typed, with the same rule the server applies, so the
   // reason appears under the field instead of after a round trip. An invalid name also
-  // blocks the submit (setCustomValidity).
+  // blocks the submit (setCustomValidity). Spaces become "-" and letters lowercase as they
+  // are typed; the server rule itself still allows capitals.
   (function () {
     var input = document.getElementById("plan_id"), hint = document.getElementById("plan_id-hint");
     if (!input || !hint) return;
@@ -47,7 +48,16 @@
       if (taken.indexOf(name) !== -1) return "An agreement called " + name + " already exists.";
       return "";
     }
+    // One character in, one character out, so the caret can stay where it was.
+    function tidy() {
+      var raw = input.value.replace(/^\s+/, ""), name = raw.replace(/\s/g, "-").toLowerCase();
+      if (name === input.value) return;
+      var cut = input.value.length - raw.length, at = input.selectionStart, end = input.selectionEnd;
+      input.value = name;
+      if (at !== null) input.setSelectionRange(Math.max(0, at - cut), Math.max(0, end - cut));
+    }
     function check() {
+      tidy();
       var name = input.value, why = problem(name);
       input.setCustomValidity(why);
       hint.textContent = why;

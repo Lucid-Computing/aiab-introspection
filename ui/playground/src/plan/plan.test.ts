@@ -139,14 +139,6 @@ describe("Plan IR validation", () => {
 });
 
 describe("lint mirrors the box's rules", () => {
-  it("fills the run limits with the box's defaults", () => {
-    expect(simple().limits).toEqual({
-      max_input_utf8_bytes: 100_000,
-      max_model_calls_per_run: 64,
-      max_runtime_seconds_per_run: 120,
-    });
-  });
-
   it("refuses Python the box would refuse: imports, run() signature, reflective builtins", () => {
     expect(pythonIssues("import os\ndef run(records):\n    return []\n", ["records"])).toEqual([
       expect.stringContaining("import os is not allowed"),
@@ -503,7 +495,7 @@ describe("Query format block (a Run Python node the builder writes)", () => {
     const body = queryCode({ per: "session", window: 8 }).split("\n").slice(1).join("\n");
     for (const first of [
       "# query-format per=session window=0",
-      "# query-format per=session window=33",
+      "# query-format per=session window=08",
       "# query-format per=agent window=8",
       "# query-format per=session window=8 ",
       "#query-format per=session window=8",

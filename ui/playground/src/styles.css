@@ -62,6 +62,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .newblock-item:hover { background: var(--paper-2); }
 .newblock-item:active { cursor: grabbing; }
 .newblock-item:focus-visible { outline: 2px solid var(--accent); }
+.newblock-item[aria-disabled="true"] { cursor: not-allowed; color: var(--ink-3); background: none; }
 
 /* ---- blocks: fixed size (layout.ts NODE_W x NODE_H): kind, title, one line ---- */
 .pn { position: relative; box-sizing: border-box; width: 280px; height: 64px; padding: 7px 12px; background: var(--paper-1); border: 1px solid var(--rule-strong); font-size: var(--text-sm); }

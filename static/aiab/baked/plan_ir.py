@@ -10,8 +10,13 @@ LogRecords, Items, Classifications or Value.
 This module mirrors the builder's rules (ui/playground/src/plan: types, validate, lint,
 report), so a plan the builder calls valid is a plan the box accepts, and the other way
 round. The builder's warnings are not errors here either. Everything the box needs beyond
-the plan itself (the output schema, the run limits, the input scope) is derived here, once,
-so the rest of the runtime keeps reading ``bundle.config`` as before.
+the plan itself (the output schema, the report's size cap, the input scope) is derived here,
+once, so the rest of the runtime keeps reading ``bundle.config`` as before.
+
+A run has no record, byte, model-call or time limit. Plans signed when it had one carry
+``limits`` and ``input_logs.config.max_records``; both still load and are ignored. The one
+size cap left is the report's ``privacy.max_result_bytes``: it bounds what the report
+discloses, which is a privacy control, not a size limit on the work.
 """
 
 from __future__ import annotations
@@ -33,14 +38,14 @@ NODE_TYPES = ("input_logs", "classifier", "run_python", "run_llm", "final_report
 REPORT_INPUT = "result"
 ABSTAIN = "abstain"
 
-# The box's own ceilings. A plan sets its limits below these; the manifest publishes them.
-LIMITS = {
-    "max_input_utf8_bytes": 1_000_000_000_000,
-    "max_records_per_run": 2000,
-    "max_model_calls_per_run": 256,
-    "max_runtime_seconds_per_run": 300,
-    "max_result_bytes": 4096,
-}
+# The box's one ceiling, on what a report discloses; the manifest publishes it.
+LIMITS = {"max_result_bytes": 4096}
+# Run limits that plans signed before they were removed carry: accepted, ignored.
+RETIRED_LIMITS = (
+    "max_input_utf8_bytes",
+    "max_model_calls_per_run",
+    "max_runtime_seconds_per_run",
+)
 # Whole modules a ``run_python`` step may import. Pure computation only; the seccomp
 # sandbox, not this list, is the isolation boundary.
 PYTHON_MODULES = ("re", "math", "collections", "itertools", "statistics", "json")
@@ -59,15 +64,14 @@ FORBIDDEN_NAMES = {
     "input",
     "__import__",
 }
-MAX_CODE_BYTES = 65536
 
 IDENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 IDENT = {"type": "string", "pattern": IDENT_RE.pattern, "maxLength": 64}
 PLAN_ID = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}
 REF = {"type": "string", "pattern": r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$", "maxLength": 129}
-SHORT = {"type": "string", "maxLength": 1024}
-TEXT = {"type": "string", "maxLength": 16384}
-CODE = {"type": "string", "maxLength": MAX_CODE_BYTES}
+SHORT = {"type": "string"}
+TEXT = {"type": "string"}
+CODE = {"type": "string"}
 FLAG = {"type": "boolean"}
 
 
@@ -80,8 +84,10 @@ def _obj(properties: dict, optional: tuple[str, ...] = ()) -> dict:
     }
 
 
-def _list(items: dict, maximum: int, minimum: int = 0, unique: bool = False) -> dict:
-    out = {"type": "array", "items": items, "minItems": minimum, "maxItems": maximum}
+def _list(items: dict, maximum: int | None = None, minimum: int = 0, unique: bool = False) -> dict:
+    out = {"type": "array", "items": items, "minItems": minimum}
+    if maximum is not None:
+        out["maxItems"] = maximum
     if unique:
         out["uniqueItems"] = True
     return out
@@ -102,7 +108,6 @@ OUTPUT = _obj(
             "type": "object",
             "propertyNames": IDENT,
             "additionalProperties": {"enum": list(FIELD_TYPES)},
-            "maxProperties": 16,
         },
     }
 )
@@ -115,9 +120,7 @@ CONFIGS = {
                     "window_start": DATE,
                     "window_end": DATE,
                     "agents": _list(
-                        {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"},
-                        100,
-                        unique=True,
+                        {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}, unique=True
                     ),
                 },
                 optional=("window_start", "window_end"),
@@ -125,33 +128,29 @@ CONFIGS = {
             "filter": _obj(
                 {
                     "kinds": _list({"enum": list(KINDS)}, 4, minimum=1, unique=True),
-                    "keywords": _list(SHORT, 32),
+                    "keywords": _list(SHORT),
                     # Optional: when present, only records of these sessions are read.
                     "sessions": _list(
-                        {"type": "string", "minLength": 1, "maxLength": 256}, 500, unique=True
+                        {"type": "string", "minLength": 1, "maxLength": 256}, unique=True
                     ),
                 },
                 optional=("sessions",),
             ),
-            "max_records": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": LIMITS["max_records_per_run"],
-            },
-        }
+            # Retired: plans signed with a record limit still load; it is ignored.
+            "max_records": {"type": "integer", "minimum": 1},
+        },
+        optional=("max_records",),
     ),
     "classifier": _obj(
         {
             "model": MODEL,
             "group_by": {"enum": ["session", "record"]},
-            "window": {"type": "integer", "minimum": 1, "maximum": 32},
+            "window": {"type": "integer", "minimum": 1},
             "instructions": TEXT,
-            "labels": _list(
-                _obj({"name": IDENT, "description": SHORT, "flag": FLAG}), 32, minimum=1
-            ),
+            "labels": _list(_obj({"name": IDENT, "description": SHORT, "flag": FLAG}), minimum=1),
             "threshold": {"type": "number", "minimum": 0, "maximum": 1},
-            "positive_examples": _list(TEXT, 32),
-            "negative_examples": _list(TEXT, 32),
+            "positive_examples": _list(TEXT),
+            "negative_examples": _list(TEXT),
             "output_contract": _obj({"score": FLAG, "evidence_ids": FLAG}),
         },
         optional=("threshold",),
@@ -202,19 +201,14 @@ PLAN = _obj(
         "plan_id": PLAN_ID,
         "title": SHORT,
         "description": TEXT,
+        # Retired: plans signed with run limits still load; the limits are ignored.
         "limits": _obj(
-            {
-                k: {"type": "integer", "minimum": 1, "maximum": LIMITS[k]}
-                for k in (
-                    "max_input_utf8_bytes",
-                    "max_model_calls_per_run",
-                    "max_runtime_seconds_per_run",
-                )
-            }
+            {k: {"type": "integer", "minimum": 1} for k in RETIRED_LIMITS},
+            optional=RETIRED_LIMITS,
         ),
-        "nodes": _list({"type": "object"}, 64, minimum=1),
+        "nodes": _list({"type": "object"}, minimum=1),
     },
-    optional=("description",),
+    optional=("description", "limits"),
 )
 
 # What each node type accepts on its inputs, and how its inputs are named.
@@ -350,8 +344,6 @@ def check_code(code: str, inputs: tuple[str, ...]) -> str | None:
     ``**inputs``). Dunder and private attribute access and the reflective builtins are
     refused. This is a restriction on what the parties can agree to, not the sandbox.
     """
-    if len(code.encode("utf-8")) > MAX_CODE_BYTES:
-        return "code is longer than 64 KiB"
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError, RecursionError) as exc:
@@ -638,11 +630,7 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
             "window_end": scope["window_end"],
             "agents": sorted(scope["agents"]),
         }
-    limits = {
-        **raw["limits"],
-        "max_records_per_run": source["config"]["max_records"],
-        "max_result_bytes": report["config"]["privacy"]["max_result_bytes"],
-    }
+    limits = {"max_result_bytes": report["config"]["privacy"]["max_result_bytes"]}
     return Analysis(
         plan=raw,
         nodes=nodes,

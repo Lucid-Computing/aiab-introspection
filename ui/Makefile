@@ -7,8 +7,8 @@ PORT ?= 8090
 sync:
 	uv sync
 
-# With dev keys made, the server signs as the lab by itself (AIAB_LAB_KEY and
-# AIAB_LAB_CERTIFICATE from $(KEYS)/lab.key and lab.cert), and certifies each auditor's browser
+# With dev keys made, the Sign screen offers the demo-only Lab Sign button (AIAB_LAB_KEY and
+# AIAB_LAB_CERTIFICATE from $(KEYS)/lab.key and lab.cert), and the server certifies each auditor's browser
 # key on their first Sign (AIAB_AUDITOR_ROOT_KEY from auditor-root.key).
 dev:
 	$(if $(wildcard $(KEYS)/lab.key),AIAB_LAB_KEY=$$(cat $(KEYS)/lab.key) AIAB_LAB_CERTIFICATE=$$(cat $(KEYS)/lab.cert),) $(if $(wildcard $(KEYS)/auditor-root.key),AIAB_AUDITOR_ROOT_KEY=$$(cat $(KEYS)/auditor-root.key),) uv run uvicorn server.app:app --reload --port $(PORT)

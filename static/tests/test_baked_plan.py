@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from aiab.audit.api import create_app
 from aiab.audit.protocol import AuditError, canonical, clone, decode, sign_bytes
+from aiab.baked import executor as executor_module
 from aiab.baked.bundle import file_digest, load_bundle, make_certificate, write_certificate
 from aiab.baked.executor import execute
 from aiab.baked.output import capacity, check_schema
@@ -298,14 +299,6 @@ async def test_context_preflight_all_items_before_any_inference(setup):
     assert model.checked == 2 and model.calls == 0
 
 
-async def test_model_call_budget_is_enforced_by_the_parent(setup):
-    _, _, _, bundle, records = setup
-    limits = {**bundle.config["limits"], "max_model_calls_per_run": 1}
-    bundle = replace(bundle, config={**bundle.config, "limits": limits})
-    with pytest.raises(AuditError, match="input_too_large"):
-        await execute(bundle, records, MockModel())
-
-
 @pytest.mark.parametrize(
     "operation",
     [
@@ -328,7 +321,7 @@ async def test_os_boundary_even_if_source_checker_is_bypassed(setup, operation):
         await execute(bundle, records, MockModel())
 
 
-async def test_timeout_kills_worker_and_signs_failure(setup):
+async def test_plan_code_that_never_finishes_is_stopped_and_signs_failure(setup, monkeypatch):
     _, trust, _, bundle, _ = setup
     bundle = edited(
         bundle,
@@ -337,12 +330,9 @@ async def test_timeout_kills_worker_and_signs_failure(setup):
         ),
         check=False,
     )
-    cfg = clone(bundle.config)
-    cfg["limits"]["max_runtime_seconds_per_run"] = 1
+    monkeypatch.setattr(executor_module, "PLAN_CPU_SECONDS", 1)
     runtime = Runtime(trust, MockModel())
-    envelope = await asyncio.wait_for(
-        executed(runtime, replace(bundle, config=cfg), submission(setup), trust), 4
-    )
+    envelope = await asyncio.wait_for(executed(runtime, bundle, submission(setup), trust), 10)
     assert envelope["report"]["error"] == "execution_timeout"
     await runtime.close()
 

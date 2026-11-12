@@ -101,12 +101,13 @@ class PinnedModel:
         preamble and a few tokens per message. A prompt within the bound always fits; one
         beyond it is refused even if it might have fit. Nothing is ever truncated.
         """
-        bound = PROMPT_OVERHEAD_TOKENS + sum(
-            MESSAGE_OVERHEAD_TOKENS + len(m["role"].encode()) + len(m["content"].encode())
-            for m in content
-        )
-        if bound + max_output_tokens > self.model["context_tokens"]:
+        if prompt_bound(content) + max_output_tokens > self.model["context_tokens"]:
             raise AuditError("input_too_large", 413)
+
+    def user_budget(self, system: str, max_output_tokens: int) -> int:
+        """The most UTF-8 bytes a user message may have next to ``system`` and still pass
+        check_messages. The box splits a longer item into pieces of this size (graph.py)."""
+        return user_budget(self.model["context_tokens"], system, max_output_tokens)
 
     async def complete(self, content: list[dict], schema: dict, max_output_tokens: int) -> dict:
         """One strict-JSON answer in ``schema`` for a prompt the box built (baked plans)."""
@@ -174,6 +175,20 @@ class PinnedModel:
 
     async def close(self):
         await self.connection.close()
+
+
+def prompt_bound(content: list[dict]) -> int:
+    """An upper bound on a prompt's tokens: one per UTF-8 byte, plus the template's."""
+    return PROMPT_OVERHEAD_TOKENS + sum(
+        MESSAGE_OVERHEAD_TOKENS + len(m["role"].encode()) + len(m["content"].encode())
+        for m in content
+    )
+
+
+def user_budget(context_tokens: int, system: str, max_output_tokens: int) -> int:
+    """The user message size (bytes) at which a system + user prompt still passes the bound."""
+    empty = [{"role": "system", "content": system}, {"role": "user", "content": ""}]
+    return context_tokens - max_output_tokens - prompt_bound(empty)
 
 
 def parse_answer(result, schema: dict) -> dict:
