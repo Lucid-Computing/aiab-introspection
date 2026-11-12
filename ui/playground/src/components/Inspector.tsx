@@ -247,79 +247,61 @@ function PlanPanel({
 function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }) {
   const rule = INPUT_RULES[node.type];
   if (rule.kind !== "dynamic") return null;
-  // Outputs this node could read without a cycle or a type mismatch.
+  // Blocks this one could read without a cycle or a type mismatch, named by their titles.
   const candidates = plan.nodes
     .map((s) => ({ s, out: outputPort(s) }))
     .filter(
       ({ s, out }) => out && s.id !== node.id && accepts(node.type, out.type) && !wouldCycle(plan, s.id, node.id),
     );
+  const label = (id: string) => plan.nodes.find((n) => n.id === id)?.title || id;
   const names = Object.keys(node.inputs);
+  // A Query format block reads one block; Code and LLM blocks may read several, each
+  // under the name their code or prompt uses.
+  const single = isQuery(node);
+  const named = !single && names.length > 0;
   return (
     <div className="f">
       <span className="f-label">Reads from</span>
-      <table className="io">
-        <tbody>
-          {names.map((name) => (
-            <tr key={name}>
-              <td>
-                <CommitInput
-                  className="mono"
-                  value={name}
-                  onCommit={(v) => op(renameInput(plan, node.id, name, v))}
-                />
-              </td>
-              <td className="io-arrow">←</td>
-              <td>
-                <Select
-                  value={node.inputs[name] ?? ""}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (!v) return op({ ok: true, plan: disconnect(plan, node.id, name) });
-                    op(connect(plan, { source: v.split(".")[0], target: node.id, targetHandle: name }));
-                  }}
-                >
-                  <option value="">— not connected —</option>
-                  {node.inputs[name] &&
-                    !candidates.some(({ s, out }) => `${s.id}.${out!.name}` === node.inputs[name]) && (
-                      <option value={node.inputs[name]}>{node.inputs[name]}</option>
-                    )}
-                  {candidates.map(({ s, out }) => (
-                    <option key={s.id} value={`${s.id}.${out!.name}`}>
-                      {s.id}.{out!.name} ({out!.type})
-                    </option>
-                  ))}
-                </Select>
-                {node.inputs[name] && (
-                  <span className="io-type">
-                    <TypeBadge type={inputType(plan, node, name)} />
-                  </span>
-                )}
-              </td>
-              <td>
-                <button
-                  className="x"
-                  title="Remove input"
-                  onClick={() => op({ ok: true, plan: disconnect(plan, node.id, name) })}
-                >
-                  ×
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {candidates.length > 0 && (
+      {names.map((name) => (
+        <div key={name} className="reads">
+          <Select
+            value={node.inputs[name] ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) return op({ ok: true, plan: disconnect(plan, node.id, name) });
+              op(connect(plan, { source: v.split(".")[0], target: node.id, targetHandle: name }));
+            }}
+          >
+            <option value="">nothing</option>
+            {node.inputs[name] &&
+              !candidates.some(({ s, out }) => `${s.id}.${out!.name}` === node.inputs[name]) && (
+                <option value={node.inputs[name]}>{label(node.inputs[name].split(".")[0])}</option>
+              )}
+            {candidates.map(({ s, out }) => (
+              <option key={s.id} value={`${s.id}.${out!.name}`}>
+                {label(s.id)}
+              </option>
+            ))}
+          </Select>
+          {named && (
+            <span className="f-hint">
+              as{" "}
+              <CommitInput className="mono reads-name" value={name} onCommit={(v) => op(renameInput(plan, node.id, name, v))} />
+            </span>
+          )}
+        </div>
+      ))}
+      {candidates.length > 0 && (!single || names.length === 0) && (
         <Select
-          className="add-input"
           value=""
           onChange={(e) =>
             e.target.value && op(connect(plan, { source: e.target.value, target: node.id, targetHandle: "__new__" }))
           }
         >
-          <option value="">+ read from another block…</option>
-          {candidates.map(({ s, out }) => (
+          <option value="">{names.length ? "add another block" : "nothing"}</option>
+          {candidates.map(({ s }) => (
             <option key={s.id} value={s.id}>
-              {s.id}.{out!.name} ({out!.type})
+              {label(s.id)}
             </option>
           ))}
         </Select>

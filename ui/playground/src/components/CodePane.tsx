@@ -1,12 +1,9 @@
-import { python } from "@codemirror/lang-python";
-import { EditorView } from "@codemirror/view";
-import CodeMirror from "@uiw/react-codemirror";
 import { type Dispatch, useMemo } from "react";
-import { planPython } from "../plan/python";
+import { blockPython, planPython } from "../plan/python";
 import type { Issue } from "../plan/types";
+import { topoOrder } from "../plan/validate";
 import type { Action, State } from "../state/store";
-
-const extensions = [python(), EditorView.lineWrapping, EditorView.editable.of(false)];
+import { BLOCK_META, kindOf } from "./nodeMeta";
 
 interface Props {
   state: State;
@@ -16,27 +13,44 @@ interface Props {
 }
 
 /**
- * The wrapper as Python, read only: which block feeds which, in the order the box runs
- * them. A block's own code is in the Python fold of its settings pane.
+ * The plan as Python, read only: the wrapper (what connects to what) on top, then one fold
+ * per block with its file, in the order the box runs them. The selected block's fold is open.
  */
 export default function CodePane({ state, dispatch, lint }: Props) {
-  const { plan } = state;
-
-  const text = useMemo(() => planPython(plan), [plan]);
+  const { plan, selected } = state;
+  const blocks = useMemo(() => {
+    let order: string[];
+    try {
+      order = topoOrder(plan);
+    } catch {
+      order = plan.nodes.map((n) => n.id);
+    }
+    return order.flatMap((id) => {
+      const node = plan.nodes.find((n) => n.id === id);
+      return node ? [{ node, text: blockPython(plan, node) }] : [];
+    });
+  }, [plan]);
 
   return (
     <div className="code">
       <div className="code-bar">
-        <span className="code-title">plan.py</span>
-        <span className="code-state">what connects to what · read only · each block's code is in its own Python fold</span>
+        <span className="code-title">The plan as Python</span>
+        <span className="code-state">read only</span>
       </div>
-      <div className="code-editor">
-        <CodeMirror
-          value={text}
-          height="100%"
-          extensions={extensions}
-          basicSetup={{ highlightActiveLine: false }}
-        />
+      <div className="code-files">
+        <div className="f">
+          <span className="f-label">plan.py</span>
+          <span className="f-hint">What connects to what.</span>
+          <pre className="insp-py">{planPython(plan)}</pre>
+        </div>
+        {blocks.map(({ node, text }) => (
+          <details key={node.id} className="f" open={node.id === selected}>
+            <summary className="f-label">
+              blocks/{node.id}.py <span className="muted">· {BLOCK_META[kindOf(node)].label}</span>
+            </summary>
+            <pre className="insp-py">{text}</pre>
+          </details>
+        ))}
       </div>
       {lint.length > 0 && (
         <ul className="code-issues">

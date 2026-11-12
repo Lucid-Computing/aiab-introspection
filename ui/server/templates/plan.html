@@ -47,18 +47,6 @@
 {% if not snapshot %}<iframe class="builder" id="builder" title="Plan builder" src="/audit-plan-playground/?agreement={{ aid }}{% if not edit %}&amp;readonly=1{% endif %}"></iframe>{% endif %}
 
 <div class="stack" style="margin-top: var(--space-6)">
-<details class="info">
-  <summary>What is in the version, and the box's limits</summary>
-  <div class="info-body">
-  <table class="kv">
-    <tr><th>Files</th><td class="mono">{{ view.files | join(" · ") }}</td></tr>
-    <tr><th>Outside the digest</th><td><span class="mono">tests/</span>, <span class="mono">signatures/</span> and the change log</td></tr>
-    <tr><th>Format</th><td class="mono">{{ view.restrictions.plan_format }}</td></tr>
-    <tr><th>Pinned model</th><td class="mono">{{ view.restrictions.models[0].id }}</td></tr>
-    <tr><th>Python may import</th><td class="mono">{{ view.restrictions.python_imports | join(", ") }}</td></tr>
-  </table>
-  </div>
-</details>
 </div>
 {% endif %}
 {% endblock %}
