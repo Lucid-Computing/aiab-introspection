@@ -167,7 +167,7 @@ def preflight(settings: Settings, folder: Path | None) -> dict:
     missing = []
     plan_digest = None
     if folder is None:
-        missing.append("an agreement signed by both parties")
+        missing.append("no signed agreement")
     else:
         try:
             # Against the keys the box trusts now. After a key change an agreement signed
@@ -178,9 +178,7 @@ def preflight(settings: Settings, folder: Path | None) -> dict:
             plan_digest = bundle.digest
         except AuditError as exc:
             if str(exc) == "invalid_signature":
-                missing.append(
-                    "the agreement is not signed by both parties with the keys the box trusts"
-                )
+                missing.append("not signed by both parties")
             else:
                 missing.append("signed agreement: " + str(exc))
         except (OSError, ValueError) as exc:

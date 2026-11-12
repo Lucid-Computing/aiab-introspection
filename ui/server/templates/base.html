@@ -1,3 +1,4 @@
+{% from "_icons.html" import party_icon %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -20,7 +21,7 @@
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
     {% endfor %}
     {% if user %}
-    <span class="chip">{{ user.display_name }} <span class="badge badge--ink">{{ user.party }}</span></span>
+    <span class="chip" title="{{ user.party }}"><span class="party-icon" aria-label="{{ user.party }}">{{ party_icon(user.party) }}</span>{{ user.display_name }}</span>
     <form method="post" action="/logout" class="inline"><button class="btn btn--ghost btn--sm">Log out</button></form>
     {% endif %}
   </div>

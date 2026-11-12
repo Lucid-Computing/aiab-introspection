@@ -856,9 +856,7 @@ async def _run_preflight(folder: Path | None) -> dict:
     if _pins_differ(pre, box):
         tag = (pre.get("release") or {}).get("tag", "?")
         pre["missing"].append(
-            f"the release pins here ({tag}) are not the release the box runs. A release may"
-            " still be finishing, or this server has not caught up with it yet;"
-            " try again in a minute. Until they agree the box cannot be attested."
+            f"the box is on another release than {tag}; try again in a minute"
         )
         pre["ok"] = False
     return pre
