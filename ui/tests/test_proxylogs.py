@@ -398,7 +398,7 @@ def test_runs_page_lists_slack_sessions_as_messages(tmp_path, monkeypatch):
     settings = _slack_settings(tmp_path)
     _slack_export(settings.log_source("slack").path(settings))
     page = _client(monkeypatch, settings).get("/runs?logs=slack").text
-    assert "deploy is red" in page and "2 msg · 2 records" in page and " req · " not in page
+    assert "deploy is red" not in page  # the Runs page counts sessions, it does not list them
     assert "from Slack Logs" in page and 'name="logs" value="slack"' in page
 
 
@@ -518,7 +518,7 @@ def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):
     assert detail.count('class="plant-run"') == 2 and "Slurm jobs" in detail
     assert "secret" not in page
     page = client.get("/runs?logs=plant").text
-    assert "4 records" in page and " req · " not in page and "secret" not in page
+    assert "KB from Plant Logs" in page and "secret" not in page
 
     # An agreement pinning the plant's agent and window covers both halves.
     plan = tmp_path / "plan"
@@ -751,7 +751,7 @@ def test_logs_and_runs_pages_show_github_threads_as_posts(tmp_path, monkeypatch)
     assert "3 post" in page.split('class="logs-detail"')[0]
     assert client.get("/logs/raw/aiab:pull:1?logs=github").status_code == 404
     runs = client.get("/runs?logs=github").text
-    assert "Add GitHub Logs" in runs and "3 post · 2 records" in runs and "from GitHub Logs" in runs
+    assert "records" in runs and "from GitHub Logs" in runs
 
 
 def test_github_source_opens_its_bundle_at_start(tmp_path, monkeypatch):

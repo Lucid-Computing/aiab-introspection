@@ -108,14 +108,14 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
         (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
 
     page = client.get("/runs?agreement=bio").text  # default: Dev Agent Logs
-    assert "dev-user" in page and "prod-user" not in page
+    assert "from Dev Agent Logs" in page and "from Prod Agent Logs" not in page
     assert 'name="logs" value="dev"' in page
     assert (
         'href="/runs?agreement=bio&amp;logs=prod"' in page
         or 'href="/runs?agreement=bio&logs=prod"' in page
     )
     page = client.get("/runs?agreement=bio&logs=prod").text
-    assert "prod-user" in page and "dev-user" not in page
+    assert "from Prod Agent Logs" in page and "from Dev Agent Logs" not in page
 
     started = {}
 
@@ -171,7 +171,7 @@ def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_pa
     monkeypatch.setattr(ui, "_run_preflight", ready)
     monkeypatch.setattr(ui.runs, "start_run", fake_start)
     monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
-    assert "agt-1" in client.get("/runs?agreement=bio&logs=plant").text
+    assert "from Plant Logs" in client.get("/runs?agreement=bio&logs=plant").text
     response = client.post(
         "/runs/start", data={"agreement": "bio", "logs": "plant", "session": "s1"}
     )

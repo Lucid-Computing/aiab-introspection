@@ -858,8 +858,6 @@ async def runs_index(request: Request) -> Response:
         fits=fits,
         outside=outside,
         empty=empty,
-        show_outside=qp.get("outside") == "1",
-        show_empty=qp.get("empty") == "1",
         all_count=len(all_sessions),
         totals=totals,
         scope=runs.plan_scope(folder) if folder else None,

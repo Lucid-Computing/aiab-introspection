@@ -23,35 +23,10 @@
   <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"><input type="hidden" name="source" value="sessions">{% for item in fits %}<input type="hidden" name="session" value="{{ item.session.id }}">{% endfor %}</form>
 
   {{ selector(log_sources, log_source, "/runs?agreement=" ~ (chosen | urlencode) ~ "&") }}
-  <p class="explain">{% if scope %}The agreement's input filter takes {% if scope.agents %}agents <span class="mono">{{ scope.agents | join(", ") }}</span>{% else %}every agent{% endif %}{% if scope.window_start or scope.window_end %} between <span class="mono">{{ (scope.window_start or "")[:10] or "the start" }}</span> and <span class="mono">{{ (scope.window_end or "")[:10] or "now" }}</span>{% endif %} from {{ log_source.label }}.{% else %}The agreement's input filter takes every session from {{ log_source.label }}.{% endif %}
-  {% if outside %} <a class="link" href="/runs?agreement={{ chosen | urlencode }}&logs={{ log_source.id }}{% if not show_outside %}&outside=1{% endif %}">{% if show_outside %}hide{% else %}show{% endif %} the {{ outside | length }} outside it</a>{% endif %}
-  {% if empty %} <a class="link" href="/runs?agreement={{ chosen | urlencode }}&logs={{ log_source.id }}{% if not show_empty %}&empty=1{% endif %}">{% if show_empty %}hide{% else %}show{% endif %} the {{ empty | length }} with no records</a>{% endif %}</p>
-
-  <div class="runs-list">
-    {% for item in fits %}
-    <div class="rl-row">
-      <span class="sess-title">{{ item.session.title }}</span>
-      <span class="sess-meta">{% if log_source.kind != "plant" %}{{ item.session.records | length }} {% if log_source.kind == "github" %}post{% elif log_source.chat %}msg{% else %}req{% endif %} · {% endif %}{{ item.records }} records · {{ item.kb }} KB</span>
-    </div>
-    {% else %}<p class="text-muted rl-row">{% if all_count %}No session in this source fits the filter.{% else %}No records on disk yet.{% endif %}</p>
-    {% endfor %}
-    {% if show_outside %}{% for item in outside %}
-    <div class="rl-row rl-row--out">
-      <span class="sess-title">{{ item.session.title }}</span>
-      <span class="sess-meta">{{ item.records }} records · outside the filter: {{ item.notes | join("; ") }}</span>
-    </div>
-    {% endfor %}{% endif %}
-    {% if show_empty %}{% for item in empty %}
-    <div class="rl-row rl-row--out">
-      <span class="sess-title">{{ item.session.title }}</span>
-      <span class="sess-meta">no records</span>
-    </div>
-    {% endfor %}{% endif %}
-    <div class="runs-bar">
-      <span class="mono">{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB</span>
-      {% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>
-      {% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}
-    </div>
+  <div class="runs-bar">
+    <span>{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB from {{ log_source.label }}{% if scope %}, within the agreement's input filter{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the filter{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a></span>
+    {% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>
+    {% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}
   </div>
 
   <details class="info">
