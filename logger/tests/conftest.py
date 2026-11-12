@@ -1,13 +1,12 @@
-"""A stand-in logging proxy (the three /_logs routes) and a stand-in box (the box's own
-decryptor behind a fake attested client), so the tests run the real download, index and
-sealing code with nothing mocked in between."""
+"""A proxy data directory written the way the logging proxy writes it (its segments.py),
+and a stand-in box (the box's own decryptor behind a fake attested client), so the tests run
+the real reading, index and sealing code with nothing mocked in between."""
 
 from __future__ import annotations
 
-import hashlib
 import json
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
+from pathlib import Path
 
 import pytest
 import zstandard
@@ -19,7 +18,6 @@ from logserver.box import Box
 from logserver.config import Settings
 from logserver.store import Store
 
-PROXY_KEY = "proxy-reader-key"
 API_KEY = "ui-key"
 SECRET = "the launch code is 0451"  # what was said; must never leave unsealed
 ANSWER = "I will not repeat the launch code"
@@ -52,39 +50,57 @@ def lines(entries) -> bytes:
     return b"".join(json.dumps(e).encode() + b"\n" for e in entries)
 
 
-class Proxy:
-    def __init__(self):
-        self.segment = zstandard.ZstdCompressor().compress(lines(SEALED))
-        self.name = "llmproxy-test-x-0-1.jsonl.zst"
-        self.sha = hashlib.sha256(self.segment).hexdigest()
-        self.live = lines(LIVE)
-        proxy = self
+def compress(data: bytes) -> bytes:
+    """As the proxy's segments.compress(): long-range zstd, 128 MiB window, with a checksum."""
+    params = zstandard.ZstdCompressionParameters.from_level(
+        3, window_log=27, enable_ldm=True, write_checksum=True, write_content_size=True
+    )
+    return zstandard.ZstdCompressor(compression_params=params).compress(data)
 
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.headers.get("x-log-key") != PROXY_KEY:
-                    return self._send(401, b"{}")
-                if self.path == "/_logs":
-                    seg = {"name": proxy.name, "sha256": proxy.sha, "first": 0, "last": 1}
-                    return self._send(200, json.dumps({"segments": [seg]}).encode())
-                if self.path == f"/_logs/{proxy.name}":
-                    return self._send(200, proxy.segment)
-                if self.path == "/_logs/live":
-                    return self._send(200, proxy.live)
-                self._send(404, b"{}")
 
-            def _send(self, code, body):
-                self.send_response(code)
-                self.send_header("content-length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+class ProxyDir:
+    """The proxy's data directory: requests.jsonl, and segments/ once it first rotates.
+    Each method does what the proxy does, in the same steps."""
 
-            def log_message(self, *args):
-                pass
+    def __init__(self, root: Path):
+        self.root = root
+        self.live = root / "requests.jsonl"
+        self.segments = root / "segments"
+        root.mkdir(parents=True)
+        self.live.touch()
+        self.seq = 0  # the last seq written
+        self.live_first = 1
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+    def append(self, entries=(), raw: bytes = b"") -> None:
+        """Entries appended to the live file, then any raw bytes (a torn line, say)."""
+        with self.live.open("ab") as f:
+            f.write(lines(entries) + raw)
+        self.seq += len(entries) + raw.count(b"\n")
+
+    def rotate(self) -> Path:
+        """segments.rotate(): the live file renamed to pending, then a fresh live file."""
+        self.segments.mkdir(exist_ok=True)
+        pending = self.segments / f"requests-{self.live_first:09d}-{self.seq:09d}.jsonl"
+        os.replace(self.live, pending)
+        fresh = self.live.with_name("requests.jsonl.new")
+        fresh.touch()
+        os.replace(fresh, self.live)
+        self.live_first = self.seq + 1
+        return pending
+
+    def compress(self, pending: Path, keep_pending: bool = False) -> Path:
+        """segments.compress(): .zst.tmp written, renamed into place, then pending deleted."""
+        final = pending.with_name(pending.name + ".zst")
+        tmp = pending.with_name(pending.name + ".zst.tmp")
+        tmp.write_bytes(compress(pending.read_bytes()))
+        os.replace(tmp, final)
+        if not keep_pending:
+            pending.unlink()
+        return final
+
+    def seal(self, entries) -> Path:
+        self.append(entries)
+        return self.compress(self.rotate())
 
 
 class FakeBox:
@@ -124,22 +140,21 @@ class FakeBox:
 
 
 @pytest.fixture
-def proxy():
-    proxy = Proxy()
-    yield proxy
-    proxy.server.shutdown()
+def proxy(tmp_path):
+    """Two calls sealed (seqs 1-2), one live (seq 3)."""
+    proxy = ProxyDir(tmp_path / "proxy-data")
+    proxy.seal(SEALED)
+    proxy.append(LIVE)
+    return proxy
 
 
 @pytest.fixture
-def settings(proxy, tmp_path):
+def settings(proxy):
     return Settings(
-        proxy_url=proxy.url,
-        proxy_header="x-log-key",
-        proxy_key=PROXY_KEY,
+        proxy_dir=proxy.root,
         api_key=API_KEY,
         box_host="box.example",
         box_repo="org/config",
-        data_dir=tmp_path / "data",
         sync_seconds=300,
     )
 
@@ -152,7 +167,7 @@ def fakebox():
 @pytest.fixture
 def store(settings):
     store = Store(settings)
-    store.sync()
+    store.refresh()
     return store
 
 
