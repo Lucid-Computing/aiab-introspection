@@ -252,7 +252,7 @@ export default function App() {
           <button
             className={`bar-toggle${codeOpen ? " on" : ""}`}
             aria-pressed={codeOpen}
-            title={codeOpen ? "Hide the plan as text" : "Show the plan as text"}
+            title={codeOpen ? "Hide the plan as Python" : "Show the plan as Python"}
             onClick={() => dispatch({ type: "toggleCode" })}
           >
             <svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true">
