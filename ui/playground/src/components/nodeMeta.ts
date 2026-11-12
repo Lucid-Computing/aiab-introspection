@@ -33,7 +33,7 @@ export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
   ...NODE_META,
   query: {
     label: "Query format",
-    blurb: "Decides what one model question covers and carries the box's limits, so a run cannot ask or read more than both parties agreed to.",
+    blurb: "Decides what one model question covers.",
   },
 };
 

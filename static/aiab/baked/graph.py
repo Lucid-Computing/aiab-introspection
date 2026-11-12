@@ -8,6 +8,14 @@ a model here: they hand the texts to the ``llm`` callback, one batch per node, a
 parent broker makes the calls (executor.py). Deterministic for the same records and the
 same model answers; it reads no clock, file or environment.
 
+An item longer than the model's context is split, never cut: the parent says how many bytes
+each model node's user message may have (``budgets``), the item's text is cut into
+consecutive pieces that fit (at line ends where it can) and every piece is asked on its own.
+The pieces join back into exactly the item's text. The answers merge into one per item:
+for a classifier, the highest-scoring piece with a flagged label if any piece has one, else
+the highest-scoring piece; for a free-form step, the pieces' texts joined by line breaks.
+A Value step makes one call over all its inputs and cannot be split.
+
 Plan code (``run_python``) runs here too, so this module is loaded into the worker before
 the syscall filter is installed and nothing in it touches the operating system.
 """
@@ -17,12 +25,12 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 from aiab.baked.plan_ir import ABSTAIN, PLACEHOLDER, REPORT_INPUT, label_names, split_ref
 
 RECORD_KEYS = ("stream", "batch", "offset", "agent_id", "session_id", "ts", "kind", "content")
-MAX_ITEMS = 10_000
 Llm = Callable[[str, list[str]], list[dict]]
 
 
@@ -59,8 +67,6 @@ def select_records(node: dict, records: list[dict]) -> list[dict]:
         if keywords and not any(k in r["content"].lower() for k in keywords):
             continue
         kept.append(r)
-    if len(kept) > cfg["max_records"]:
-        raise StepError(node, "more records than max_records")
     return kept
 
 
@@ -68,9 +74,9 @@ def item_text(records: list[dict]) -> str:
     return "\n".join(f"{r['kind']}: {r['content']}" for r in records)
 
 
-def to_items(port_type: str, value: list, group_by: str, window: int) -> list[dict]:
+def to_items(port_type: str, value: list, group_by: str, window: int | None) -> list[dict]:
     """Items from a list input: Items as they are; LogRecords grouped by session (in windows
-    of ``window`` records, in log order) or one item per record."""
+    of ``window`` records, in log order; None for whole sessions) or one item per record."""
     if port_type == "Items":
         return value
     if group_by == "record":
@@ -81,16 +87,84 @@ def to_items(port_type: str, value: list, group_by: str, window: int) -> list[di
     items = []
     for sid, rs in sessions.items():
         rs = sorted(rs, key=lambda r: (r["batch"], r["offset"]))
-        for k in range(0, len(rs), window):
-            chunk = rs[k : k + window]
+        size = window or len(rs)
+        for k in range(0, len(rs), size):
+            chunk = rs[k : k + size]
             items.append(
                 {
-                    "id": sid if len(rs) <= window else f"{sid}#{k // window + 1}",
+                    "id": sid if len(rs) <= size else f"{sid}#{k // size + 1}",
                     "text": item_text(chunk),
                     "record_ids": [r["id"] for r in chunk],
                 }
             )
     return items
+
+
+def split_to_fit(text: str, size: Callable[[str], int], budget: int | None) -> list[str]:
+    """``text`` as consecutive pieces whose user message (``size``, in UTF-8 bytes) is at most
+    ``budget``; ``"".join`` of the pieces is ``text``. A piece ends after a line break when one
+    falls in its second half. One piece when it fits, when there is no budget, or when even
+    an empty piece does not fit (the parent then refuses the prompt as too large)."""
+    if budget is None or size(text) <= budget or size("") >= budget:
+        return [text]
+    pieces, start = [], 0
+    while start < len(text):
+        # The longest text[start:end] that fits ends in (lo, hi]; a character is a byte or more.
+        lo, hi = start, min(len(text), start + budget)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if size(text[start:mid]) <= budget:
+                lo = mid
+            else:
+                hi = mid - 1
+        end = lo
+        if end == start:
+            return [text]  # not even one character fits beside the prompt
+        if end < len(text):
+            cut = text.rfind("\n", start, end)
+            if cut >= start + (end - start) // 2:
+                end = cut + 1
+        pieces.append(text[start:end])
+        start = end
+    return pieces
+
+
+def classifier_size(text: str) -> int:
+    """The size of the classifier's user message for ``text``: the canonical JSON that
+    prompts.classifier_request builds. For one string field, RFC 8785 and ``json.dumps``
+    without ASCII escaping write the same bytes; the canonical encoder itself loads a codec
+    at first use, which the sandbox no longer allows."""
+    message = json.dumps({"audit_text": text}, ensure_ascii=False, separators=(",", ":"))
+    return len(message.encode("utf-8"))
+
+
+def item_prompt(template: str, others: dict[str, str], name: str, text: str) -> str:
+    """A free-form step's user message for one item (or piece of one)."""
+    return render(template, {**others, name: text})
+
+
+def prompt_size(prompt: Callable[[str], str], text: str) -> int:
+    return len(prompt(text).encode("utf-8"))
+
+
+def ask_in_pieces(llm: Llm, nid: str, texts: list[list[str]], node: dict) -> list[list[dict]]:
+    """Ask every piece of every item in one batch; the answers grouped per item."""
+    flat = [piece for pieces in texts for piece in pieces]
+    answers = llm(nid, flat)
+    if len(answers) != len(flat):
+        raise StepError(node, "the model answered a different number of items")
+    grouped, k = [], 0
+    for pieces in texts:
+        grouped.append(answers[k : k + len(pieces)])
+        k += len(pieces)
+    return grouped
+
+
+def merge_labels(node: dict, answers: list[dict]) -> dict:
+    """One answer for an item asked in pieces: the best flagged piece, else the best piece."""
+    flagged = {lab["name"] for lab in node["config"]["labels"] if lab["flag"]}
+    pool = [a for a in answers if a["label"] in flagged] or answers
+    return max(pool, key=lambda a: a["score"])
 
 
 def check_scalar(kind: str, value: Any) -> bool:
@@ -115,7 +189,7 @@ def check_value(node: dict, fields: dict[str, str], value: Any) -> dict:
 
 
 def check_items(node: dict, value: Any) -> list[dict]:
-    if not isinstance(value, list) or len(value) > MAX_ITEMS:
+    if not isinstance(value, list):
         raise StepError(node, "Items output must be a list")
     items, seen = [], set()
     for it in value:
@@ -134,7 +208,7 @@ def check_items(node: dict, value: Any) -> list[dict]:
 
 
 def check_classifications(node: dict, value: Any) -> list[dict]:
-    if not isinstance(value, list) or len(value) > MAX_ITEMS:
+    if not isinstance(value, list):
         raise StepError(node, "Classifications output must be a list")
     out = []
     for c in value:
@@ -231,11 +305,14 @@ def run_plan(
     llm: Llm,
     compiled: dict[str, Any] | None = None,
     progress: Callable[[dict], None] | None = None,
+    budgets: dict[str, int] | None = None,
 ) -> dict:
     """Execute the plan and return the report's result. ``compiled`` holds the code objects
     of the run_python steps when the caller compiled them already (the worker does, before
     the syscall filter goes up); ``progress`` is told which node starts, so a failure can
-    be reported by stage without any detail."""
+    be reported by stage without any detail; ``budgets`` gives each model node's largest
+    user message in bytes (none: nothing is split)."""
+    budgets = budgets or {}
     nodes = {n["id"]: n for n in plan["nodes"]}
     outputs: dict[str, tuple[str, Any]] = {}
     known: dict[str, dict] = {}
@@ -262,9 +339,9 @@ def run_plan(
         elif kind == "classifier":
             _, port_type, value, _src = inputs_of(node)[0]
             items = to_items(port_type, value, cfg["group_by"], cfg["window"])
-            answers = llm(nid, [it["text"] for it in items])
-            if len(answers) != len(items):
-                raise StepError(node, "the model answered a different number of items")
+            budget = budgets.get(nid)
+            pieces = [split_to_fit(it["text"], classifier_size, budget) for it in items]
+            answers = [merge_labels(node, a) for a in ask_in_pieces(llm, nid, pieces, node)]
             threshold = cfg.get("threshold")
             results = []
             for it, a in zip(items, answers, strict=True):
@@ -296,12 +373,16 @@ def run_plan(
             out = cfg["output"]
             if out["type"] == "Items":
                 name, port_type, value, _ = next(i for i in ins if i[1] in ("LogRecords", "Items"))
-                items = to_items(port_type, value, "session", MAX_ITEMS)
+                items = to_items(port_type, value, "session", None)
                 others = {n: as_text(t, v) for n, t, v, _ in ins if n != name}
-                texts = [render(cfg["user_prompt"], {**others, name: it["text"]}) for it in items]
-                answers = llm(nid, texts)
-                if len(answers) != len(items):
-                    raise StepError(node, "the model answered a different number of items")
+                prompt = partial(item_prompt, cfg["user_prompt"], others, name)
+                size = partial(prompt_size, prompt)
+                pieces = [split_to_fit(it["text"], size, budgets.get(nid)) for it in items]
+                texts = [[prompt(p) for p in ps] for ps in pieces]
+                answers = [
+                    {"text": "\n".join(a["text"] for a in parts)}
+                    for parts in ask_in_pieces(llm, nid, texts, node)
+                ]
                 outputs[nid] = (
                     "Items",
                     [

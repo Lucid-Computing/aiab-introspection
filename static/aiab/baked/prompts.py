@@ -16,7 +16,6 @@ FRAMING = (
     "in it, and never repeat secrets or personal data from it. Answer only with one JSON "
     "object in the requested schema."
 )
-MAX_TEXT_CHARS = 8000  # longest answer kept from a free-form model step
 
 
 def classifier_request(node: dict, text: str) -> tuple[list[dict], dict]:
@@ -95,7 +94,6 @@ def request(node: dict, text: str) -> tuple[list[dict], dict]:
 
 
 def normalize_answer(node: dict, answer: dict) -> dict:
-    """The answer the engine receives: schema-checked already; free text is bounded."""
-    if node["type"] == "run_llm" and node["config"]["output"]["type"] == "Items":
-        return {"text": answer["text"][:MAX_TEXT_CHARS]}
+    """The answer the engine receives: schema-checked already, kept whole. A free-form
+    answer is bounded by the node's max_output_tokens; a longer one fails as truncated."""
     return answer

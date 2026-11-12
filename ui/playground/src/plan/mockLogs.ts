@@ -161,13 +161,12 @@ export function sourceAgents(source: string): string[] {
 
 /** The records an Input Logs node admits, in source order. */
 export function selectRecords(node: InputLogs): LogRecord[] {
-  const { input_scope, filter, max_records } = node.config;
+  const { input_scope, filter } = node.config;
   const keywords = filter.keywords.map((k) => k.toLowerCase()).filter(Boolean);
   return sourceRecords(node.config.source)
     .filter((r) => !input_scope.agents.length || input_scope.agents.includes(r.agent_id))
     .filter((r) => !input_scope.window_start || r.ts >= input_scope.window_start)
     .filter((r) => !input_scope.window_end || r.ts <= input_scope.window_end)
     .filter((r) => filter.kinds.includes(r.kind))
-    .filter((r) => !keywords.length || keywords.some((k) => r.content.toLowerCase().includes(k)))
-    .slice(0, max_records);
+    .filter((r) => !keywords.length || keywords.some((k) => r.content.toLowerCase().includes(k)));
 }

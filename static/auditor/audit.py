@@ -44,11 +44,14 @@ class AuditClient:
         self.identity = identity
         self.manifest = manifest
 
-    async def request(self, method: str, path: str, value: dict | None = None):
+    async def request(
+        self, method: str, path: str, value: dict | None = None, timeout: float | None = 120
+    ):
+        """``timeout=None`` waits as long as the box takes (a large run's admission)."""
         if self.identity is None:
             raise AuditError("client_not_verified")
         status, result = await self.connection.request(
-            method, path, canonical(value) if value is not None else None, self.token
+            method, path, canonical(value) if value is not None else None, self.token, timeout
         )
         # A restart cannot silently splice one boot's admissions and another's results.
         identity_status, current = await self.connection.request("GET", "/aiab/pubkey")

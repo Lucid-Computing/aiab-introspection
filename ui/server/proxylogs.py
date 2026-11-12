@@ -550,18 +550,6 @@ def sessions(records: list[Record]) -> list[Session]:
 # ---- box records, for a run --------------------------------------------------------------
 
 
-# What one record may carry. Tool results (file contents, command output) and tool inputs
-# can be enormous, and the plan allows 100 KB per run, so they are cut, head first.
-CONTENT_LIMITS = {"request": 8000, "response": 8000, "tool_call": 2000, "tool_result": 2000}
-
-
-def _cut(text: str, limit: int) -> str:
-    text = text.strip()
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip() + f"\n… [cut here; {len(text):,} characters in all]"
-
-
 def call_parts(r: Request) -> list[tuple[str, str]]:
     """(kind, content) pairs for one call, in order: the newest user turn (its text and the
     tool results it carries), then the model's answer (its text and the tool calls it
@@ -589,7 +577,9 @@ def call_parts(r: Request) -> list[tuple[str, str]]:
         if b["kind"] == "tool_use":
             name = b["label"].removeprefix("tool call: ")
             parts.append(("tool_call", f"{name} {b['text']}"))
-    return [(kind, _cut(body, CONTENT_LIMITS[kind])) for kind, body in parts if body.strip()]
+    # Whole, however long: the box splits a text longer than the model's context, and a
+    # run has no size limit, so nothing is cut here.
+    return [(kind, body.strip()) for kind, body in parts if body.strip()]
 
 
 def box_records(records: list[Record]) -> list[dict]:
@@ -613,7 +603,7 @@ def to_box_records(records: list[Record]) -> list[dict]:
         ts = datetime.fromtimestamp(r.time, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         parts = call_parts(r) if isinstance(r, Request) else r.parts
         for kind, content in parts:
-            content = _cut(content, CONTENT_LIMITS[kind])
+            content = content.strip()
             out.append(
                 {
                     "stream": "proxy",

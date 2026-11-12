@@ -36,16 +36,24 @@ The code is the schema: `static/aiab/baked/plan_ir.py` defines the plan, and `re
   it ran, which is what a verifier checks against the plan it signed. The plan never
   contains an image digest, avoiding a circular commitment.
 - Every run starts a fresh Linux x86_64 subprocess with no credentials in its
-  environment, no inherited service sockets, no report key, no other run's data,
-  resource limits, and a seccomp syscall allowlist installed before plan code runs.
+  environment, no inherited service sockets, no report key, no other run's data, a
+  memory ceiling of three quarters of the container's memory, an hour of CPU time for plan
+  code (waiting for the model does not count), and a seccomp syscall allowlist installed
+  before plan code runs.
   File opens, sockets, process creation, exec and cross-process memory access are
   blocked. The source is normal compiled Python, not the older expression interpreter.
   Python steps may import only re, math, collections, itertools, statistics and json; reflective builtins, private attributes and classes are refused by a static check. These checks are an additional restriction, not the isolation boundary.
 - The parent broker builds every prompt itself from the signed plan (its framing first),
-  serves each model node once, enforces the call budget and text size, preflights every
-  prompt of a node with the tokenizer before that node's first inference, validates every
-  answer against the schema it dictated, validates the result, and signs the report. Worker
-  stdout is bounded protocol input; worker stderr is discarded. A failed sandbox
+  serves each model node once, preflights every prompt of a node against the model's
+  context before that node's first inference, validates every answer against the schema it
+  dictated, validates the result, and signs the report. Worker stderr is discarded.
+- A run has no limit on records, bytes, model calls or time. Plans signed with `limits` or
+  `max_records` still load; those fields are ignored. An item longer than the model's
+  context is split into pieces that fit (never cut) and the answers are merged
+  (`static/aiab/baked/graph.py`). The only size cap left is the report's
+  `privacy.max_result_bytes`, which bounds what the report discloses. Runs beyond four at
+  once wait for a slot; the box keeps the last 128 runs and drops the oldest finished one
+  first. A failed sandbox
   startup fails the run; it never falls back to in-process execution.
 - Bounded output schemas include booleans, integer ranges, string enums/bounded
   strings, bounded arrays and closed objects. No remote references. The reported
@@ -133,7 +141,7 @@ with it, the submission's scope must also lie inside the plan's.
 `static/aiab/baked/records.py`. The source signature covers the ordered canonical
 record bytes, sequence/hash chain and scope. Record timestamps/agents are checked
 against the submitted and agreed windows; duplicate source positions are rejected.
-Integrity is checked before filtering. Admission rejects bad scope, byte limits and record counts synchronously. Tokenizer checks run in the worker preflight after the 202 response but before any inference; an oversized assembled query produces a signed `input_too_large` failure. Submission idempotency is scoped to the authenticated role and current boot. This **synthetic export protocol is not
+Integrity is checked before filtering. Admission rejects bad scope and malformed records synchronously; there is no byte or record-count limit. Context checks run in the broker after the 202 response but before any inference; a model question that cannot be split to fit (a Value step's single call, or a prompt too long by itself) produces a signed `input_too_large` failure. Submission idempotency is scoped to the authenticated role and current boot. This **synthetic export protocol is not
 native WORM verification**; real logger fixtures and its transformation are still needed.
 
 Prepare an explicitly synthetic, genuinely signed request:

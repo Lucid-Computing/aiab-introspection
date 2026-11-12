@@ -38,7 +38,7 @@ ARCHIVE_DIR = "_archive"  # agreements in the previous plan format, kept read-on
 # Where the box's loader error codes point. One code at a time: the loader stops at the
 # first problem, exactly as the box does at boot.
 ISSUE_WHERE = {
-    "invalid_bundle": "plan.json is missing, a symlink or larger than 256 KiB",
+    "invalid_bundle": "plan.json is missing or a symlink",
     "invalid_json": "plan.json is not valid JSON",
     "invalid_plan": "the plan graph (the builder lists the problems)",
     "invalid_trust_roots": "the trust file",
