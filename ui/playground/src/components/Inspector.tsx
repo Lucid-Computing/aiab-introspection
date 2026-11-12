@@ -474,11 +474,17 @@ function SessionPicker({
   const gone = value.filter((id) => rows !== null && !known.has(id));
   const needle = q.trim().toLowerCase();
   const shown = (rows ?? []).filter((r) => !needle || `${r.title} ${r.who} ${r.id}`.toLowerCase().includes(needle));
-  const all = value.length === 0;
+  // Unticking Select all clears the ticks on screen. The plan itself cannot name "no
+  // session": none named means every session, which the Selected line says.
+  const [cleared, setCleared] = useState(false);
+  useEffect(() => setCleared(false), [source]);
+  const all = value.length === 0 && !cleared;
   const ids = (rows ?? []).map((r) => r.id);
   // None named means every session, so unticking one of "all" names all the others.
-  const toggle = (id: string) =>
+  const toggle = (id: string) => {
+    setCleared(false);
     onChange(all ? ids.filter((x) => x !== id) : chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  };
   const titles = new Map((rows ?? []).map((r) => [r.id, r.title]));
   return (
     <div className="f">
@@ -495,7 +501,14 @@ function SessionPicker({
           <div className="sess-pick">
             {rows.length > 0 && (
               <label className="sess-all">
-                <input type="checkbox" checked={all} disabled={all} onChange={() => onChange([])} />
+                <input
+                  type="checkbox"
+                  checked={all}
+                  onChange={() => {
+                    setCleared(all);
+                    onChange([]);
+                  }}
+                />
                 <span>Select all</span>
               </label>
             )}
@@ -517,6 +530,8 @@ function SessionPicker({
           <span className="f-label">Selected</span>
           {all ? (
             <span className="f-hint">All {rows.length} sessions</span>
+          ) : value.length === 0 ? (
+            <span className="f-hint">None. Until one is ticked, the plan reads every session.</span>
           ) : (
             <ul className="sess-chosen">
               {value.map((id) => (
