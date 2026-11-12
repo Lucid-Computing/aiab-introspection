@@ -108,14 +108,11 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
         (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
 
     page = client.get("/runs?agreement=bio").text  # default: Dev Agent Logs
-    assert "dev-user" in page and "prod-user" not in page
+    assert "from Dev Agent Logs" in page and "from Prod Agent Logs" not in page
     assert 'name="logs" value="dev"' in page
-    assert (
-        'href="/runs?agreement=bio&amp;logs=prod"' in page
-        or 'href="/runs?agreement=bio&logs=prod"' in page
-    )
+    assert 'class="srcsel"' not in page  # the log is the agreement's choice, not the page's
     page = client.get("/runs?agreement=bio&logs=prod").text
-    assert "prod-user" in page and "dev-user" not in page
+    assert "from Prod Agent Logs" in page and "from Dev Agent Logs" not in page
 
     started = {}
 
@@ -171,7 +168,7 @@ def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_pa
     monkeypatch.setattr(ui, "_run_preflight", ready)
     monkeypatch.setattr(ui.runs, "start_run", fake_start)
     monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
-    assert "agt-1" in client.get("/runs?agreement=bio&logs=plant").text
+    assert "from Plant Logs" in client.get("/runs?agreement=bio&logs=plant").text
     response = client.post(
         "/runs/start", data={"agreement": "bio", "logs": "plant", "session": "s1"}
     )
@@ -179,21 +176,21 @@ def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_pa
     assert started["records"] == rows and "from Plant Logs, 4 records" in started["label"]
 
 
-def test_sign_page_signs_in_the_browser_and_keeps_the_manual_route(client, tmp_path):
+def test_sign_page_is_two_things_per_party_sign_and_the_root_key(client, tmp_path):
     (tmp_path / "agreements/bio/signatures/lab.sig").unlink()  # the fixture is already signed
     html = client.get("/a/bio/sign").text
     assert '<script src="/assets/sign.js" defer></script>' in html
     assert 'class="browser-key" data-party="lab" data-digest="sha256:' in html
-    assert 'id="upload-form-lab"' in html and 'id="key-form-lab"' in html
-    assert 'id="cert-lab"' in html  # a pasted signature carries its certificate
     assert "Set up signing" in html and "Use this key file" in html  # no terminal needed
+    assert 'id="key-form-lab"' in html and "Submit root key" in html
     # The card hides buttons with the hidden attribute, which .btn's display would override.
     css = (REPO_ROOT / "ui/assets/aiab.css").read_text()
     assert ".browser-key [hidden] { display: none !important; }" in css
-    assert (
-        "sign_digest.py certify" not in html.split("Other ways to sign")[1].split("browser-key")[1]
-    )
-    assert "openssl pkeyutl -sign" in html  # a key kept outside the browser still works
+    # No pasted signatures and no commands on the page; the upload route itself stays.
+    # The browser's own Sign posts through a hidden form; nothing to paste, no commands.
+    assert 'id="upload-form-lab" method="post" action="/a/bio/sign/upload" hidden' in html
+    assert 'id="sig-lab"' in html and 'id="cert-lab"' in html and "openssl" not in html
+    assert "sign_digest.py" not in html
     assert 'data-party="auditor"' not in html  # only your own party's card has the key block
 
 
@@ -233,6 +230,31 @@ def test_started_run_records_and_links_the_plan_version_it_sent(client, tmp_path
     assert client.get("/runs/20260101T000000Z-abcdef/plan").status_code == 303
 
 
+def test_past_runs_are_filtered_and_paged(client, tmp_path, monkeypatch):
+    """Past runs come 20 to a page, newest first; the search box narrows them and the pager
+    keeps the agreement and the filters."""
+    monkeypatch.setattr(ui.runs, "_execute", lambda *a: None)  # no CLI, no box
+    for i in range(25):
+        ui.runs.start_run(
+            ui.settings,
+            LAB,
+            "bio",
+            tmp_path / "agreements/bio",
+            [{"content": "hello"}],
+            label="benign session" if i < 3 else f"session {i}",
+        )
+    rows = 'class="btn btn--ghost btn--sm" href="/runs/'
+    page = client.get("/runs?agreement=bio").text
+    assert page.count(rows) == 20 and "page 1 of 2 · 25 runs" in page
+    assert 'href="/runs?rpage=2&amp;agreement=bio&amp;logs=' in page
+    assert client.get("/runs?agreement=bio&rpage=2").text.count(rows) == 5
+
+    found = client.get("/runs?agreement=bio&rq=BENIGN").text
+    assert found.count(rows) == 3 and "logs-pager" not in found
+    assert client.get("/runs?rby=nobody").text.count(rows) == 0
+    assert "No run matches." in client.get("/runs?rq=zzz").text
+
+
 def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_fallback(
     client, tmp_path
 ):
@@ -243,15 +265,14 @@ def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_
     assert '<script src="/assets/sign.js" defer></script>' in plan
     assert 'quick-sign" href="/a/bio/sign" data-party="lab" data-digest="sha256:' in plan
     assert 'data-upload="/a/bio/sign/upload" data-next="/a/bio/plan"' in plan
-    assert "lab: not signed" in plan and "auditor: signed this version" in plan
+    assert "Waiting for the lab · Signed by the auditor." in plan
     assert 'href="/a/bio/sign">Keys and signatures</a>' in plan
     listing = client.get("/agreements").text
     assert '<script src="/assets/sign.js" defer></script>' in listing
     assert 'quick-sign" href="/a/bio/sign" data-party="lab"' in listing
     assert 'data-upload="/a/bio/sign/upload" data-next="/agreements"' in listing
-    assert 'title="Lab: not signed" aria-label="lab: missing"' in listing
-    assert 'title="Auditor: signed this version" aria-label="auditor: ok"' in listing
-    assert 'title="Run: needs both signatures"' in listing
+    assert "Waiting for the lab · Signed by the auditor" in listing
+    assert 'disabled title="needs both signatures">Run' in listing
     assert '<code class="hash" title="sha256:' in listing
     fallback = client.get("/a/bio/sign?why=none").text
     assert "Signing is not set up in this browser yet" in fallback
@@ -263,7 +284,7 @@ def test_a_signed_plan_offers_re_sign_and_signature_actions_return_to_the_button
 ):
     plan = client.get("/a/bio/plan").text
     assert 'action="/a/bio/sign/remove"' in plan and 'name="next" value="/a/bio/plan"' in plan
-    assert "quick-sign" not in plan and "lab: signed this version" in plan
+    assert "quick-sign" not in plan and "Signed by the lab · Signed by the auditor." in plan
     assert 'title="You signed this version">Signed</a>' in client.get("/agreements").text
 
     removed = client.post("/a/bio/sign/remove", data={"party": "lab", "next": "/a/bio/plan"})
@@ -289,3 +310,116 @@ def test_in_edit_mode_sign_goes_to_the_sign_screen_because_the_builder_saves_in_
     plan = client.get("/a/bio/plan?edit=1").text
     assert "quick-sign" not in plan and 'href="/a/bio/sign">Sign</a>' in plan
     ui.editing.clear("bio")
+
+
+def test_a_new_agreement_can_copy_another_plan(client, tmp_path):
+    """ "Copy from" takes the plan only: the nodes as they were, a new name, no auditor
+    signature and a history that starts with the copy."""
+    bio = json.loads((tmp_path / "agreements/bio/plan.json").read_text())
+    page = client.get("/agreements/new").text
+    assert 'name="copy_from"' in page and '<option value="bio"' in page
+    response = client.post(
+        "/agreements/new",
+        data={
+            "plan_id": "bio-copy",
+            "problem": "same question",
+            "source": "copy",
+            "copy_from": "bio",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text[-300:]
+    copy = json.loads((tmp_path / "agreements/bio-copy/plan.json").read_text())
+    assert copy["nodes"] == bio["nodes"] and copy["plan_id"] == "bio-copy"
+    assert copy["description"] == "same question"
+    assert not (tmp_path / "agreements/bio-copy/signatures/auditor.sig").exists()
+    assert "copied from bio" in (tmp_path / "agreements/bio-copy/history.jsonl").read_text()
+    refused = client.post(
+        "/agreements/new",
+        data={"plan_id": "x2", "problem": "q", "source": "copy", "copy_from": "nope"},
+    )
+    assert "copy from: pick an existing agreement" in refused.text
+
+
+def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, monkeypatch):
+    """When the agreement's Input filter names one of the server's log sources, the Runs page
+    offers no selector and a run reads that source, whatever the form says."""
+    import server.app as ui
+
+    plan_file = tmp_path / "agreements/bio/plan.json"
+    plan = json.loads(plan_file.read_text())
+    next(n for n in plan["nodes"] if n["type"] == "input_logs")["config"]["source"] = "prod"
+    plan_file.write_text(json.dumps(plan))
+    logs = tmp_path / "logs"
+    for who in ("prod", "dev"):
+        (logs / who).mkdir(parents=True, exist_ok=True)
+        (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
+    # The edit above broke the signatures; the summary bar shows only for a runnable agreement.
+    monkeypatch.setattr(ui, "_runnable", lambda rows: rows)
+    page = client.get("/runs?agreement=bio&logs=dev").text
+    assert "from Prod Agent Logs, as the agreement" in page and 'class="srcsel"' not in page
+    started = {}
+
+    async def ready(_folder):
+        return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
+
+    def fake_start(settings, user, agreement, folder, records, label=None):
+        started.update(records=records, label=label)
+        return "run-1"
+
+    monkeypatch.setattr(ui, "_run_preflight", ready)
+    monkeypatch.setattr(ui.runs, "start_run", fake_start)
+    monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
+    client.post("/runs/start", data={"agreement": "bio", "logs": "dev", "session": "shared"})
+    assert [r["content"] for r in started["records"]] == ["prod prompt"]
+
+
+def test_the_input_filter_can_name_sessions_and_the_runs_page_follows(client, tmp_path):
+    """Sessions named in the agreement's Input filter are the only ones a run takes; the
+    builder reads the list of sessions from /logs/sessions.json."""
+    logs = tmp_path / "logs" / "dev"
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs / "live.jsonl").write_text(_record("dev-user", "dev prompt"))
+    listing = client.get("/logs/sessions.json?logs=dev").json()
+    assert listing["source"] == "dev" and len(listing["sessions"]) == 1
+    session = listing["sessions"][0]
+    assert session["records"] >= 1 and "prompt" not in json.dumps(listing)
+
+    plan_file = tmp_path / "agreements/bio/plan.json"
+    plan = json.loads(plan_file.read_text())
+    source = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+    source["config"]["filter"]["sessions"] = ["some-other-session"]
+    plan_file.write_text(json.dumps(plan))
+    import server.runs as runs_module
+
+    assert runs_module.plan_sessions(tmp_path / "agreements/bio") == {"some-other-session"}
+
+
+def test_a_logged_out_button_press_comes_back_to_a_page_not_to_the_button(client, monkeypatch):
+    """After the session ends, pressing a button goes to the login page and then back to the
+    page the button was on. The button's own address takes only a form post, so returning
+    there with a GET would answer Method Not Allowed."""
+    monkeypatch.setattr(ui, "user_of", lambda request: None)  # the session has ended
+    r = client.post(
+        "/a/bio/plan/edit",
+        headers={"referer": "http://testserver/a/bio/plan"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/login?next=/a/bio/plan"
+    r = client.post("/a/bio/plan/edit", follow_redirects=False)
+    assert r.headers["location"] == "/login?next=/agreements"
+    elsewhere = {"referer": "https://evil.example/a/bio/plan"}
+    r = client.post("/a/bio/plan/edit", headers=elsewhere, follow_redirects=False)
+    assert r.headers["location"] == "/login?next=/agreements"
+    assert client.get("/runs", follow_redirects=False).headers["location"] == "/login?next=/runs"
+
+
+def test_a_button_address_opened_as_a_page_goes_to_its_page(client):
+    def to(path):
+        return client.get(path, follow_redirects=False).headers.get("location")
+
+    assert to("/a/bio/plan/edit") == "/a/bio/plan"
+    assert to("/a/bio/sign/upload") == "/a/bio/sign"
+    assert to("/a/bio/delete") == "/a/bio/plan"
+    assert to("/runs/start").startswith("/runs")  # an existing page route takes it
+    assert to("/agreements/nothing/here") is None  # a page that does not exist is still a 404

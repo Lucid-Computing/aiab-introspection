@@ -339,3 +339,22 @@ def test_classifier_groups_log_records_by_session_in_windows(plan):
     texts = llm.asked["destructive"]
     assert all(t.count("\n") <= 1 for t in texts)  # at most two records per item
     assert result["sessions"] == len(texts) > 2  # one Classification per window
+
+
+def test_the_input_filter_can_name_sessions(plan):
+    """filter.sessions is optional: absent or empty, every session is read; present, only
+    records of the named sessions pass, and the schema refuses a list that is not strings."""
+    source = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+    records = graph.with_ids(records_of("destructive_cleanup.jsonl"))
+    everything = graph.select_records(source, records)
+    assert everything  # the fixture's filter keeps something to narrow down
+    session = everything[0]["session_id"]
+    source["config"]["filter"]["sessions"] = [session]
+    check_plan(plan)  # the schema admits the field
+    assert graph.select_records(source, records) == [
+        r for r in everything if r["session_id"] == session
+    ]
+    source["config"]["filter"]["sessions"] = ["no-such-session"]
+    assert graph.select_records(source, records) == []
+    source["config"]["filter"]["sessions"] = [7]
+    assert issues_of(plan)

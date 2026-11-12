@@ -872,13 +872,20 @@ def taken_names(settings: Settings) -> list[str]:
 def new_agreement(
     settings: Settings, form: dict[str, str], actor: dict[str, str]
 ) -> tuple[list[str], str | None]:
-    """Create agreements/<name>/ from the minimal template.
+    """Create agreements/<name>/ from the minimal template, or as a copy of another
+    agreement's plan (``source=copy``, ``copy_from=<id>``: the plan only, no signatures,
+    no history).
 
-    The question becomes the plan's description and the classifier's instructions.
-    Returns (errors, agreement id).
+    From the template, the question becomes the plan's description and the classifier's
+    instructions. A copy keeps the plan as it was, with the new name and the question as
+    its description. Returns (errors, agreement id).
     """
     errors: list[str] = []
     plan_id = form.get("plan_id", "").strip()
+    copying = form.get("source") == "copy"
+    origin = for_agreement(settings, form.get("copy_from", "").strip()) if copying else None
+    if copying and origin is None:
+        errors.append("copy from: pick an existing agreement")
     if not re.fullmatch(ID_PATTERN, plan_id):
         errors.append(
             "name: letters, digits, _ and - only, up to 128 characters,"
@@ -896,19 +903,25 @@ def new_agreement(
     _copy_folder(Path(__file__).with_name("template"), target)
     shutil.rmtree(target / "signatures", ignore_errors=True)
     path = target / PLAN_FILE
+    if origin is not None:
+        shutil.copyfile(origin.plan_dir / PLAN_FILE, path)
     plan = decode(path.read_bytes())
     plan["plan_id"] = plan_id
     plan["description"] = problem
     plan["title"] = problem.splitlines()[0][:120]
-    for node in plan["nodes"]:
-        if node["type"] == "classifier":
-            node["config"]["instructions"] = problem + "\n"
+    if origin is None:
+        for node in plan["nodes"]:
+            if node["type"] == "classifier":
+                node["config"]["instructions"] = problem + "\n"
     path.write_bytes(canonical(plan) + b"\n")
     history = target / HISTORY_FILE
     if history.is_file():
         history.unlink()  # a new agreement starts its own trail
     created = for_agreement(settings, plan_id) or settings
-    record_change(created, actor, "created", "agreement", "created from the template")
+    what = (
+        f"copied from {origin.plan_dir.name}" if origin is not None else "created from the template"
+    )
+    record_change(created, actor, "created", "agreement", what)
     ensure_lab_signature(created, actor)
     return [], plan_id
 

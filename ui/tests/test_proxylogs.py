@@ -289,7 +289,8 @@ def test_slack_export_is_a_source_of_messages_grouped_by_thread_and_day(tmp_path
     sessions = {s.id: s for s in P.sessions(index)}
     assert set(sessions) == {"#eng · 1700000000.1", "#eng · 2023-11-14", "#eng · 2023-11-15"}
     thread = sessions["#eng · 1700000000.1"]
-    assert thread.title == "deploy is red" and [m.who for m in thread.records] == ["Ada", "Bob"]
+    assert thread.title.startswith("#eng · ") and thread.title.endswith(" · 2 messages")
+    assert "deploy" not in thread.title and [m.who for m in thread.records] == ["Ada", "Bob"]
     assert thread.model == "" and thread.started_short == "Nov 14, 10:13 PM"
     assert P.load_full(settings, slack, thread.records[-1]) is thread.records[-1]  # whole already
     assert P.raw_entry(settings, slack, thread.records[-1]) is None
@@ -338,7 +339,13 @@ def test_logs_page_pages_sessions_and_shows_metadata_never_the_text(tmp_path, mo
     second = client.get("/logs?page=2").text
     assert second.count('class="logs-item') == 5 and "← newer" in second
 
+    assert 'class="logs-detail"' not in first  # a list only: no session is picked for you
+    assert client.get("/logs?session=nope").text.count('class="logs-item') == web.LOGS_PAGE_SIZE
+
     oldest = client.get("/logs?page=2&session=s0").text
+    # One session's page: no list beside it, and a way back to the page it came from.
+    assert 'class="logs-item' not in oldest and 'class="logs-detail"' in oldest
+    assert '<a href="/logs?logs=dev&amp;who=&amp;q=&amp;page=2" class="link">← Logs</a>' in oldest
     # Metadata only: who, when, how many messages. The text is for the box (MAC-377).
     assert "Messages in the request</dt><dd>10</dd>" in oldest
     assert "turn " not in oldest and "/logs/earlier/" not in oldest and "/logs/raw/" not in oldest
@@ -374,22 +381,23 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
 
     settings = _slack_settings(tmp_path)
     _slack_export(settings.log_source("slack").path(settings))
-    slack = _client(monkeypatch, settings).get(
-        "/logs?logs=slack&session=%23eng+%C2%B7+1700000000.1"
-    )
-    assert "Slack Logs · 4 messages on disk" in slack.text and "a static copy" in slack.text
+    client = _client(monkeypatch, settings)
+    listing = client.get("/logs?logs=slack").text
+    assert "Slack Logs · 4 messages on disk" in listing and "a static copy" in listing
     # Session ids start with "#": a raw one would become the URL fragment and drop &logs=.
-    assert 'href="/logs?session=%23eng%20%C2%B7%201700000000.1&amp;logs=slack&amp;' in slack.text
+    assert 'href="/logs?session=%23eng%20%C2%B7%201700000000.1&amp;logs=slack&amp;' in listing
+    assert "/logs?session=#" not in listing
+    assert 'name="logs" value="slack"><button class="btn btn--ghost" disabled' in listing
+    assert "<td>2 msg</td>" in listing  # the session table counts messages
+    slack = client.get("/logs?logs=slack&session=%23eng+%C2%B7+1700000000.1")
     assert "/logs?session=#" not in slack.text
     detail = slack.text.split('class="logs-detail"')[1]
-    assert "deploy is red" in detail and "looking" in detail and "lunch?" not in detail
-    assert "#eng · 2 messages" in detail and "1 reply" in detail
-    assert 'class="msg-role">Ada' in detail and 'class="msg-role">Bob' in detail
+    # Metadata only: who, when and how long, never what was said.
+    assert "deploy is red" not in detail and "looking" not in detail and "lunch?" not in detail
+    assert "2 messages" in detail and "<td>Ada</td>" in detail and "<td>Bob</td>" in detail
+    assert "13 characters" in detail and "reply" in detail
     for proxy_only in ("· ? ·", "· 200", "raw JSON", "System prompt", "this reply", "KB"):
         assert proxy_only not in detail, proxy_only
-    assert 'name="logs" value="slack"><button class="btn btn--ghost" disabled' in slack.text
-    assert "2 msg" in slack.text.split('class="logs-detail"')[0]  # the session list counts messages
-    client = _client(monkeypatch, settings)
     assert client.get("/logs/raw/eng:1700000000.1?logs=slack").status_code == 404
     assert client.get("/logs/earlier/eng:1700000000.1?logs=slack").status_code == 404
 
@@ -398,8 +406,9 @@ def test_runs_page_lists_slack_sessions_as_messages(tmp_path, monkeypatch):
     settings = _slack_settings(tmp_path)
     _slack_export(settings.log_source("slack").path(settings))
     page = _client(monkeypatch, settings).get("/runs?logs=slack").text
-    assert "deploy is red" in page and "2 msg · 2 records" in page and " req · " not in page
-    assert "from Slack Logs" in page and 'name="logs" value="slack"' in page
+    assert "deploy is red" not in page  # the Runs page counts sessions, it does not list them
+    assert "from Slack Logs" not in page  # no counts until an agreement can run
+    assert 'name="logs" value="slack"' in page
 
 
 # ---- Plant Logs -------------------------------------------------------------------------
@@ -511,14 +520,16 @@ def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):
     settings = _plant_settings(tmp_path)
     _plant_export(settings.log_source("plant").path(settings))
     client = _client(monkeypatch, settings)
+    listing = client.get("/logs?logs=plant").text
+    assert "Plant Logs · 5 records on disk" in listing and "a static copy" in listing
+    assert "secret" not in listing
     page = client.get("/logs?logs=plant&session=s1").text
-    assert "Plant Logs · 5 records on disk" in page and "a static copy" in page
     detail = page.split('class="logs-detail"')[1]
     assert "s/1-first · 2026-01-01 10:00:00 to 2026-01-01 10:10:00 UTC" in detail
     assert detail.count('class="plant-run"') == 2 and "Slurm jobs" in detail
     assert "secret" not in page
     page = client.get("/runs?logs=plant").text
-    assert "4 records" in page and " req · " not in page and "secret" not in page
+    assert 'name="logs" value="plant"' in page and "secret" not in page
 
     # An agreement pinning the plant's agent and window covers both halves.
     plan = tmp_path / "plan"
@@ -717,14 +728,15 @@ def test_github_export_is_a_source_of_posts_grouped_by_thread_and_commit_day(tmp
     sessions = {s.id: s for s in P.sessions(index)}
     assert set(sessions) == {"aiab#7", "aiab · commits · 2026-11-01", "aiab · commits · 2026-11-02"}
     thread = sessions["aiab#7"]
-    assert thread.title == "Add GitHub Logs" and [m.who for m in thread.records] == [
+    assert thread.title == "aiab#7 · 3 posts" and [m.who for m in thread.records] == [
         "ada",
         "bob",
         "bob",
     ]
     assert thread.records[0].action == "opened pull request #7"
     commits = sessions["aiab · commits · 2026-11-01"]
-    assert commits.title == "Fix the index" and commits.records[0].action == "committed abc1234"
+    assert commits.title == "aiab · commits · 2026-11-01 · 1 post"
+    assert commits.records[0].action == "committed abc1234"
     assert P.load_full(settings, gh, thread.records[0]) is thread.records[0]
     assert P.raw_entry(settings, gh, thread.records[0]) is None
     records = P.to_box_records(thread.records)
@@ -739,19 +751,21 @@ def test_logs_and_runs_pages_show_github_threads_as_posts(tmp_path, monkeypatch)
     settings = _github_settings(tmp_path)
     _github_export(settings.log_source("github").path(settings))
     client = _client(monkeypatch, settings)
+    listing = client.get("/logs?logs=github").text
+    assert "GitHub Logs · 5 posts on disk" in listing and "a static copy" in listing
+    assert 'href="/logs?session=aiab%237&amp;logs=github&amp;' in listing
+    assert "<td>3 post</td>" in listing
     page = client.get("/logs?logs=github&session=aiab%237").text
-    assert "GitHub Logs · 5 posts on disk" in page and "a static copy" in page
-    assert 'href="/logs?session=aiab%237&amp;logs=github&amp;' in page
     detail = page.split('class="logs-detail"')[1]
-    assert "A new source." in detail and "looks fine" in detail and "Next day" not in detail
-    assert "aiab#7 · 3 posts" in detail and "opened pull request #7" in detail
-    assert "review: approved" in detail and 'href="https://github.com/x/aiab/pull/7"' in detail
+    # Metadata only: who, when, the kind of post and its length, never the text.
+    assert "A new source." not in detail and "looks fine" not in detail
+    assert "Add GitHub Logs" not in detail and "aiab#7 · 3 posts" in detail
+    assert "<td>ada</td>" in detail and "characters" in detail
     for proxy_only in ("raw JSON", "System prompt", "this reply"):
         assert proxy_only not in detail, proxy_only
-    assert "3 post" in page.split('class="logs-detail"')[0]
     assert client.get("/logs/raw/aiab:pull:1?logs=github").status_code == 404
     runs = client.get("/runs?logs=github").text
-    assert "Add GitHub Logs" in runs and "3 post · 2 records" in runs and "from GitHub Logs" in runs
+    assert 'name="logs" value="github"' in runs
 
 
 def test_github_source_opens_its_bundle_at_start(tmp_path, monkeypatch):

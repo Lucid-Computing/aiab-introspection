@@ -1,66 +1,83 @@
-import { LOG_SOURCES, selectRecords } from "../plan/mockLogs";
+import { LOG_SOURCES } from "../plan/mockLogs";
+import { parseQuery, queryLine } from "../plan/query";
 import type { NodeType, PlanNode } from "../plan/types";
 
-export const NODE_META: Record<NodeType, { label: string; glyph: string; blurb: string }> = {
-  input_logs: { label: "Input Logs", glyph: "▤", blurb: "Where the audit starts: which log records are read." },
-  classifier: { label: "Classifier", glyph: "◆", blurb: "Labels each session or record with a fixed set of classes." },
-  run_python: {
-    label: "Run Python",
-    glyph: "λ",
-    blurb: "Deterministic computation: group, count, combine, threshold.",
+/** Each kind has a name and one sentence on why the block exists; its symbol is `.sym--<type>` in styles.css. */
+export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
+  input_logs: {
+    label: "Input filter",
+    blurb: "Fixes which logs the box may read before anything runs, so the audit cannot reach beyond what both parties agreed to.",
   },
-  run_llm: { label: "Run LLM", glyph: "✦", blurb: "A general model call with your prompts and a declared output." },
+  classifier: {
+    label: "Classifier",
+    blurb: "Asks the model one fixed question about each item and keeps only a label and a score, so nothing the model writes can leave the box.",
+  },
+  run_python: {
+    label: "Code",
+    blurb: "Anything plain Python can compute between blocks, in code both parties read and signed; it runs sealed, with no files, network or model.",
+  },
+  run_llm: {
+    label: "LLM",
+    blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
+  },
   final_report: {
-    label: "Final Report",
-    glyph: "■",
-    blurb: "The only result that leaves the box, with its release policy.",
+    label: "Report",
+    blurb: "Names the few numbers that leave the box and the rules that stop one person's session from being singled out.",
   },
 };
 
+/** A kind as a person sees it: the node types, plus Query format (a Code block the builder writes, see plan/query.ts). */
+export type BlockKind = NodeType | "query";
+
+export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
+  ...NODE_META,
+  query: {
+    label: "Query format",
+    blurb: "Decides what one model question covers and carries the box's limits, so a run cannot ask or read more than both parties agreed to.",
+  },
+};
+
+export const kindOf = (n: PlanNode): BlockKind => (parseQuery(n) ? "query" : n.type);
+
+/** The log sources an Input filter can name: the ids the agreement UI reads (server/config.py). */
+export const SOURCE_OPTIONS: { id: string; label: string }[] = [
+  { id: "prod", label: "Prod Agent Logs" },
+  { id: "dev", label: "Dev Agent Logs" },
+  { id: "slack", label: "Slack Logs" },
+  { id: "github", label: "GitHub Logs" },
+  { id: "plant", label: "Plant Logs" },
+];
+export const sourceLabel = (id: string) => SOURCE_OPTIONS.find((o) => o.id === id)?.label ?? id;
+
 export const MODEL_OPTIONS = ["gpt-oss-safeguard-120b", "gpt-oss-120b", "llama-3.3-70b-instruct", "qwen3-32b"];
 
-/** Short human-readable lines describing what a node does. */
-export function summary(n: PlanNode): string[] {
+/** The one line a block shows under its title: the setting worth seeing without opening it. */
+export function line(n: PlanNode): string {
   switch (n.type) {
     case "input_logs": {
       const c = n.config;
-      const recs = selectRecords(n);
-      return [
-        LOG_SOURCES[c.source]?.label ?? c.source,
-        `${c.input_scope.agents.length ? c.input_scope.agents.join(", ") : "all agents"} · ${c.filter.kinds.length === 4 ? "all kinds" : c.filter.kinds.join(", ")}`,
-        ...(c.filter.keywords.length ? [`keywords: ${c.filter.keywords.join(", ")}`] : []),
-        `${recs.length} records in preview`,
-      ];
+      const parts = [LOG_SOURCES[c.source]?.label ?? sourceLabel(c.source)];
+      if (c.input_scope.agents.length) parts.push(`${c.input_scope.agents.length} agent${c.input_scope.agents.length === 1 ? "" : "s"}`);
+      if (c.filter.sessions?.length) parts.push(`${c.filter.sessions.length} session${c.filter.sessions.length === 1 ? "" : "s"}`);
+      if (c.filter.keywords.length) parts.push(`${c.filter.keywords.length} keyword${c.filter.keywords.length === 1 ? "" : "s"}`);
+      return parts.join(" · ");
     }
     case "classifier": {
       const c = n.config;
-      return [
-        firstLine(c.instructions) || "(no instructions)",
-        `per ${c.group_by} · ${c.model.id}${c.threshold !== undefined ? ` · ≥ ${c.threshold}` : ""}`,
-      ];
+      const labels = c.labels.map((l) => l.name).join(", ");
+      return labels ? `labels: ${labels}` : "no labels yet";
     }
     case "run_python": {
-      const def = n.config.code.split("\n").find((l) => l.trimStart().startsWith("def ")) ?? "";
+      const q = parseQuery(n);
+      if (q) return queryLine(q);
       const lines = n.config.code.trimEnd().split("\n").length;
-      return [def.trim() || "(no function)", `${lines} line${lines === 1 ? "" : "s"} of Python`];
+      return `${lines} line${lines === 1 ? "" : "s"} of Python → ${n.config.output.type}`;
     }
-    case "run_llm": {
-      const c = n.config;
-      return [
-        firstLine(c.user_prompt) || "(empty prompt)",
-        `${c.model.id} · ${c.output.type === "Items" ? "once per item" : "one call"}`,
-      ];
-    }
+    case "run_llm":
+      return `${n.config.model.id} → ${n.config.output.type}`;
     case "final_report": {
-      const p = n.config.privacy;
-      return [
-        `${p.allow_free_text ? "free text allowed" : "no free text"} · ≤ ${p.max_result_bytes} B${p.min_count > 1 ? ` · counts ≥ ${p.min_count}` : ""}`,
-      ];
+      const f = n.config.fields.map((x) => x.name).join(", ");
+      return f ? `releases: ${f}` : "no fields yet";
     }
   }
-}
-
-function firstLine(s: string): string {
-  const l = s.trim().split("\n")[0] ?? "";
-  return l.length > 70 ? `${l.slice(0, 68)}…` : l;
 }

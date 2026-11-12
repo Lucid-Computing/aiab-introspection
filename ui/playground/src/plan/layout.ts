@@ -3,28 +3,18 @@ import { Graph, layout as dagreLayout } from "@dagrejs/dagre";
 import { splitRef } from "./ports";
 import type { Layout, Plan, PlanNode } from "./types";
 
-export const NODE_W = 320;
-/** Height of a card with one port row; see nodeHeight. */
-export const NODE_H = 158;
-/** Card height above and below the port rows (styles.css fixes every line height). */
-const CARD_BASE = 134;
-const ROW_H = 24;
+/** Every block has the same size (styles.css .pn): ports sit on the edges, not in rows. */
+export const NODE_W = 280;
+export const NODE_H = 64;
 
-/** Rendered height: the card lists one row per input, plus the "add input" row on dynamic nodes. */
-export function nodeHeight(n: PlanNode): number {
-  const rows =
-    n.type === "input_logs"
-      ? 1
-      : n.type === "run_python" || n.type === "run_llm"
-        ? Object.keys(n.inputs).length + 1
-        : 1; // classifier and report: one fixed input
-  return CARD_BASE + ROW_H * rows;
+export function nodeHeight(_n: PlanNode): number {
+  return NODE_H;
 }
 
 /** Top-to-bottom layered layout of the whole plan. */
 export function autoLayout(plan: Plan): Layout {
   const g = new Graph();
-  g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 90, marginx: 20, marginy: 20 });
+  g.setGraph({ rankdir: "TB", nodesep: 50, ranksep: 56, marginx: 20, marginy: 20 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of plan.nodes) g.setNode(n.id, { width: NODE_W, height: nodeHeight(n) });
   for (const n of plan.nodes)

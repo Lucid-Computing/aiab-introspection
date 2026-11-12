@@ -17,6 +17,46 @@
       <div class="plant-track">{% for a in c.axis %}<span style="--l: {{ a.left }}%">{{ a.label }}</span>{% endfor %}</div>
     </div>
   </div>
+  {% set f = c.facts %}
+  <table class="kv plant-facts">
+    <tr><th>Transcript</th><td>{% for k, n in f.kinds.items() %}{{ n }} {{ k.replace("_", " ") }}{{ "s" if n != 1 }}{% if not loop.last %} · {% endif %}{% endfor %} · {{ "{:,}".format(f.chars) }} characters</td></tr>
+    <tr><th>Slurm jobs</th><td>{{ f.jobs | length }}{% if f.jobs %} · {% for st, group in f.jobs | groupby("state") %}{{ group | length }} {{ st }}{% if not loop.last %}, {% endif %}{% endfor %} · {{ (f.gpu_seconds / 60) | round(1) }} GPU minutes{% endif %}</td></tr>
+    <tr><th>Network</th><td>{{ f.flows }} connections to {{ f.destinations }} destinations</td></tr>
+    <tr><th>Models scored</th><td>{{ f.scores | length }}</td></tr>
+  </table>
+  {% if f.jobs %}
+  <details class="info">
+    <summary>Slurm jobs ({{ f.jobs | length }})</summary>
+    <div class="info-body plant-scroll">
+      <table class="table">
+        <thead><tr><th>Job</th><th>State</th><th>Node</th><th>GPUs</th><th>Started</th><th>Seconds</th><th>Processes</th><th>GPU devices opened</th><th>Outlived its job</th></tr></thead>
+        <tbody>{% for j in f.jobs %}<tr><td class="mono">{{ j.job }}</td><td>{{ j.state }}</td><td class="mono">{{ j.node }}</td><td class="mono">{{ j.gpus }}</td><td class="mono">{{ j.started }}</td><td class="mono">{{ j.seconds }}</td><td class="mono">{{ j.processes }}</td><td class="mono">{{ j.gpu_opened }}</td><td>{{ "yes" if j.outlived else "" }}</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+  {% if f.top %}
+  <details class="info">
+    <summary>Network, the {{ f.top | length }} largest destinations</summary>
+    <div class="info-body plant-scroll">
+      <table class="table">
+        <thead><tr><th>To</th><th>Port</th><th>Service</th><th>Connections</th><th>Sent</th><th>Received</th></tr></thead>
+        <tbody>{% for n in f.top %}<tr><td class="mono">{{ n.to }}</td><td class="mono">{{ n.port }}</td><td class="mono">{{ n.service }}</td><td class="mono">{{ n.flows }}</td><td class="mono">{{ (n.sent / 1024) | round(1) }} KB</td><td class="mono">{{ (n.received / 1024) | round(1) }} KB</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+  {% if f.scores %}
+  <details class="info">
+    <summary>Models the plant scored ({{ f.scores | length }})</summary>
+    <div class="info-body plant-scroll">
+      <table class="table">
+        <thead><tr>{% for col in f.score_columns %}<th>{{ col.replace("_", " ") }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for row in f.scores %}<tr>{% for col in f.score_columns %}<td class="mono">{{ (row[col] or "")[:19] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
 </section>
 {% endfor %}
 <p class="text-muted">Record text is not shown here. A run sends it sealed to the box.</p>

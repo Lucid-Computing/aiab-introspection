@@ -22,7 +22,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 /* ---- toolbar ---- */
 .bar { display: flex; align-items: center; gap: var(--space-4); padding: 8px var(--space-4); border-bottom: var(--border-strong); background: var(--paper-1); flex-wrap: wrap; }
 .bar-brand { display: flex; align-items: center; gap: var(--space-2); margin-right: var(--space-2); }
-.bar-select { width: auto; font-family: var(--font-mono); font-size: var(--text-xs); height: 28px; border-color: var(--rule-strong); }
+.bar-select { width: auto; min-width: 280px; }
+.bar-select .sel-btn { font-family: var(--font-mono); font-size: var(--text-xs); height: 28px; }
+.bar-select .sel-list { position: absolute; left: 0; top: 100%; z-index: 20; min-width: 100%; border-top: var(--border-strong); }
 .bar-spacer { flex: 1; }
 .bar-link { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-2); }
 .bar-link:hover { color: var(--ink-1); text-decoration: underline; text-underline-offset: 3px; }
@@ -51,106 +53,71 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .side { border-left: var(--border-hairline); overflow-y: auto; background: var(--paper-1); }
 /* With the text open, the selected block grows into a card over the diagram half. */
 .card-over { position: absolute; inset: 14px; overflow-y: auto; z-index: 5; background: var(--paper-1); border: 1px solid var(--ink-1); border-left-width: 6px; box-shadow: 4px 4px 0 0 var(--ink-1); }
-.card-over .insp--input_logs { border-left-color: var(--ink-3); }
-.card-over:has(.insp--classifier) { border-left-color: var(--amber); }
-.card-over:has(.insp--run_llm) { border-left-color: var(--amber-ink); }
 
-/* ---- New block: a button on the diagram with the block kinds ---- */
-.newblock { position: absolute; top: 12px; left: 12px; z-index: 6; }
-/* While a block's card covers the diagram half, the button would sit on the card: hide it. */
+/* ---- block rail: one icon per block kind; click adds, drag places ---- */
+.newblock { position: absolute; top: 12px; left: 12px; z-index: 6; display: flex; flex-direction: column; gap: 4px; padding: 4px; background: var(--paper-1); border: var(--border-strong); }
+/* While a block's card covers the diagram half, the rail would sit on the card: hide it. */
 .graph:has(.card-over) .newblock { display: none; }
-.newblock-menu { position: absolute; top: 100%; left: 0; margin-top: 4px; min-width: 240px; display: flex; flex-direction: column; background: var(--paper-1); border: var(--border-ink); box-shadow: var(--shadow-offset); }
-.pal { display: flex; align-items: center; gap: 8px; text-align: left; padding: 9px 12px; border-left: 3px solid transparent; font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-label); }
-.pal:hover { background: var(--paper-2); }
+.newblock-item { display: block; text-align: left; padding: 4px 10px; cursor: grab; font-size: var(--text-sm); color: var(--ink-1); }
+.newblock-item:hover { background: var(--paper-2); }
+.newblock-item:active { cursor: grabbing; }
+.newblock-item:focus-visible { outline: 2px solid var(--accent); }
 
-/* Per-type identity, shared by the New block menu and the cards: a coloured left bar and header. */
-.pal--input_logs, .pn--input_logs { border-left-color: var(--ink-3); }
-.pal--classifier, .pn--classifier { border-left-color: var(--amber); }
-.pal--run_python, .pn--run_python { border-left-color: var(--ink-1); }
-.pal--run_llm, .pn--run_llm { border-left-color: var(--amber-ink); border-left-style: dashed; }
-.pal--final_report, .pn--final_report { border-left-color: var(--ink-1); border-left-style: double; border-left-width: 5px; }
-
-/* ---- nodes ---- */
-/* Fixed line heights throughout the card: layout.ts predicts the height from the row count. */
-.pn { position: relative; width: 320px; background: var(--paper-1); border: 1px solid var(--rule-strong); border-left-width: 4px; padding: 8px 12px 0; font-size: var(--text-sm); }
+/* ---- blocks: fixed size (layout.ts NODE_W x NODE_H): kind, title, one line ---- */
+.pn { position: relative; box-sizing: border-box; width: 280px; height: 64px; padding: 7px 12px; background: var(--paper-1); border: 1px solid var(--rule-strong); font-size: var(--text-sm); }
 .pn.is-selected { border-color: var(--ink-1); box-shadow: 3px 3px 0 0 var(--ink-1); }
 .pn.has-error { border-color: var(--destructive); }
-/* Unfinished (nothing connected yet, no fields yet): dashed and quiet, not red. */
-.pn.is-unfinished { border-top-style: dashed; border-right-style: dashed; border-bottom-style: dashed; border-top-color: var(--ink-3); border-right-color: var(--ink-3); border-bottom-color: var(--ink-3); }
-.pn-head { display: flex; align-items: center; height: 16px; line-height: 16px; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); }
-.pn--classifier .pn-head { color: var(--amber-ink); }
-.pn-err { margin-left: auto; color: var(--paper-1); background: var(--destructive); font-weight: 600; padding: 0 5px; }
-.pn-hint { margin-left: auto; color: var(--ink-3); text-transform: none; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-glyph { font-family: var(--font-mono); }
-.pn-title { height: 24px; line-height: 24px; margin-top: 2px; font-size: 16px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-line { height: 18px; line-height: 18px; margin-top: 2px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn--run_python .pn-line { font-family: var(--font-mono); font-size: 12px; }
+.pn.is-unfinished { border-style: dashed; border-color: var(--ink-3); }
+.pn-kind { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ink-3); line-height: 14px; }
+.pn-title { font-size: 14px; font-weight: 600; line-height: 18px; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-line { font-size: 12px; line-height: 16px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-line.is-todo { color: var(--ink-3); }
+.pn-line.is-bad { color: var(--destructive); }
 
-/* I/O footer: inputs on the left edge, the output on the right edge, one row each. */
-.pn-io { margin: 8px -12px 0 -12px; font-family: var(--font-mono); font-size: 11.5px; }
-.pn-ins { border-top: var(--border-hairline); padding: 2px 0; }
-.pn-out { border-top: var(--border-hairline); padding: 3px 0 5px; background: var(--paper-2); }
-.pn-row { position: relative; display: flex; align-items: center; gap: 8px; height: 24px; line-height: 24px; padding: 0 12px; white-space: nowrap; }
-.pn-row--out { padding-right: 14px; }
-.pn-port-name { color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; }
-.pn-row--out .pn-port-name { font-weight: 600; }
-.pn-port-type { color: var(--ink-3); }
-.pn-port-type.is-unbound { color: var(--ink-3); }
-.pn-row--none { color: var(--ink-3); }
-.pn-row--new { color: var(--ink-3); opacity: 0.45; }
-.pn:hover .pn-row--new, .pn-row--new:has(.connectingto) { opacity: 1; }
-.pn-shape { height: 18px; line-height: 18px; padding: 0 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-out--report .pn-shape { color: var(--ink-1); }
+/* The data type of a port in the settings pane, as text. */
+.tbadge { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
+.tbadge.is-bad { color: var(--destructive); font-weight: 600; }
 
-/* Type badges: the same look on a node's output, on the inputs that read it and in the
-   inspector, so the two ends of an edge can be compared at a glance. The output badge is
-   filled: it is the thing to look for. A red input badge is a type the node does not accept. */
-.tbadge { display: inline-block; padding: 0 6px; height: 18px; line-height: 18px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--ink-1); color: var(--ink-1); background: var(--paper-1); white-space: nowrap; }
-.tbadge::before { display: inline-block; width: 1em; margin-right: 2px; font-weight: 400; }
-.tbadge--LogRecords::before { content: "▤"; }
-.tbadge--Items::before { content: "≡"; }
-.tbadge--Classifications::before { content: "◆"; }
-.tbadge--Value::before { content: "#"; }
-.tbadge--Report::before { content: "■"; }
-.tbadge--unknown { border-style: dashed; color: var(--ink-3); }
-.pn-row--out .tbadge { background: var(--ink-1); color: var(--paper-1); }
-.pn-out--report .pn-row--out .tbadge { background: var(--paper-1); color: var(--ink-1); border-style: double; border-width: 3px; height: 18px; line-height: 12px; }
-.tbadge.is-bad { background: var(--destructive); border-color: var(--destructive); color: var(--paper-1); }
-.pn-handle.react-flow__handle { width: 9px; height: 9px; background: var(--paper-1); border: 1.5px solid var(--ink-2); }
-.pn-handle.react-flow__handle:hover, .react-flow__handle.connectingto, .react-flow__handle.connectionindicator.valid { background: var(--amber); border-color: var(--ink-1); }
-.pn-handle--new.react-flow__handle { border-style: dashed; }
+/* Ports: one small square each. */
+.pn-handle.react-flow__handle { width: 10px; height: 10px; background: var(--ink-2); border: 1px solid var(--paper-1); border-radius: 0; }
+.pn-handle:hover, .react-flow__handle.connectingto, .react-flow__handle.connectionindicator.valid:hover { background: var(--ink-1); transform: translate(-50%, 0) scale(1.4); }
+.pn-handle--new { opacity: 0.4; }
+.pn:hover .pn-handle--new, .pn-handle--new.connectingto { opacity: 1; }
+.pn-handle.is-bad { background: var(--destructive); }
 
 /* React Flow chrome in the house style */
 .react-flow svg { max-width: none; } /* swiss.css caps svg at 100%, which hides edges */
 .react-flow__node { border-radius: 0; }
-.react-flow__edge-path { stroke: var(--ink-3); stroke-width: 1.25; }
-.react-flow__edge.selected .react-flow__edge-path { stroke: var(--amber-ink); stroke-width: 2.5; }
+.react-flow__edge-path { stroke: var(--ink-2); stroke-width: 1.5; }
+.react-flow__edge.edge--unknown .react-flow__edge-path { stroke-dasharray: 4 4; }
+.react-flow__edge.selected .react-flow__edge-path { stroke: var(--ink-1); stroke-width: 3; }
 .react-flow__edge.is-invalid .react-flow__edge-path { stroke: var(--destructive); stroke-dasharray: 6 4; }
 .react-flow__edge-text { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-1); }
 .react-flow__edge.is-invalid .react-flow__edge-text { fill: var(--destructive); }
 .react-flow__edge-textbg { fill: var(--paper-1); }
 .react-flow__controls { box-shadow: none; border: var(--border-strong); }
 .react-flow__controls-button { background: var(--paper-1); border-bottom: var(--border-hairline); }
-.react-flow__connectionline path { stroke: var(--amber-ink); stroke-width: 2; }
+.react-flow__connectionline path { stroke: var(--ink-1); stroke-width: 1.5; }
 
 /* ---- inspector ---- */
-.iostrip { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: baseline; font-size: var(--text-xs); padding: 6px 8px; border: var(--border-strong); background: var(--paper-2); }
-.iostrip-k { font-size: 12px; font-weight: 600; color: var(--ink-3); }
-.iostrip-v { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
-.iostrip-v .mono { color: var(--ink-1); }
-.iostrip-shape { font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); flex-basis: 100%; overflow-wrap: anywhere; }
-.iostrip-shape.big { font-size: 12px; color: var(--ink-1); }
-.iostrip .is-unbound { color: var(--destructive); }
 .arglist { margin: 2px 0 0; padding: 0; list-style: none; font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); }
 .arglist li { padding: 1px 0; overflow-wrap: anywhere; }
 .arglist .mono { color: var(--ink-1); }
 .insp { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
 .insp-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 17px; padding-bottom: var(--space-2); border-bottom: 1px solid; }
-.insp-id { margin-left: auto; width: 150px; border-color: transparent; background: transparent; text-align: right; text-transform: none; letter-spacing: 0; color: var(--ink-2); }
-.insp-id:hover { border-color: var(--rule-strong); }
 .insp-head { border-bottom-color: var(--rule-strong) !important; }
-.insp--classifier .insp-head { box-shadow: inset 0 -3px 0 0 var(--amber); }
-.insp-blurb { color: var(--ink-2); font-size: var(--text-sm); }
+.insp-blurb { color: var(--ink-2); font-size: var(--text-sm); line-height: 1.45; margin: -6px 0 0; }
+/* What comes into the block (top of the pane) and what goes out (bottom). */
+.insp-io { padding: 6px 8px; border: var(--border-hairline); background: var(--paper-2); font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
+.insp-io-k { font-weight: 600; color: var(--ink-1); }
+.insp-io ul { margin: 2px 0 0; padding-left: 1.2em; }
+.insp-io .mono { color: var(--ink-1); }
+.insp-io-shape { display: block; color: var(--ink-2) !important; }
+.insp-io-kind { display: block; margin: 2px 0 4px; }
+.insp-spec { width: 100%; border-collapse: collapse; margin: 2px 0 4px; }
+.insp-spec td { padding: 2px 8px 2px 0; border-top: var(--border-hairline); vertical-align: top; }
+.insp-spec td:first-child { width: 34%; white-space: nowrap; }
+.insp-spec td:last-child { color: var(--ink-2) !important; overflow-wrap: anywhere; }
 .insp-issues { list-style: none; border: var(--border-strong); }
 .insp-issues li { padding: 4px 8px; font-size: var(--text-xs); border-bottom: var(--border-hairline); }
 .insp-issues li:last-child { border-bottom: none; }
@@ -164,7 +131,31 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .f-label { font-size: 14px; font-weight: 600; color: var(--ink-1); }
 .f-hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 details.f > summary { cursor: pointer; }
-.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); align-items: start; }
+/* The site's own dropdown: a button and a list that opens in the flow under it. */
+/* One height for every control in the pane: text boxes, number boxes and dropdowns. */
+.insp input:not([type="checkbox"]), .insp .sel-btn { height: 32px; box-sizing: border-box; }
+.sel { position: relative; width: 100%; }
+.sel-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 4px 6px; font: inherit; font-size: var(--text-sm); color: var(--ink-1); background: var(--paper-1); border: var(--border-strong); text-align: left; cursor: pointer; }
+.sel-btn:focus-visible, .sel.is-open .sel-btn { outline: 2px solid var(--accent); outline-offset: -1px; }
+.sel-value { min-width: 0; overflow-wrap: anywhere; }
+.sel-caret { flex: none; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--ink-2); }
+.sel.is-open .sel-caret { transform: rotate(180deg); }
+.sel-list { list-style: none; margin: 0; padding: 0; border: var(--border-strong); border-top: none; background: var(--paper-1); max-height: 240px; overflow-y: auto; }
+.sel-list button { display: block; width: 100%; padding: 5px 8px; font: inherit; font-size: var(--text-sm); color: var(--ink-1); text-align: left; overflow-wrap: anywhere; }
+.sel-list button:hover { background: var(--paper-2); }
+.sel-list button.on { background: var(--paper-2); font-weight: 600; }
+.sel.add-input .sel-btn { font-family: var(--font-mono); font-size: var(--text-xs); }
+.sess-pick { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; border: var(--border-strong); }
+.sess-pick label { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; border-bottom: var(--border-hairline); font-size: var(--text-sm); cursor: pointer; overflow-wrap: anywhere; }
+.sess-pick label:last-child { border-bottom: none; }
+.sess-pick .f-hint { padding: 6px 8px; }
+.reads { display: flex; flex-direction: column; gap: 3px; }
+.reads-name { display: inline-block; width: 12em; }
+.insp-py { margin: 4px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; border: var(--border-strong); background: var(--paper-2); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; white-space: pre; color: var(--ink-1); }
+.insp-more { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-3); }
+.row2 { display: grid; grid-template-columns: 1fr; gap: var(--space-2); align-items: start; }
+.row3 { display: grid; grid-template-columns: 1fr; gap: var(--space-2); align-items: end; }
+.row2 label, .row3 label { display: flex; flex-direction: column; gap: 3px; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--text-sm); }
 .checks label, .inline-check { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); }
 .inline-check input[type="number"] { width: 80px; }
@@ -176,9 +167,17 @@ details.f > summary { cursor: pointer; }
 .io-type { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); }
 .labels td:nth-child(3) { width: 34px; text-align: center; }
 .x { font-size: 16px; line-height: 1; padding: 0 4px; color: var(--ink-3); }
+.x--big { margin-left: auto; font-size: 26px; padding: 0 6px; }
+/* The block-kind symbol: one plain glyph per kind, on blocks, the rail and the pane. */
+.sym { display: inline-block; flex: none; width: 10px; height: 10px; margin-right: 6px; background: var(--ink-2); vertical-align: baseline; }
+.sym--query { clip-path: polygon(0 0, 100% 0, 100% 40%, 0 40%, 0 60%, 100% 60%, 100% 100%, 0 100%); }
+.sym--classifier { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.sym--run_python { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.sym--run_llm { clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.sym--final_report { clip-path: circle(50%); }
 .x:hover { color: var(--destructive); }
 .add-input { font-family: var(--font-mono); font-size: var(--text-xs); }
-.f .btn--sm { align-self: flex-start; padding: 2px 8px; font-size: 11px; margin-top: 2px; }
+.f .btn--sm { align-self: flex-start; height: 32px; padding: 0 14px; font-size: var(--text-sm); margin-top: 4px; }
 .cm-wrap { border: var(--border-strong); font-size: 12.5px; }
 .cm-wrap .cm-editor { background: var(--paper-1); }
 
@@ -192,6 +191,8 @@ details.f > summary { cursor: pointer; }
 .code-state.bad { color: var(--destructive); font-weight: 600; }
 .code-bar .btn--sm { padding: 2px 8px; font-size: 11px; }
 .code-editor { min-height: 0; overflow: hidden; }
+.code-files { min-height: 0; overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+.code-files .insp-py { max-height: none; }
 .code-editor > div { height: 100%; }
 .code-editor .cm-editor { height: 100%; font-size: 12.5px; background: var(--paper-1); }
 .code-editor .cm-gutters { background: var(--paper-2); border-right: var(--border-hairline); color: var(--ink-3); }
@@ -208,6 +209,8 @@ details.f > summary { cursor: pointer; }
 .toast.error { border-left-color: var(--destructive); }
 
 @media (max-width: 900px) {
+  .newblock { flex-direction: row; flex-wrap: wrap; right: 12px; top: 8px; padding: 2px; }
+  .newblock-item { padding: 2px 8px; }
   .work--two { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .side, .work--two .code { border-left: none; border-top: var(--border-ink); }
 }

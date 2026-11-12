@@ -5,18 +5,18 @@ import {
   ControlButton,
   Controls,
   type EdgeChange,
-  MarkerType,
   type NodeChange,
   ReactFlow,
   useReactFlow,
 } from "@xyflow/react";
-import { type Dispatch, useCallback, useEffect, useMemo, useState } from "react";
+import { type Dispatch, type DragEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { type FlowNode, planToFlow } from "../plan/graph";
 import { autoLayout } from "../plan/layout";
 import { connect, deleteNodes, disconnect } from "../plan/ops";
 import type { Issue } from "../plan/types";
 import type { Action, State } from "../state/store";
-import NewBlock from "./NewBlock";
+import NewBlock, { BLOCK_DRAG, OFFERED, placeBlock } from "./NewBlock";
+import type { BlockKind } from "./nodeMeta";
 import PlanNodeView from "./PlanNodeView";
 
 const nodeTypes = {
@@ -60,24 +60,21 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
       derived.edges.map((e) => ({
         ...e,
         selected: selectedEdges.has(e.id),
-        // Port names are on the nodes; spell the binding out only when it needs attention.
+        // Port names are in the hover text; spell the binding out only when it needs attention.
         label: selectedEdges.has(e.id) || e.data?.invalid ? e.label : undefined,
-        className: e.data?.invalid ? "is-invalid" : undefined,
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 14,
-          height: 14,
-          color: e.data?.invalid ? "#B4321C" : "#5F6165",
-        },
+        // The edge takes the colour of the type it carries (styles.css .edge--<type>).
+        className: e.data?.invalid ? "is-invalid" : `edge--${e.data?.type ?? "unknown"}`,
         labelBgPadding: [4, 2] as [number, number],
       })),
     [derived.edges, selectedEdges],
   );
 
+  // Refit on request, and when the settings pane opens or closes: it halves the diagram.
+  const paneOpen = Boolean(selected);
   useEffect(() => {
-    const t = setTimeout(() => flow.fitView({ padding: 0.15, duration: 200, maxZoom: 1 }), 30);
+    const t = setTimeout(() => flow.fitView({ padding: 0.15, duration: 200, maxZoom: 1 }), 60);
     return () => clearTimeout(t);
-  }, [state.fitSeq, flow]);
+  }, [state.fitSeq, paneOpen, flow]);
 
   // Selection is ours, and it happens on a click only (onNodeClick): pressing a block to
   // drag it must not open its settings. React Flow's own select changes are dropped.
@@ -125,8 +122,27 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
     [dispatch, plan],
   );
 
+  const onDrop = useCallback(
+    (e: DragEvent) => {
+      const t = e.dataTransfer.getData(BLOCK_DRAG) as BlockKind;
+      if (!OFFERED.includes(t)) return;
+      e.preventDefault();
+      placeBlock(plan, layout, dispatch, t, flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+    },
+    [plan, layout, dispatch, flow],
+  );
+
   return (
-    <div className="canvas">
+    <div
+      className="canvas"
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes(BLOCK_DRAG)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={onDrop}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -156,3 +172,4 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
     </div>
   );
 }
+

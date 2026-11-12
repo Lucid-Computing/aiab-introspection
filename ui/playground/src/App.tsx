@@ -3,6 +3,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AGREEMENT, loadAgreement, READONLY, saveAgreement, type ServerIssue } from "./agreement";
 import Canvas from "./components/Canvas";
 import CodePane from "./components/CodePane";
+import { Select } from "./components/fields";
 import Inspector from "./components/Inspector";
 import { badBindings, lintPlan } from "./plan/lint";
 import { SAMPLE_SOURCES, samplePlan } from "./plan/samples";
@@ -95,15 +96,6 @@ export default function App() {
 
   const dirty = Boolean(AGREEMENT) && !server.loading && !server.error && currentCode !== server.savedCode;
   useEffect(() => {
-    if (!dirty) return;
-    const warn = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
-
-  useEffect(() => {
     if (selected) setPlanOpen(false);
   }, [selected]);
 
@@ -121,13 +113,22 @@ export default function App() {
     const r = await saveAgreement(AGREEMENT, plan, server.digest);
     if (r.ok) {
       setServer((x) => ({ ...x, saving: false, digest: r.digest, savedCode: currentCode, refused: [] }));
-      dispatch({ type: "toast", text: `Saved. New version ${r.digest.slice(7, 19)}…` });
     } else {
       setServer((x) => ({ ...x, saving: false, refused: fromServer(r.issues) }));
       dispatch({ type: "toast", kind: "error", text: r.message });
       if (r.issues.length) dispatch({ type: "select", id: null });
     }
   };
+
+  // Auto save: a valid change is written a moment after the last edit. A plan with errors
+  // is not saved; the bar says so. A refused save waits for the next edit.
+  const autoSave = Boolean(AGREEMENT) && server.editable && dirty && nErr === 0 && !server.saving && !server.refused.length;
+  useEffect(() => {
+    if (!autoSave) return;
+    const t = setTimeout(save, 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSave, currentCode]);
 
   const modified = (key: string) => planToJson(plan) !== planToJson(samplePlan(key));
   const loadSample = (key: string) => {
@@ -166,7 +167,6 @@ export default function App() {
 
   // Which half shows next to the diagram: a block's settings, or the plan as text.
   const pane = Boolean(selected) || planOpen;
-  const canSave = Boolean(AGREEMENT) && server.editable && dirty && nErr === 0 && !server.saving;
   const saveNote = !AGREEMENT
     ? null
     : server.loading
@@ -174,13 +174,13 @@ export default function App() {
       : server.error
         ? server.error
         : !server.editable
-          ? "read only · press Edit this plan above to change it"
+          ? "read only"
           : server.saving
             ? "saving…"
             : dirty
               ? nErr
-                ? "unsaved · fix the errors first"
-                : "unsaved changes"
+                ? "not saved · fix the errors"
+                : "saving…"
               : `saved · ${server.digest.slice(7, 19)}…`;
 
   return (
@@ -198,18 +198,17 @@ export default function App() {
             {AGREEMENT ? `Plan builder · ${AGREEMENT}` : "Plan playground"}
           </span>
           {!AGREEMENT && (
-            <select
+            <Select
               className="bar-select"
               value={state.sample}
               onChange={(e) => loadSample(e.target.value)}
-              title="Sample plans"
             >
               {SAMPLE_SOURCES.map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.label}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
           <button
             className={`bar-status ${state.codeIssues.length ? "bad" : nErr ? "bad" : nWarn ? "warn" : "ok"}`}
@@ -250,31 +249,10 @@ export default function App() {
               Reset
             </button>
           )}
-          {AGREEMENT && server.editable && (
-            <button
-              className="bar-link"
-              onClick={() =>
-                dirty &&
-                window.confirm("Discard the unsaved changes and go back to the saved plan?") &&
-                (() => {
-                  const r = jsonToPlan(server.savedCode);
-                  if (r.ok) dispatch({ type: "loadPlan", plan: r.plan });
-                })()
-              }
-              disabled={!dirty}
-            >
-              Revert
-            </button>
-          )}
-          {AGREEMENT && server.editable && (
-            <button className="btn btn--primary btn--sm" onClick={save} disabled={!canSave} title="Save a new version">
-              Save
-            </button>
-          )}
           <button
             className={`bar-toggle${codeOpen ? " on" : ""}`}
             aria-pressed={codeOpen}
-            title={codeOpen ? "Hide the plan as text" : "Show the plan as text"}
+            title={codeOpen ? "Hide the plan as Python" : "Show the plan as Python"}
             onClick={() => dispatch({ type: "toggleCode" })}
           >
             <svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true">

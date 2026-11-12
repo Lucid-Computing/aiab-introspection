@@ -248,6 +248,75 @@ def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
                 "lanes": [{"name": n, "count": counts[n], "marks": lanes[n]} for n in LANES],
                 "records": len(recs),
                 "batch": recs[0].box["batch"],
+                "facts": _facts(folder, recs, [j for j, _, _ in job_rows], start, end),
             }
         )
     return charts
+
+
+def _int(value: object) -> int:
+    try:
+        return int(float(str(value or 0)))
+    except ValueError:
+        return 0
+
+
+def _facts(folder: Path, recs: list[PlantRecord], job_rows: list[dict], start: float, end: float):
+    """What the plant's sensors recorded about one run, in numbers: the transcript by kind
+    and size, the Slurm jobs as a table, the network by destination, and the models the
+    plant scored. Counts, times and sizes only; nothing of the transcript's text."""
+    kinds: dict[str, int] = defaultdict(int)
+    for r in recs:
+        kinds[r.kind] += 1
+    job_table = []
+    for j in job_rows:
+        a = _time(j.get("started_utc") or j.get("submitted_utc") or "")
+        b = _time(j.get("ended_utc") or "") or a
+        job_table.append(
+            {
+                "job": j.get("job", ""),
+                "state": (j.get("state") or "").lower(),
+                "node": j.get("node", ""),
+                "gpus": j.get("gpus_given", ""),
+                "started": _clock(a) if a else "",
+                "seconds": int(b - a) if a else 0,
+                "processes": j.get("processes", ""),
+                "gpu_opened": j.get("gpu_devices_opened", ""),
+                "outlived": (j.get("outlived") or "0") not in ("", "0"),
+            }
+        )
+    dest: dict[tuple[str, str, str], list[int]] = defaultdict(lambda: [0, 0, 0])
+    for n in network(folder):
+        if not start <= _time(n.get("start_utc") or "") <= end:
+            continue
+        key = (n.get("to", ""), n.get("port", ""), n.get("service") or n.get("proto", ""))
+        dest[key][0] += 1
+        dest[key][1] += _int(n.get("bytes_sent"))
+        dest[key][2] += _int(n.get("bytes_received"))
+    top = sorted(dest.items(), key=lambda kv: -(kv[1][1] + kv[1][2]))[:8]
+    saved = []
+    for row in scores(folder):
+        t = _time(row.get("model_saved_utc") or "")
+        if t and start <= t <= end + 3600:
+            saved.append(row)
+    return {
+        "kinds": dict(kinds),
+        "chars": sum(len(str(r.box.get("content") or "")) for r in recs),
+        "jobs": job_table,
+        "gpu_seconds": sum(j["seconds"] for j in job_table if j["gpu_opened"] not in ("", "0")),
+        "flows": sum(v[0] for v in dest.values()),
+        "destinations": len(dest),
+        "top": [
+            {
+                "to": k[0],
+                "port": k[1],
+                "service": k[2],
+                "flows": v[0],
+                "sent": v[1],
+                "received": v[2],
+            }
+            for k, v in top
+        ],
+        "score_columns": list(saved[0].keys()) if saved else [],
+        "scores": saved,
+    }

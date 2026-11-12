@@ -9,7 +9,6 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote, urlsplit
@@ -91,6 +90,20 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="AIAB agreement UI", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
 )
+@app.exception_handler(405)
+async def button_address_opened_as_a_page(request: Request, exc: Exception) -> Response:
+    """A button's address opened as a page (an old link, or a login that returned to it):
+    go to the page the button lives on instead of answering Method Not Allowed."""
+    if request.method != "GET":
+        return JSONResponse({"detail": "Method Not Allowed"}, status_code=405)
+    found = re.match(r"^/a/([A-Za-z0-9][A-Za-z0-9_-]{0,127})/(sign)?", request.url.path)
+    if found:
+        return RedirectResponse(f"/a/{found.group(1)}/{'sign' if found.group(2) else 'plan'}", 303)
+    first = request.url.path.split("/")[1] if "/" in request.url.path[1:] else ""
+    return RedirectResponse(f"/{first}" if first in ("runs", "logs") else "/agreements", 303)
+
+
+
 app.mount("/assets", StaticFiles(directory=UI_ROOT / "assets"), name="assets")
 templates = Jinja2Templates(directory=UI_ROOT / "server" / "templates")
 COOKIE = "aiab_ui"
@@ -218,7 +231,15 @@ def user_of(request: Request) -> dict[str, str] | None:
 
 
 def to_login(request: Request) -> RedirectResponse:
-    return RedirectResponse(f"/login?next={quote(request.url.path)}", status_code=303)
+    """Send a logged-out request to the login page, and afterwards back to a page that can
+    be opened. A button's address only takes a form post, so for anything but a GET the way
+    back is the page the button was on (the Referer, same site only), else Agreements."""
+    target = request.url.path
+    if request.method != "GET":
+        referer = urlsplit(request.headers.get("referer", ""))
+        same_site = referer.netloc == request.url.netloc and referer.path.startswith("/")
+        target = (referer.path if same_site else "") or "/agreements"
+    return RedirectResponse(f"/login?next={quote(target)}", status_code=303)
 
 
 def back(path: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
@@ -458,11 +479,44 @@ async def playground(request: Request, path: str = "") -> Response:
     return FileResponse(target)
 
 
+def _run_source(request: Request, folder: Path | None, form: Any = None) -> tuple[LogSource, bool]:
+    """The log source a run reads: the one the agreement's Input filter names, when it is
+    one of this server's sources; otherwise the page's ``logs`` choice (plans written before
+    the filter named a source). The flag says whether the agreement decided."""
+    named = runs.plan_source(folder) if folder else None
+    by_id = {s.id: s for s in settings.log_sources}
+    if named in by_id:
+        return by_id[named], True
+    return _log_source(request, form), False
+
+
 def _log_source(request: Request, form: Any = None) -> LogSource:
     """The log source a page works on, from its ``logs`` query parameter (or form field):
     ``prod`` for Prod Agent Logs, ``dev`` for Dev Agent Logs, the default."""
     wanted = (form or request.query_params).get("logs")
     return settings.log_source(str(wanted) if wanted else None)
+
+
+@app.get("/logs/sessions.json")
+async def logs_sessions(request: Request) -> Response:
+    """The sessions of one log source, by metadata only, for the Input filter's picker."""
+    if user_of(request) is None:
+        return JSONResponse({"error": "sign in"}, status_code=401)
+    source = _log_source(request)
+    out = []
+    for s in proxylogs.sessions(proxylogs.load_index(settings, source)):
+        records = len(proxylogs.box_records(s.records))
+        if records:
+            out.append(
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "who": s.who,
+                    "started": s.started_short,
+                    "records": records,
+                }
+            )
+    return JSONResponse({"source": source.id, "sessions": out})
 
 
 @app.get("/logs")
@@ -477,7 +531,12 @@ async def logs_page(request: Request) -> Response:
     records = proxylogs.load_index(settings, source)
     all_sessions = proxylogs.sessions(records)
     whos = sorted({s.who for s in all_sessions})
+    show_empty = request.query_params.get("empty") == "1"
     matched = [s for s in all_sessions if not who or s.who == who]
+    # A session with nothing the box could read (no text in any record) is hidden by default.
+    empty = sum(1 for s in matched if not proxylogs.box_records(s.records))
+    if not show_empty and empty:
+        matched = [s for s in matched if proxylogs.box_records(s.records)]
     if q:
         needle = q.lower()
         matched = [s for s in matched if needle in s.title.lower()]
@@ -487,9 +546,8 @@ async def logs_page(request: Request) -> Response:
     except ValueError:
         page = 1
     shown = matched[(page - 1) * LOGS_PAGE_SIZE : page * LOGS_PAGE_SIZE]
-    current = next((s for s in all_sessions if s.id == wanted), None) or (
-        shown[0] if shown else None
-    )
+    # One session's page only when it was asked for; an unknown id falls back to the list.
+    current = next((s for s in all_sessions if s.id == wanted), None) if wanted else None
     req = None
     if current:
         picked = (
@@ -517,6 +575,8 @@ async def logs_page(request: Request) -> Response:
         pages=pages,
         recent=LOGS_RECENT,
         matched=len(matched),
+        empty=empty,
+        show_empty=show_empty,
         total_requests=len(records),
         fetch=proxylogs.status(source),
         plant=(
@@ -740,7 +800,13 @@ async def copy_pull(request: Request) -> Response:
 async def new_agreement_form(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    return render(request, "new_agreement.html", form={}, taken=pv.taken_names(settings))
+    return render(
+        request,
+        "new_agreement.html",
+        form={},
+        taken=pv.taken_names(settings),
+        agreements=[r["id"] for r in pv.list_agreements(settings)],
+    )
 
 
 @app.post("/agreements/new")
@@ -754,6 +820,7 @@ async def new_agreement(request: Request) -> Response:
             "new_agreement.html",
             form=form,
             taken=pv.taken_names(settings),
+            agreements=[r["id"] for r in pv.list_agreements(settings)],
             err="AI creation is unavailable on this server. Create a draft manually instead.",
         )
     errors, created = pv.new_agreement(settings, form, user_of(request) or {})
@@ -763,6 +830,7 @@ async def new_agreement(request: Request) -> Response:
             "new_agreement.html",
             form=form,
             taken=pv.taken_names(settings),
+            agreements=[r["id"] for r in pv.list_agreements(settings)],
             err="; ".join(errors),
         )
     saved(user_of(request))
@@ -801,6 +869,51 @@ def _runnable(rows: list[dict]) -> list[dict]:
     return [r for r in rows if r["digest"] and not r["error"] and not r["issue"] and r["signed"]]
 
 
+RUNS_PAGE_SIZE = 20  # past runs per page on the Runs screen
+
+
+def _past_runs(qp: Any, chosen: str, logs: str) -> dict:
+    """The table of past runs on the Runs screen: filtered by ``rq`` (agreement and input,
+    run id, plan digest), ``rby`` (who started it) and ``rstate`` (outcome title), newest
+    first, one page of them (``rpage``)."""
+    every = runs.list_runs(settings)
+    q = qp.get("rq", "").strip()
+    by = qp.get("rby", "").strip()
+    state = qp.get("rstate", "").strip()
+    needle = q.lower()
+
+    def text(r: dict) -> str:
+        digest = (r.get("plan") or {}).get("digest") or ""
+        return f"{r.get('transcript', '')} {r.get('id', '')} {digest}".lower()
+
+    matched = [
+        r
+        for r in every
+        if (not needle or needle in text(r))
+        and (not by or r["by"]["user"] == by)
+        and (not state or r["outcome"]["title"] == state)
+    ]
+    pages = max(1, -(-len(matched) // RUNS_PAGE_SIZE))
+    try:
+        page = min(max(1, int(qp.get("rpage", "1"))), pages)
+    except ValueError:
+        page = 1
+    keep = {"agreement": chosen, "logs": logs, "rq": q, "rby": by, "rstate": state}
+    return {
+        "any": bool(every),
+        "shown": matched[(page - 1) * RUNS_PAGE_SIZE : page * RUNS_PAGE_SIZE],
+        "matched": len(matched),
+        "page": page,
+        "pages": pages,
+        "q": q,
+        "by": by,
+        "state": state,
+        "bys": sorted({r["by"]["user"] for r in every}),
+        "states": sorted({r["outcome"]["title"] for r in every}),
+        "filters": "".join(f"&{k}={quote(v)}" for k, v in keep.items() if v),
+    }
+
+
 @app.get("/runs")
 async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
@@ -814,33 +927,28 @@ async def runs_index(request: Request) -> Response:
     if folder is None and chosen:
         pre["missing"].insert(0, f"no agreement called {chosen}")
         pre["ok"] = False
-    win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
-    lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
-    source = _log_source(request)
+    source, source_fixed = _run_source(request, folder)
     all_sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
-    whos = sorted({s.who for s in all_sessions})
-    sessions = []
+    # The agreement's input filter decides what is sent: sessions it takes, sessions outside
+    # its scope (the box would refuse them), and sessions with nothing to send.
+    fits, outside, empty = [], [], []
+    named = runs.plan_sessions(folder) if folder else set()
     for s in all_sessions:
         times = [r.time for r in s.records]
-        if (
-            (win["who"] and s.who != win["who"])
-            or (lo and max(times) < lo)
-            or (hi and min(times) > hi)
-        ):
-            continue
         recs = proxylogs.box_records(s.records)
-        sessions.append(
-            {
-                "session": s,
-                "notes": runs.scope_notes(folder, s.who, min(times), max(times)) if folder else [],
-                "records": len(recs),
-                "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
-            }
-        )
+        notes = runs.scope_notes(folder, s.who, min(times), max(times)) if folder else []
+        if named and s.id not in named:
+            notes = [*notes, "not one of the sessions the agreement names"]
+        item = {
+            "session": s,
+            "notes": notes,
+            "records": len(recs),
+            "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
+        }
+        (outside if item["notes"] else empty if not recs else fits).append(item)
     totals = {
-        "records": sum(i["records"] for i in sessions),
-        "kb": round(sum(i["kb"] for i in sessions), 1),
-        "refused": sum(1 for i in sessions if i["notes"]),
+        "records": sum(i["records"] for i in fits),
+        "kb": round(sum(i["kb"] for i in fits), 1),
     }
     return render(
         request,
@@ -850,25 +958,17 @@ async def runs_index(request: Request) -> Response:
         chosen=chosen,
         log_source=source,
         log_sources=settings.log_sources,
-        sessions=sessions,
+        source_fixed=source_fixed,
+        fits=fits,
+        outside=outside,
+        empty=empty,
         all_count=len(all_sessions),
-        whos=whos,
-        win=win,
         totals=totals,
-        source=qp.get("source", ""),
-        picked=set(qp.getlist("session")),
         scope=runs.plan_scope(folder) if folder else None,
-        runs=runs.list_runs(settings),
+        past=_past_runs(qp, chosen, source.id),
+        show_bar=any(c["id"] == chosen for c in choices),
         plan_digest=pre["plan_digest"],
     )
-
-
-def _local_ts(value: str) -> float | None:
-    """A datetime-local field value ("2026-10-15T09:00") as a UTC timestamp, or None."""
-    try:
-        return datetime.fromisoformat(value).replace(tzinfo=UTC).timestamp() if value else None
-    except ValueError:
-        return None
 
 
 @app.post("/runs/start")
@@ -885,7 +985,9 @@ async def runs_start(request: Request) -> Response:
     pre = await _run_preflight(target.plan_dir)
     if not pre["ok"]:
         return back(here, err="Cannot start: " + "; ".join(pre["missing"]))
-    source = _log_source(request, form)  # session ids are only unique within one source
+    source, _ = _run_source(
+        request, target.plan_dir, form
+    )  # session ids are unique within one source
     here += f"&logs={source.id}"
     try:
         chosen_sessions = set(form.getlist("session"))
@@ -943,7 +1045,6 @@ async def run_plan(request: Request, run_id: str) -> Response:
         edit=False,
         base=f"/a/{state['agreement']}",
         aid=state["agreement"],
-        changes={},
         snapshot=state,
     )
 
@@ -962,6 +1063,33 @@ async def legacy_plan() -> Response:
 # --------------------------------------------------------------------------- one agreement
 
 
+@app.get("/a/{aid}/history")
+async def history_page(request: Request, aid: str) -> Response:
+    """Who changed what in one agreement: filter by party or kind, twenty at a time."""
+    target, redirect = agreement(request, aid)
+    if redirect:
+        return redirect
+    view, error = load_view(target)
+    if view is None:
+        return back(f"/a/{aid}/plan", err=error or "The plan does not load.")
+    q = request.query_params
+    who, kind, show_all = q.get("who", ""), q.get("kind", ""), q.get("changes") == "all"
+    history = list(view.history)
+    if who in PARTIES:
+        history = [e for e in history if e.get("party") == who]
+    if kind in CHANGE_KINDS:
+        history = [e for e in history if e.get("kind") in CHANGE_KINDS[kind]]
+    changes = {
+        "entries": history if show_all else history[:20],
+        "total": len(history),
+        "who": who,
+        "kind": kind,
+        "all": show_all,
+        "kinds": list(CHANGE_KINDS),
+    }
+    return render(request, "history.html", view=view, base=f"/a/{aid}", aid=aid, changes=changes)
+
+
 @app.get("/a/{aid}/plan")
 async def plan(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid)
@@ -970,22 +1098,6 @@ async def plan(request: Request, aid: str) -> Response:
     view, error = load_view(target)
     q = request.query_params
     edit, editor = _edit_mode(request, aid, q.get("edit") == "1")
-    # The change log can get long: filter by party or kind, show ten at a time.
-    who, kind, show_all = q.get("who", ""), q.get("kind", ""), q.get("changes") == "all"
-    history = view.history if view else []
-    if who in PARTIES:
-        history = [e for e in history if e.get("party") == who]
-    if kind in CHANGE_KINDS:
-        history = [e for e in history if e.get("kind") in CHANGE_KINDS[kind]]
-    changes = {
-        "entries": history if show_all else history[:10],
-        "total": len(history),
-        "who": who,
-        "kind": kind,
-        "all": show_all,
-        "open": bool(who or kind or show_all),
-        "kinds": list(CHANGE_KINDS),
-    }
     return render(
         request,
         "plan.html",
@@ -995,7 +1107,6 @@ async def plan(request: Request, aid: str) -> Response:
         edit=edit,
         base=f"/a/{aid}",
         aid=aid,
-        changes=changes,
         chat_enabled=bool(settings.anthropic_api_key),
         chat_initial=(
             "Create a plan for this question: " + view.description

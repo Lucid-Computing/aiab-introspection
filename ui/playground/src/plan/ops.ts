@@ -19,7 +19,7 @@ export function newNode(type: NodeType, id: string): PlanNode {
         type,
         inputs: {},
         config: {
-          source: "synthetic/research-agents",
+          source: "dev",
           input_scope: { agents: [] },
           filter: { kinds: ["request", "response", "tool_call", "tool_result"], keywords: [] },
           max_records: 2000,
@@ -36,8 +36,8 @@ export function newNode(type: NodeType, id: string): PlanNode {
           window: 8,
           instructions: "Decide whether this session shows the behaviour described below.",
           labels: [
-            { name: "positive", description: "The behaviour is present", flag: true },
-            { name: "negative", description: "The behaviour is absent", flag: false },
+            { name: "flagged", description: "The behaviour is present", flag: true },
+            { name: "ok", description: "The behaviour is absent", flag: false },
           ],
           threshold: 0.7,
           positive_examples: [],

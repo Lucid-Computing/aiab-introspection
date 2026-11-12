@@ -131,13 +131,15 @@ def test_builder_endpoints_follow_login_lease_frozen_and_version(draft, monkeypa
     editing.clear("builder-test")
 
 
-def test_plan_page_embeds_the_builder_and_lists_the_steps(draft, monkeypatch):
+def test_plan_page_embeds_the_builder_and_the_history(draft, monkeypatch):
     web, client = client_for(monkeypatch, draft)
     page = client.get("/a/builder-test/plan")
     assert page.status_code == 200
     assert "/audit-plan-playground/?agreement=builder-test&amp;readonly=1" in page.text
     assert "Does the agent leak secrets?" in page.text
-    assert "Classifier" in page.text and "releases 2 fields" in page.text
+    assert "The steps, in the order the box runs them" not in page.text  # the builder shows them
+    assert 'href="/a/builder-test/history"' in page.text  # the history has its own page
+    assert client.get("/a/builder-test/history").status_code == 200
     editing_page = client.get("/a/builder-test/plan?edit=1")
     assert '/audit-plan-playground/?agreement=builder-test"' in editing_page.text
     editing.clear("builder-test")
@@ -169,9 +171,8 @@ def test_old_format_agreements_are_archived_not_listed_and_can_be_deleted(settin
     assert pv.for_agreement(settings, "_archive") is None
 
     web, client = client_for(monkeypatch, settings)
-    page = client.get("/agreements")
-    assert "Archived · 1 agreement in the previous plan format" in page.text
-    assert "bio-demo-001" in page.text
+    # The page no longer lists the archive; the folder stays on disk and the delete route works.
+    assert "bio-demo-001" not in client.get("/agreements").text
     assert client.get("/a/_archive/plan", follow_redirects=False).status_code == 303
     assert client.post("/archive/bio-demo/delete", follow_redirects=False).status_code == 303
     assert not (settings.agreements_dir / "_archive" / "bio-demo").exists()
