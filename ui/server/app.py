@@ -90,6 +90,20 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="AIAB agreement UI", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
 )
+@app.exception_handler(405)
+async def button_address_opened_as_a_page(request: Request, exc: Exception) -> Response:
+    """A button's address opened as a page (an old link, or a login that returned to it):
+    go to the page the button lives on instead of answering Method Not Allowed."""
+    if request.method != "GET":
+        return JSONResponse({"detail": "Method Not Allowed"}, status_code=405)
+    found = re.match(r"^/a/([A-Za-z0-9][A-Za-z0-9_-]{0,127})/(sign)?", request.url.path)
+    if found:
+        return RedirectResponse(f"/a/{found.group(1)}/{'sign' if found.group(2) else 'plan'}", 303)
+    first = request.url.path.split("/")[1] if "/" in request.url.path[1:] else ""
+    return RedirectResponse(f"/{first}" if first in ("runs", "logs") else "/agreements", 303)
+
+
+
 app.mount("/assets", StaticFiles(directory=UI_ROOT / "assets"), name="assets")
 templates = Jinja2Templates(directory=UI_ROOT / "server" / "templates")
 COOKIE = "aiab_ui"

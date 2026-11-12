@@ -412,3 +412,14 @@ def test_a_logged_out_button_press_comes_back_to_a_page_not_to_the_button(client
     r = client.post("/a/bio/plan/edit", headers=elsewhere, follow_redirects=False)
     assert r.headers["location"] == "/login?next=/agreements"
     assert client.get("/runs", follow_redirects=False).headers["location"] == "/login?next=/runs"
+
+
+def test_a_button_address_opened_as_a_page_goes_to_its_page(client):
+    def to(path):
+        return client.get(path, follow_redirects=False).headers.get("location")
+
+    assert to("/a/bio/plan/edit") == "/a/bio/plan"
+    assert to("/a/bio/sign/upload") == "/a/bio/sign"
+    assert to("/a/bio/delete") == "/a/bio/plan"
+    assert to("/runs/start").startswith("/runs")  # an existing page route takes it
+    assert to("/agreements/nothing/here") is None  # a page that does not exist is still a 404
