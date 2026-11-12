@@ -613,3 +613,4 @@ select[hidden] { display: none !important; }
 /* Header: the name chip and Log out are one size */
 .nav-links .chip, .nav-links .btn { display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; padding: 0 var(--space-3); font-size: var(--text-xs); line-height: 1; }
 .nav-links .chip .party-icon { vertical-align: middle; }
+.home-art .mark { fill: var(--ink-1); fill-opacity: 0.3; }

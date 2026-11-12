@@ -1,7 +1,7 @@
 {# Drawn hills along the bottom of the window. Decoration only. #}
 <svg class="home-art" viewBox="0 0 760 180" preserveAspectRatio="none" aria-hidden="true"></svg>
 <script>
-  // Hills, drawn anew on every load. Decoration only.
+  // Hills with a few thin marks, drawn anew on every load. Decoration only.
   (function () {
     var svg = document.querySelector(".home-art"), W = 760, H = 180, NS = "http://www.w3.org/2000/svg";
     function add(tag, attrs) { var el = document.createElementNS(NS, tag); for (var k in attrs) el.setAttribute(k, attrs[k]); svg.appendChild(el); }
@@ -13,6 +13,7 @@
       var y = hill(70 + i * 26, 46 - i * 5), d = "";
       for (var x = 0; x <= W; x += 8) d += (x ? " L" : "M") + x + " " + y(x).toFixed(1);
       add("path", { d: d + " L" + W + " " + H + " L0 " + H + " Z", "class": "hill", "fill-opacity": (0.06 + i * 0.07).toFixed(2) });
+      for (var n = 0; n < 2; n++) { var bx = 20 + Math.random() * (W - 40); add("rect", { x: bx, y: y(bx) - 14, width: 1.2, height: 14, "class": "mark" }); }
     }
   })();
 </script>
