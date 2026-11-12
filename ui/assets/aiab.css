@@ -590,9 +590,10 @@ select[hidden] { display: none !important; }
 .party-icon { display: inline-flex; vertical-align: -3px; margin-right: var(--space-2); color: var(--ink-2); cursor: help; }
 
 /* Run page: the result first */
-.result { margin: var(--space-6) 0; }
-.result-title { font-size: var(--text-2xl); font-weight: 600; margin: 0 0 var(--space-3); }
-.result-title.bad { color: var(--destructive); }
+.result { margin: var(--space-5, 20px) 0 var(--space-6); }
+.result .table { font-size: var(--text-sm); }
+.result-title { font-size: var(--text-lg); font-weight: 600; margin: 0 0 var(--space-2); }
+.run-meta { font-size: var(--text-sm); color: var(--ink-2); margin: 0; }
 .result-table td { padding-top: var(--space-2); padding-bottom: var(--space-2); }
 .result-value { font-weight: 600; }
 .result-facts { font-size: var(--text-sm); margin: var(--space-3) 0 0; }

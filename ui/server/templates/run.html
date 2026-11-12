@@ -5,14 +5,12 @@
 {% block content %}
 <p class="crumb"><a href="/runs" class="link">← Runs</a></p>
 <h1>Run <span class="mono" style="font-size: var(--text-xl)">{{ run.id }}</span></h1>
-<p class="lead">Input: <span class="mono">{{ run.transcript }}</span>. Started {{ run.started[:16].replace("T", " ") }} by {{ run.by.user }} ({{ run.by.party }}).
-{% if run.plan and run.plan.digest %}Plan: <a class="link" href="/runs/{{ run.id }}/plan">{{ run.plan.agreement }} · <span class="mono">{{ run.plan.digest[7:19] }}…</span></a>, {% if run.plan.signed %}signed by both parties{% else %}signatures not verified{% if run.plan.problem %} ({{ run.plan.problem }}){% endif %}{% endif %}{% if run.plan.checked == "derived" %} (derived for a run saved before plan versions were recorded){% else %} when the run started{% endif %}.{% else %}Plan version: not recorded for this run.{% endif %}
-{% if run.status == "running" %}Running. This page refreshes itself every few seconds.{% elif run.status == "failed" %}Stopped: a step failed. Nothing after it ran.{% elif run.status == "interrupted" %}Interrupted: the server restarted while this run was going. Start a new one.{% else %}{{ run.outcome.title }}.{% endif %}</p>
+<p class="run-meta">{% if run.plan and run.plan.digest %}<a class="link" href="/runs/{{ run.id }}/plan" title="{{ run.plan.digest }} · {{ 'signed by both parties' if run.plan.signed else 'signatures not verified' }}">{{ run.plan.agreement }} · <span class="mono">{{ run.plan.digest[7:15] }}</span></a>{% if not run.plan.signed %} (signatures not verified){% endif %} · {% else %}plan version not recorded · {% endif %}{{ run.by.user }} ({{ run.by.party }}) · {{ run.started[:16].replace("T", " ") }}{% if run.status == "running" %} · running, this page refreshes itself{% elif run.status == "interrupted" %} · interrupted, start a new one{% endif %}</p>
 
 {% if result is not defined %}{% set result = {"rows": [], "records": none, "seconds": none, "model": none, "image": none} %}{% endif %}
 {% if run.status != "running" %}
 <div class="result">
-  <p class="result-title {{ 'bad' if run.outcome.title == 'Flagged' or run.outcome.execution == 'failed' else '' }}">{{ run.outcome.title }}</p>
+  <p class="result-title">{{ run.outcome.title }}</p>
   {% if result.rows %}
   <table class="table result-table">
     <thead><tr><th>Field</th><th>Value</th><th>Meaning</th></tr></thead>

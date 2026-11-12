@@ -41,7 +41,7 @@ def test_old_verified_failure_is_not_an_all_clear(tmp_path):
     assert "Report verification: passed" in html
     # Saved before runs recorded their plan version, and with no copy on disk.
     assert run["plan"] is None
-    assert "Plan version: not recorded for this run." in html
+    assert "plan version not recorded" in html
 
 
 def test_older_run_takes_its_plan_version_from_the_verify_step(tmp_path):
