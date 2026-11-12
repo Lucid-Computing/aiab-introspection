@@ -48,7 +48,7 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
   return (
     <div className={`insp insp--${node.type}`}>
       <div className="insp-head">
-        <span className="sym">{meta.symbol}</span> {meta.label}
+        <span className={`sym sym--${node.type}`} /> {meta.label}
         <button className="x x--big" title="Close" onClick={() => dispatch({ type: "select", id: null })}>
           ×
         </button>
@@ -101,37 +101,48 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
 
 type Op = (r: { ok: true; plan: Plan } | { ok: false; message: string }, select?: string) => void;
 
-/** One line on what comes into the block (top of the pane) or what goes out (bottom). */
+/** What comes into the block (top of the pane) or what goes out (bottom), as a short list. */
 function IoLine({ plan, node, side }: { plan: Plan; node: PlanNode; side: "in" | "out" }) {
   const { inputs, output } = describeNode(plan, node);
   if (side === "in") {
-    if (node.type === "input_logs") return <p className="insp-io">In: the log source.</p>;
-    if (inputs.length === 0) return <p className="insp-io">In: N/A, not connected to a block yet.</p>;
+    const bound = inputs.filter((i) => i.ref);
     return (
-      <p className="insp-io">
-        In:{" "}
-        {inputs.map((i, k) => (
-          <span key={i.name}>
-            {k > 0 && " · "}
-            {i.ref ? (
-              <>
+      <div className="insp-io">
+        <span className="insp-io-k">Input</span>
+        <ul>
+          {node.type === "input_logs" ? (
+            <li>the log source</li>
+          ) : bound.length === 0 ? (
+            <li>N/A · not connected</li>
+          ) : (
+            bound.map((i) => (
+              <li key={i.name}>
                 <span className="mono">{i.type ?? "?"}</span> from <span className="mono">{i.ref}</span>
-                {i.shape && <> <span className="mono">{i.shape}</span></>}
-              </>
-            ) : (
-              <span className="is-unbound">{i.name}: not connected</span>
-            )}
-          </span>
-        ))}
-      </p>
+                {i.shape && <span className="mono insp-io-shape">{i.shape}</span>}
+              </li>
+            ))
+          )}
+        </ul>
+      </div>
     );
   }
-  if (!output) return <p className="insp-io">Out: nothing.</p>;
   return (
-    <p className="insp-io">
-      Out: <span className="mono">{output.type === "Report" ? "the report" : output.type}</span> <span className="mono">{output.shape}</span>
-      {node.type === "classifier" && ". A report can read count, any and proportion per label"}.
-    </p>
+    <div className="insp-io">
+      <span className="insp-io-k">Output</span>
+      <ul>
+        {output ? (
+          <>
+            <li>
+              <span className="mono">{output.type === "Report" ? "the report" : output.type}</span>
+              <span className="mono insp-io-shape">{output.shape}</span>
+            </li>
+            {node.type === "classifier" && <li>a report can read count, any and proportion per label</li>}
+          </>
+        ) : (
+          <li>nothing</li>
+        )}
+      </ul>
+    </div>
   );
 }
 
@@ -729,7 +740,7 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
           + field
         </button>
       </div>
-      <Field label="Min count" hint="A count smaller than this is released as 0, so one person's session cannot be singled out.">
+      <Field label="Min count" hint="A count below this number is reported as 0. With 5, a label seen in 3 sessions shows 0, so no single session can be picked out.">
         <NumberInput
           value={c.privacy.min_count}
           min={1}

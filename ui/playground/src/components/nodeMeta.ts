@@ -1,30 +1,25 @@
 import { LOG_SOURCES } from "../plan/mockLogs";
 import type { NodeType, PlanNode } from "../plan/types";
 
-/** Each kind has a plain symbol, a name, and one sentence on why the block exists. */
-export const NODE_META: Record<NodeType, { symbol: string; label: string; blurb: string }> = {
+/** Each kind has a name and one sentence on why the block exists; its symbol is `.sym--<type>` in styles.css. */
+export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
   input_logs: {
-    symbol: "■",
     label: "Input filter",
     blurb: "Fixes which logs the box may read before anything runs, so the audit cannot reach beyond what both parties agreed to.",
   },
   classifier: {
-    symbol: "▲",
     label: "Classifier",
     blurb: "Asks the model one fixed question about each item and keeps only a label and a score, so nothing the model writes can leave the box.",
   },
   run_python: {
-    symbol: "◆",
     label: "Code",
     blurb: "Anything plain Python can compute between blocks, in code both parties read and signed; it runs sealed, with no files, network or model.",
   },
   run_llm: {
-    symbol: "◇",
     label: "LLM",
     blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
   },
   final_report: {
-    symbol: "●",
     label: "Report",
     blurb: "Names the few numbers that leave the box and the rules that stop one person's session from being singled out.",
   },

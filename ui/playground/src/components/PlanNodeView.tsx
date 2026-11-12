@@ -66,7 +66,7 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
           />
         ))}
       <div className="pn-kind">
-        <span className="sym">{meta.symbol}</span> {meta.label}
+        <span className={`sym sym--${n.type}`} /> {meta.label}
       </div>
       <div className="pn-title">{n.title || n.id}</div>
       <div className={`pn-line${errors.length ? " is-bad" : todo ? " is-todo" : ""}`}>{note}</div>

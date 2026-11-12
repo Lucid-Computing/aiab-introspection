@@ -106,9 +106,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .insp-head { border-bottom-color: var(--rule-strong) !important; }
 .insp-blurb { color: var(--ink-2); font-size: var(--text-sm); line-height: 1.45; margin: -6px 0 0; }
 /* What comes into the block (top of the pane) and what goes out (bottom). */
-.insp-io { margin: 0; padding: 6px 8px; border: var(--border-hairline); background: var(--paper-2); font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
+.insp-io { padding: 6px 8px; border: var(--border-hairline); background: var(--paper-2); font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
+.insp-io-k { font-weight: 600; color: var(--ink-1); }
+.insp-io ul { margin: 2px 0 0; padding-left: 1.2em; }
 .insp-io .mono { color: var(--ink-1); }
-.insp-io .is-unbound { color: var(--destructive); }
+.insp-io-shape { display: block; color: var(--ink-2) !important; }
 .insp-issues { list-style: none; border: var(--border-strong); }
 .insp-issues li { padding: 4px 8px; font-size: var(--text-xs); border-bottom: var(--border-hairline); }
 .insp-issues li:last-child { border-bottom: none; }
@@ -138,8 +140,11 @@ details.f > summary { cursor: pointer; }
 .x { font-size: 16px; line-height: 1; padding: 0 4px; color: var(--ink-3); }
 .x--big { margin-left: auto; font-size: 26px; padding: 0 6px; }
 /* The block-kind symbol: one plain glyph per kind, on blocks, the rail and the pane. */
-.sym { display: inline-block; width: 1.1em; text-align: center; font-size: 0.85em; color: var(--ink-2); }
-.insp-head .sym { font-size: 0.75em; }
+.sym { display: inline-block; flex: none; width: 10px; height: 10px; margin-right: 6px; background: var(--ink-2); vertical-align: baseline; }
+.sym--classifier { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.sym--run_python { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.sym--run_llm { clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.sym--final_report { clip-path: circle(50%); }
 .x:hover { color: var(--destructive); }
 .add-input { font-family: var(--font-mono); font-size: var(--text-xs); }
 .f .btn--sm { align-self: flex-start; padding: 2px 8px; font-size: 11px; margin-top: 2px; }
