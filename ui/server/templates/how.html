@@ -11,8 +11,8 @@
   <li><span><strong>Only a short report comes out.</strong> The plan fixes what the report may hold, and the box signs it. The logs never leave.</span></li>
   <li><span><strong>Attested.</strong> The box runs in a confidential VM. The chip states which image is running, and anyone can check it.</span></li>
 </ol>
-<svg class="home-art" viewBox="0 0 760 180" preserveAspectRatio="none" aria-hidden="true"></svg>
 </div>
+<svg class="home-art" viewBox="0 0 760 180" preserveAspectRatio="none" aria-hidden="true"></svg>
 <script>
   // Hills and a few blocks, drawn anew on every load. Decoration only.
   (function () {
@@ -25,9 +25,8 @@
     for (var i = 0; i < 5; i++) {
       var y = hill(70 + i * 26, 46 - i * 5), d = "";
       for (var x = 0; x <= W; x += 8) d += (x ? " L" : "M") + x + " " + y(x).toFixed(1);
-      add("path", { d: d + " L" + W + " " + H + " L0 " + H + " Z", "class": "hill-fill" });
-      add("path", { d: d, "class": "hill" });
-      for (var n = 0; n < 2; n++) { var bx = 20 + Math.random() * (W - 40), size = 5 + i; add("rect", { x: bx, y: y(bx) - size, width: size, height: size, "class": "block" }); }
+      add("path", { d: d + " L" + W + " " + H + " L0 " + H + " Z", "class": "hill", "fill-opacity": (0.06 + i * 0.07).toFixed(2) });
+      for (var n = 0; n < 2; n++) { var bx = 20 + Math.random() * (W - 40); add("rect", { x: bx, y: y(bx) - 6, width: 3, height: 6, "class": "block" }); }
     }
   })();
 </script>
