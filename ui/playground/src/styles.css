@@ -62,7 +62,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .newblock-item:focus-visible { outline: 2px solid var(--accent); }
 
 /* ---- blocks: fixed size (layout.ts NODE_W x NODE_H): kind, title, one line ---- */
-.pn { position: relative; box-sizing: border-box; width: 280px; height: 112px; padding: 6px 12px; background: var(--paper-1); border: 1px solid var(--rule-strong); font-size: var(--text-sm); }
+.pn { position: relative; box-sizing: border-box; width: 280px; height: 64px; padding: 7px 12px; background: var(--paper-1); border: 1px solid var(--rule-strong); font-size: var(--text-sm); }
 .pn.is-selected { border-color: var(--ink-1); box-shadow: 3px 3px 0 0 var(--ink-1); }
 .pn.has-error { border-color: var(--destructive); }
 .pn.is-unfinished { border-style: dashed; border-color: var(--ink-3); }
@@ -71,10 +71,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .pn-line { font-size: 12px; line-height: 16px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pn-line.is-todo { color: var(--ink-3); }
 .pn-line.is-bad { color: var(--destructive); }
-/* The data format at the top (what comes in) and the bottom (what goes out) of a block. */
-.pn-io { font-family: var(--font-mono); font-size: 10.5px; line-height: 16px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pn-io--in { border-bottom: 1px dotted var(--rule-strong); margin-bottom: 4px; }
-.pn-io--out { border-top: 1px dotted var(--rule-strong); margin-top: 4px; }
 
 /* The data type of a port in the settings pane, as text. */
 .tbadge { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
@@ -109,6 +105,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .insp-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 17px; padding-bottom: var(--space-2); border-bottom: 1px solid; }
 .insp-head { border-bottom-color: var(--rule-strong) !important; }
 .insp-blurb { color: var(--ink-2); font-size: var(--text-sm); line-height: 1.45; margin: -6px 0 0; }
+/* What comes into the block (top of the pane) and what goes out (bottom). */
+.insp-io { margin: 0; padding: 6px 8px; border: var(--border-hairline); background: var(--paper-2); font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
+.insp-io .mono { color: var(--ink-1); }
+.insp-io .is-unbound { color: var(--destructive); }
 .insp-issues { list-style: none; border: var(--border-strong); }
 .insp-issues li { padding: 4px 8px; font-size: var(--text-xs); border-bottom: var(--border-hairline); }
 .insp-issues li:last-child { border-bottom: none; }

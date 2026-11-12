@@ -54,6 +54,7 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
         </button>
       </div>
       <p className="insp-blurb">{meta.blurb}</p>
+      <IoLine plan={plan} node={node} side="in" />
       {own.length > 0 && (
         <ul className="insp-issues">
           {own.map((i, k) => (
@@ -71,12 +72,6 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
         />
       </Field>
       <InputsEditor plan={plan} node={node} op={op} />
-      {(node.type === "input_logs" || node.type === "classifier") && (
-        <p className="f-hint">
-          Produces {describeNode(plan, node).output?.type}: <span className="mono">{describeNode(plan, node).output?.shape}</span>
-          {node.type === "classifier" && " · a report can read count, any and proportion per label"}
-        </p>
-      )}
 
       {node.type === "input_logs" && <InputLogsForm node={node} set={set} />}
       {node.type === "classifier" && <ClassifierForm node={node} set={set} />}
@@ -84,6 +79,7 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
       {node.type === "run_llm" && <RunLlmForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "final_report" && <ReportForm plan={plan} node={node} set={set} />}
 
+      <IoLine plan={plan} node={node} side="out" />
       <div className="insp-foot">
         <button
           className="linklike danger"
@@ -97,6 +93,40 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
 }
 
 type Op = (r: { ok: true; plan: Plan } | { ok: false; message: string }, select?: string) => void;
+
+/** One line on what comes into the block (top of the pane) or what goes out (bottom). */
+function IoLine({ plan, node, side }: { plan: Plan; node: PlanNode; side: "in" | "out" }) {
+  const { inputs, output } = describeNode(plan, node);
+  if (side === "in") {
+    if (node.type === "input_logs") return <p className="insp-io">In: the log source.</p>;
+    if (inputs.length === 0) return <p className="insp-io">In: <span className="is-unbound">nothing connected yet</span>.</p>;
+    return (
+      <p className="insp-io">
+        In:{" "}
+        {inputs.map((i, k) => (
+          <span key={i.name}>
+            {k > 0 && " · "}
+            {i.ref ? (
+              <>
+                <span className="mono">{i.type ?? "?"}</span> from <span className="mono">{i.ref}</span>
+                {i.shape && <> <span className="mono">{i.shape}</span></>}
+              </>
+            ) : (
+              <span className="is-unbound">{i.name}: not connected</span>
+            )}
+          </span>
+        ))}
+      </p>
+    );
+  }
+  if (!output) return <p className="insp-io">Out: nothing.</p>;
+  return (
+    <p className="insp-io">
+      Out: <span className="mono">{output.type === "Report" ? "the report" : output.type}</span> <span className="mono">{output.shape}</span>
+      {node.type === "classifier" && ". A report can read count, any and proportion per label"}.
+    </p>
+  );
+}
 
 function PlanPanel({
   plan,
