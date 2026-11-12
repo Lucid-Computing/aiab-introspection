@@ -16,6 +16,12 @@ for a classifier, the highest-scoring piece with a flagged label if any piece ha
 the highest-scoring piece; for a free-form step, the pieces' texts joined by line breaks.
 A Value step makes one call over all its inputs and cannot be split.
 
+A Filter (``filter_logs``) keeps the records its rules match (all or any; ``exclude``
+drops them instead), or asks the model one yes/no question per record or per session, as a
+classifier with the labels yes and no would be asked. AND and OR (``combine_logs``) keep the
+records in both inputs, or in either, once each, in the order of the run's records. A record
+node can only hand on records it was given (``check_records`` against its own inputs).
+
 Plan code (``run_python``) runs here too, so this module is loaded into the worker before
 the syscall filter is installed and nothing in it touches the operating system.
 """
@@ -24,11 +30,21 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Callable
+from datetime import datetime
 from functools import partial
 from typing import Any
 
-from aiab.baked.plan_ir import ABSTAIN, PLACEHOLDER, REPORT_INPUT, label_names, split_ref
+from aiab.baked.pattern import compile_pattern
+from aiab.baked.plan_ir import (
+    ABSTAIN,
+    PLACEHOLDER,
+    REPORT_INPUT,
+    as_classifier,
+    label_names,
+    split_ref,
+)
 
 RECORD_KEYS = ("stream", "batch", "offset", "agent_id", "session_id", "ts", "kind", "content")
 Llm = Callable[[str, list[str]], list[dict]]
@@ -68,6 +84,84 @@ def select_records(node: dict, records: list[dict]) -> list[dict]:
             continue
         kept.append(r)
     return kept
+
+
+def patterns(plan: dict) -> dict[tuple[str, int], re.Pattern]:
+    """The compiled regex of every "matches regex" rule, by (node id, rule index). The worker
+    compiles them before the syscall filter goes up, as it does plan code."""
+    out = {}
+    for node in plan["nodes"]:
+        if node["type"] == "filter_logs" and node["config"]["mode"] == "rules":
+            for k, rule in enumerate(node["config"]["rules"]):
+                if rule["field"] == "content" and rule["op"] == "regex":
+                    out[(node["id"], k)] = compile_pattern(
+                        rule["value"], rule.get("case_sensitive", False)
+                    )
+    return out
+
+
+def rule_holds(rule: dict, record: dict, pattern: re.Pattern | None = None) -> bool:
+    """One Filter rule on one record. Text compares in lower case unless the rule is case
+    sensitive; times are compared as instants; a length counts characters (code points)."""
+    field, op, value = rule["field"], rule["op"], rule["value"]
+    if field == "content":
+        text = record["content"]
+        if op == "regex":
+            return pattern.search(text) is not None
+        if not rule.get("case_sensitive", False):
+            text, value = text.lower(), value.lower()
+        if op == "contains":
+            return value in text
+        if op == "not_contains":
+            return value not in text
+        if op == "equals":
+            return text == value
+        if op == "starts_with":
+            return text.startswith(value)
+        return text.endswith(value)
+    if field == "kind":
+        return record["kind"] in value
+    if field in ("agent", "session"):
+        found = record["agent_id" if field == "agent" else "session_id"] in value
+        return found if op == "in" else not found
+    if field == "time":
+        ts = datetime.fromisoformat(record["ts"])
+        if op == "before":
+            return ts < datetime.fromisoformat(value)
+        if op == "after":
+            return ts >= datetime.fromisoformat(value)
+        return datetime.fromisoformat(value[0]) <= ts < datetime.fromisoformat(value[1])
+    size = len(record["content"])
+    return size >= value if op == "at_least" else size <= value
+
+
+def filter_rules(node: dict, records: list[dict], compiled: dict) -> list[dict]:
+    """The records a rules-mode Filter keeps, in their order."""
+    cfg = node["config"]
+    test = all if cfg["match"] == "all" else any
+    rules = [(rule, compiled.get((node["id"], k))) for k, rule in enumerate(cfg["rules"])]
+    return [
+        r for r in records if test(rule_holds(rule, r, p) for rule, p in rules) != cfg["exclude"]
+    ]
+
+
+def filter_llm(node: dict, records: list[dict], llm: Llm, budget: int | None) -> list[dict]:
+    """The records an LLM-mode Filter keeps: one question per record, or per whole session
+    (the answer then keeps or drops all its records). A long item is asked in pieces and
+    kept when any piece is answered yes, as a classifier's flagged label is. Below the
+    threshold the answer is unsure, and ``unsure`` decides."""
+    cfg = node["config"]["llm"]
+    view = as_classifier(node)
+    items = to_items("LogRecords", records, cfg["judge"], None)
+    pieces = [split_to_fit(it["text"], classifier_size, budget) for it in items]
+    answers = [merge_labels(view, a) for a in ask_in_pieces(llm, node["id"], pieces, node)]
+    threshold = cfg.get("threshold")
+    keep: set[str] = set()
+    for it, a in zip(items, answers, strict=True):
+        unsure = threshold is not None and a["score"] < threshold
+        if (cfg["unsure"] == "keep") if unsure else a["label"] == "yes":
+            keep.update(it["record_ids"])
+    return [r for r in records if r["id"] in keep]
 
 
 def item_text(records: list[dict]) -> str:
@@ -306,13 +400,16 @@ def run_plan(
     compiled: dict[str, Any] | None = None,
     progress: Callable[[dict], None] | None = None,
     budgets: dict[str, int] | None = None,
+    regexes: dict[tuple[str, int], re.Pattern] | None = None,
 ) -> dict:
     """Execute the plan and return the report's result. ``compiled`` holds the code objects
     of the run_python steps when the caller compiled them already (the worker does, before
-    the syscall filter goes up); ``progress`` is told which node starts, so a failure can
-    be reported by stage without any detail; ``budgets`` gives each model node's largest
-    user message in bytes (none: nothing is split)."""
+    the syscall filter goes up), and ``regexes`` the Filters' patterns (``patterns``);
+    ``progress`` is told which node starts, so a failure can be reported by stage without
+    any detail; ``budgets`` gives each model node's largest user message in bytes (none:
+    nothing is split)."""
     budgets = budgets or {}
+    regexes = patterns(plan) if regexes is None else regexes
     nodes = {n["id"]: n for n in plan["nodes"]}
     outputs: dict[str, tuple[str, Any]] = {}
     known: dict[str, dict] = {}
@@ -336,6 +433,21 @@ def run_plan(
             kept = select_records(node, with_ids(records))
             known = {r["id"]: r for r in kept}
             outputs[nid] = ("LogRecords", kept)
+        elif kind == "filter_logs":
+            _, _, value, _ = inputs_of(node)[0]
+            if cfg["mode"] == "rules":
+                kept = filter_rules(node, value, regexes)
+            else:
+                kept = filter_llm(node, value, llm, budgets.get(nid))
+            outputs[nid] = ("LogRecords", check_records(node, kept, {r["id"]: r for r in value}))
+        elif kind == "combine_logs":
+            given = {name: value for name, _, value, _ in inputs_of(node)}
+            a, b = ({r["id"] for r in given[p]} for p in ("a", "b"))
+            chosen = a & b if cfg["op"] == "and" else a | b
+            pool = {r["id"]: r for r in given["a"] + given["b"]}
+            rank = {rid: k for k, rid in enumerate(known)}
+            order = sorted(chosen, key=lambda rid: (rank.get(rid, len(rank)), rid))
+            outputs[nid] = ("LogRecords", check_records(node, [pool[i] for i in order], pool))
         elif kind == "classifier":
             _, port_type, value, _src = inputs_of(node)[0]
             items = to_items(port_type, value, cfg["group_by"], cfg["window"])
