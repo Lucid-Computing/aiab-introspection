@@ -7,7 +7,12 @@
 #
 # Nothing secret is in the image. The keys and the addresses come from the environment at
 # run time; see logger/README.md. The proxy's data volume is mounted read-only at
-# /proxy-data; the logger writes nothing, so the container can also run --read-only.
+# /proxy-data, and the logger writes nothing there.
+#
+# The one thing written at run time is the box's attestation check: sigstore keeps its TUF
+# trust root and the Tinfoil SDK its bundles under the XDG cache and data directories,
+# pointed at /tmp below. With --read-only, give it a tmpfs there (--tmpfs /tmp): without
+# one, /v1/export fails with a 502 ("Read-only file system").
 FROM docker.io/astral/uv:0.11.6 AS uv
 
 FROM docker.io/library/python:3.12-slim
@@ -23,6 +28,6 @@ RUN uv sync --locked --no-dev
 COPY logger/logserver /app/logger/logserver
 RUN useradd --uid 10001 --create-home logger
 USER logger
-ENV PATH="/app/logger/.venv/bin:$PATH"
+ENV PATH="/app/logger/.venv/bin:$PATH" XDG_CACHE_HOME=/tmp/cache XDG_DATA_HOME=/tmp/data
 EXPOSE 8080
 CMD ["uvicorn", "--factory", "logserver.app:main", "--host", "0.0.0.0", "--port", "8080"]

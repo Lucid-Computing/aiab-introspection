@@ -110,8 +110,12 @@ The image holds no secret; everything comes from the environment.
 A missing `API_KEY`, `BOX_HOST` or `BOX_REPO` stops the server at start. The image runs as
 uid 10001, which must be able to read the proxy's files.
 
+The container can run with a read-only root if it has a tmpfs at `/tmp`. Checking the box's
+attestation writes sigstore's trust root and the Tinfoil SDK's cache there (the image points
+`XDG_CACHE_HOME` and `XDG_DATA_HOME` at it). Without it, `/v1/export` answers `502`.
+
 ```bash
-docker run -d -p 8080:8080 --read-only \
+docker run -d -p 8080:8080 --read-only --tmpfs /tmp \
   -v proxy-data:/proxy-data:ro \
   -e API_KEY=… \
   -e BOX_HOST=aiab-dev.lucid-computing.containers.tinfoil.dev \
