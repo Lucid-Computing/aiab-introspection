@@ -11,7 +11,7 @@
 {% if view %}<p class="plan-digest">{{ view.digest }}</p>{% endif %}
 {% if error %}<p class="form-message error">{{ error }}</p>{% endif %}
 {% if view %}
-<p class="lead">{% if view.description %}{{ view.description }}{% else %}The plan as a graph: the logs of a run, Python steps, model steps, a classifier and the final report. The box runs exactly this, and releases only the report.{% endif %}</p>
+{% if view.description %}<p class="lead">{{ view.description }}</p>{% endif %}
 {% if view.issue %}<div class="form-message error"><p style="margin: 0">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}).</p>{% if view.issues %}<ul style="margin: var(--space-2) 0 0">{% for i in view.issues[:8] %}<li class="mono">{{ i.message }}</li>{% endfor %}</ul>{% endif %}</div>{% endif %}
 
 {% if snapshot %}
