@@ -18,7 +18,7 @@ import uvicorn
 from server import app as web
 from server import deploystatus
 from server.auth import Account, hash_password, save_account
-from server.config import REPO_ROOT, load_settings
+from server.config import REPO_ROOT, load_settings, log_sources_from_env
 
 FIXTURE = REPO_ROOT / "static/tests/fixtures/graph-plan"
 
@@ -41,7 +41,7 @@ def main():
         logs_dir=root / "logs",
         demo_keys_dir=root / "keys",
         push_drafts=False,
-        proxy_key=None,
+        log_sources=log_sources_from_env({}),
     )
 
     async def no_github(_settings):

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% set active = "runs" %}
 {% block title %}Runs · AIAB agreement{% endblock %}
+{% from "_logsource.html" import selector %}
 {% block content %}
 <h1>Runs</h1>
 
@@ -10,6 +11,7 @@
     <div class="card-body">
       {% if choices %}
       <form method="get" action="/runs" class="row" style="gap: var(--space-3); align-items: center">
+        <input type="hidden" name="logs" value="{{ log_source.id }}">
         <label for="agreement">Signed by both parties:</label>
         <select id="agreement" name="agreement">{% for c in choices %}<option value="{{ c.id }}" {% if c.id == chosen %}selected{% endif %}>{{ c.plan_id }} · {{ c.digest[7:19] }}…</option>{% endfor %}</select>
         <button class="btn btn--ghost btn--sm">Choose</button>
@@ -52,20 +54,23 @@
   <div class="card">
     <div class="card-header">Input</div>
     <div class="card-body">
-      <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"></form>
+      <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"></form>
       <p class="explain">Which recorded sessions go into this run. You choose here; the plan does not filter.{% if scope %} This plan pins an input scope (agents and a time window); the box refuses records outside it.{% endif %}</p>
+      {{ selector(log_sources, log_source, "/runs?agreement=" ~ (chosen | urlencode) ~ "&") }}
       <div class="sources">
         <div class="src">
-          <label class="src-head"><input type="hidden" name="source" value="sessions" form="run-form"><span class="src-title">Recorded sessions</span> <span class="src-sub">from the <a class="link" href="/logs">Logs</a> page, as the proxy recorded them{% if not all_count %} · none on disk yet{% endif %}</span></label>
+          <label class="src-head"><input type="hidden" name="source" value="sessions" form="run-form"><span class="src-title">Recorded sessions</span> <span class="src-sub">from {{ log_source.label }} on the <a class="link" href="/logs?logs={{ log_source.id }}">Logs</a> page, as the proxy recorded them{% if not all_count %} · none on disk yet{% endif %}</span></label>
           {% if all_count %}
           <form method="get" action="/runs" class="window">
             <input type="hidden" name="source" value="sessions">
+            <input type="hidden" name="agreement" value="{{ chosen }}">
+            <input type="hidden" name="logs" value="{{ log_source.id }}">
             <span class="lbl">window</span>
             <input type="datetime-local" name="from" value="{{ win.from }}"> <span class="lbl">to</span> <input type="datetime-local" name="to" value="{{ win.to }}">
             <span class="lbl">sender</span>
             <select name="who"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == win.who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>
             <button class="btn btn--ghost btn--sm">Show</button>
-            {% if win.from or win.to or win.who %}<a class="link" href="/runs?source=sessions">all time</a>{% endif %}
+            {% if win.from or win.to or win.who %}<a class="link" href="/runs?agreement={{ chosen | urlencode }}&logs={{ log_source.id }}">all time</a>{% endif %}
           </form>
           <p class="pick-sum">
             <label class="choice"><input type="checkbox" onchange="for (const c of document.querySelectorAll('.sess input')) c.checked = this.checked"> select all shown</label>
@@ -75,7 +80,7 @@
           <label class="sess{% if item.notes %} sess--refused{% endif %}">
             <input type="checkbox" name="session" value="{{ item.session.id }}" form="run-form" {% if item.session.id in picked %}checked{% endif %}>
             <span><span class="sess-title">{{ item.session.title }}</span>
-              <span class="sess-meta">{{ item.session.who }} · {{ item.session.started_short }} · {{ item.session.requests | length }} req · {{ item.records }} records · {{ item.kb }} KB</span>
+              <span class="sess-meta">{{ item.session.who }} · {{ item.session.started_short }} · {% if log_source.kind != "plant" %}{{ item.session.records | length }} {% if log_source.kind == "github" %}post{% elif log_source.chat %}msg{% else %}req{% endif %} · {% endif %}{{ item.records }} records · {{ item.kb }} KB</span>
               {% for n in item.notes %}<span class="sess-warn">the box would refuse: {{ n }}</span>{% endfor %}</span>
             {% if item.notes %}<span class="tag tag--refused">outside scope</span>{% endif %}
           </label>
@@ -104,12 +109,13 @@
 
   {% if runs %}
   <table class="table">
-    <thead><tr><th>Started</th><th>Agreement and input</th><th>By</th><th>State</th><th></th></tr></thead>
+    <thead><tr><th>Started</th><th>Agreement and input</th><th>Plan version</th><th>By</th><th>State</th><th></th></tr></thead>
     <tbody>
     {% for r in runs %}
     <tr>
       <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
       <td class="mono">{{ r.transcript }}</td>
+      <td>{% if r.plan and r.plan.digest %}<a class="link mono" href="/runs/{{ r.id }}/plan">{{ r.plan.digest[7:19] }}…</a><br><span class="text-muted">{{ "signed by both" if r.plan.signed else "signatures not verified" }}</span>{% else %}<span class="text-muted">not recorded</span>{% endif %}</td>
       <td>{{ r.by.user }} <span class="badge {% if r.by.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ r.by.party }}</span></td>
       <td>{{ r.outcome.title }}{% if r.outcome.verified %}<br><span class="text-muted">Report verified</span>{% endif %}</td>
       <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>

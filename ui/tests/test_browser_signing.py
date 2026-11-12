@@ -5,24 +5,34 @@ its pure part under Node's WebCrypto, which is the same API, and verifies the re
 the static part's own verifier, the one the box and the plan check use. Skipped without
 Node 22 (Ed25519 in WebCrypto)."""
 
+import base64
 import json
 import shutil
 import subprocess
 
 import pytest
-from aiab.audit.protocol import AuditError, verify_signature
+from aiab.audit.protocol import AuditError, canonical, verify_signature
+from aiab.baked.bundle import certified_key, make_certificate
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from server.config import REPO_ROOT
 
 SIGN_JS = REPO_ROOT / "ui/assets/sign.js"
 DIGEST = "sha256:" + "ab" * 32
+ROOT = Ed25519PrivateKey.generate()
+ROOT_KEY = base64.b64encode(ROOT.public_key().public_bytes_raw()).decode()
+OTHER_KEY = base64.b64encode(Ed25519PrivateKey.generate().public_key().public_bytes_raw()).decode()
 
 PROBE = """
 require(process.argv[1]);
 const S = globalThis.AiabSigning;
 (async () => {
-  const digest = process.argv[2];
+  const digest = process.argv[2], rootKey = process.argv[3], certificateText = process.argv[4];
   const pair = await S.generate();
+  const certificate = S.parseCertificate(certificateText);
+  const padded = JSON.parse(certificateText); padded.signature = "\\n" + padded.signature + "\\n";
+  const reparsed = S.parseCertificate(JSON.stringify(padded));
+  const forged = Object.assign({}, certificate, { signing_key: rootKey });  // names another key
   const backup = await S.encryptBackup(pair.pkcs8, "pw", pair.publicKey, "lab");
   const restored = await S.decryptBackup(backup, "pw");
   let wrongRefused = false;
@@ -36,7 +46,38 @@ const S = globalThis.AiabSigning;
     wrong_password_refused: wrongRefused,
     backup_format: backup.format,
     message: Buffer.from(S.messageBytes(digest)).toString("latin1"),
+    certificate_message: Buffer.from(S.certificateMessageBytes(certificate)).toString("latin1"),
+    certificate_text: S.certificateText(certificate),
+    padded_text_is_valid_json: (() => {
+      try { JSON.parse(S.certificateText(reparsed)); return true; } catch { return false; }
+    })(),
+    padded_text_equal: S.certificateText(reparsed) === S.certificateText(certificate),
+    certificate_verifies: await S.verifyCertificate(certificate, rootKey),
+    forged_certificate_refused: !(await S.verifyCertificate(forged, rootKey)),
+    other_root_refused: !(await S.verifyCertificate(certificate, process.argv[5])),
   };
+  // Set up signing: a root and an approved signing key, the root only in the key file.
+  const setup = await S.setUp("auditor", "pw");
+  const fromFile = await S.fromKeyFile(setup.keyFile, "pw", "auditor");
+  const legacyPair = await S.generate();
+  const legacyKey = await S.importPrivate(legacyPair.pkcs8);
+  const legacy = await S.fromStoredKey(
+    { privateKey: legacyKey, publicKey: legacyPair.publicKey }, "auditor");
+  const entries = { setup: setup.entry, from_file: fromFile, legacy: legacy };
+  out.flows = {};
+  for (const [name, entry] of Object.entries(entries)) {
+    out.flows[name] = {
+      root: entry.rootPublicKey,
+      signing_key: entry.publicKey,
+      certificate: S.certificateText(entry.certificate),
+      signature: await S.sign(entry.privateKey, digest),
+      private_key_extractable: entry.privateKey.extractable,
+      keys: Object.keys(entry).sort(),
+    };
+  }
+  out.legacy_root = legacyPair.publicKey;
+  out.key_file_root = await S.publicKeyOf(await S.decryptBackup(setup.keyFile, "pw"));
+  out.key_file_format = setup.keyFile.format;
   console.log(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -47,8 +88,21 @@ def probe():
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
+    certificate = make_certificate(ROOT, "lab", OTHER_KEY)  # certifies some signing key
     result = subprocess.run(
-        [node, "-e", PROBE, str(SIGN_JS), DIGEST], capture_output=True, text=True, timeout=60
+        [
+            node,
+            "-e",
+            PROBE,
+            str(SIGN_JS),
+            DIGEST,
+            ROOT_KEY,
+            canonical(certificate).decode(),
+            OTHER_KEY,  # a key that is not the root, for other_root_refused
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
         pytest.skip(f"node cannot run sign.js here: {result.stderr.strip()[-300:]}")
@@ -71,3 +125,96 @@ def test_the_backup_round_trips_and_refuses_a_wrong_password(probe):
     assert probe["backup_format"] == "aiab-signing-key/v1"
     assert probe["public_key_of_backup"] == probe["public_key"]
     assert probe["wrong_password_refused"] is True
+
+
+def test_the_browser_checks_a_certificate_the_way_the_box_does(probe):
+    """The root's signature over {"role", "signing_key"}: verified in the page with the
+    root from the trust file, and the text sent to the server is the canonical form."""
+    assert probe["certificate_verifies"] is True
+    assert probe["forged_certificate_refused"] is True  # another signing key named
+    assert probe["other_root_refused"] is True  # checked against a key that is not the root
+    assert probe["certificate_message"] == (
+        'AIAB/signing-key/v1\x00{"role":"lab","signing_key":"' + OTHER_KEY + '"}'
+    )
+    certificate = make_certificate(ROOT, "lab", OTHER_KEY)
+    assert probe["certificate_text"] == canonical(certificate).decode()
+    # Whitespace around a pasted signature is dropped, and the text sent stays valid JSON.
+    assert probe["padded_text_is_valid_json"] and probe["padded_text_equal"]
+
+
+def test_set_up_signing_makes_a_root_and_a_signing_key_the_box_accepts(probe):
+    """Each way the page gets a signing key (set up, the key file in another browser, a
+    key from before root keys) yields a certificate the box's own checker accepts against
+    that root, and a plan signature from the certified key. The root is never kept: the
+    stored entry holds the signing key, non-extractable, and the root's public key only."""
+    flows = probe["flows"]
+    assert flows["setup"]["root"] == flows["from_file"]["root"] == probe["key_file_root"]
+    assert flows["legacy"]["root"] == probe["legacy_root"]
+    assert flows["setup"]["signing_key"] != flows["from_file"]["signing_key"]  # fresh per browser
+    assert probe["key_file_format"] == "aiab-signing-key/v1"  # old key files still open
+    for flow in flows.values():
+        assert flow["keys"] == ["certificate", "made", "privateKey", "publicKey", "rootPublicKey"]
+        assert flow["private_key_extractable"] is False
+        assert flow["signing_key"] != flow["root"]
+        trust = {"auditor_key": flow["root"], "lab_key": ROOT_KEY}
+        certificate = json.loads(flow["certificate"])
+        assert certified_key(certificate, "auditor", trust) == flow["signing_key"]
+        verify_signature(
+            flow["signing_key"], flow["signature"], "plan-bundle", {"plan_digest": DIGEST}
+        )
+
+
+ENROLL_PROBE = """
+require(process.argv[1]);
+const S = globalThis.AiabSigning;
+(async () => {
+  const digest = process.argv[2];
+  const root = await S.generate(), stranger = await S.generate();
+  const rootKey = await S.importPrivate(root.pkcs8);
+  const strangerKey = await S.importPrivate(stranger.pkcs8);
+  // The server's side, stubbed: certify whatever public key arrives with the given root.
+  const issuer = (key, swap) => async (body) => {
+    const sent = swap ? (await S.generate()).publicKey : body.signing_key;
+    return { certificate: await S.certify(key, body.party, sent) };
+  };
+  const entry = await S.enroll("auditor", root.publicKey, issuer(rootKey));
+  const refused = async (post) => {
+    try { await S.enroll("auditor", root.publicKey, post); return false; } catch { return true; }
+  };
+  console.log(JSON.stringify({
+    root: root.publicKey,
+    signing_key: entry.publicKey,
+    certificate: S.certificateText(entry.certificate),
+    signature: await S.sign(entry.privateKey, digest),
+    private_key_extractable: entry.privateKey.extractable,
+    root_public_key: entry.rootPublicKey,
+    issued: entry.issued,
+    second_key_differs:
+      (await S.enroll("auditor", root.publicKey, issuer(rootKey))).publicKey !== entry.publicKey,
+    other_root_refused: await refused(issuer(strangerKey)),
+    swapped_key_refused: await refused(issuer(rootKey, true)),
+    error_reply_refused: await refused(async () => ({ error: "no" })),
+  }));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+def test_a_browser_key_certified_by_the_server_is_one_the_box_accepts():
+    """First Sign with a server that holds the root: the page makes a non-extractable key,
+    sends the public half, and keeps it only if the certificate comes from the trusted root
+    and names that key. The box's own checker accepts the result."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    result = subprocess.run(
+        [node, "-e", ENROLL_PROBE, str(SIGN_JS), DIGEST], capture_output=True, text=True, timeout=60
+    )
+    if result.returncode != 0:
+        pytest.skip(f"node cannot run sign.js here: {result.stderr.strip()[-300:]}")
+    out = json.loads(result.stdout)
+    assert out["private_key_extractable"] is False and out["issued"] is True
+    assert out["root_public_key"] == out["root"] and out["second_key_differs"]
+    assert out["other_root_refused"] and out["swapped_key_refused"] and out["error_reply_refused"]
+    trust = {"auditor_key": out["root"], "lab_key": ROOT_KEY}
+    assert certified_key(json.loads(out["certificate"]), "auditor", trust) == out["signing_key"]
+    verify_signature(out["signing_key"], out["signature"], "plan-bundle", {"plan_digest": DIGEST})

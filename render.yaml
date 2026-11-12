@@ -30,13 +30,23 @@ services:
         generateValue: true
       - key: GITHUB_TOKEN       # fine-grained token or bot token: contents read/write, pull requests read/write
         sync: false
-      - key: UI_BOOTSTRAP_ACCOUNTS   # first boot only, e.g. "teddy:lab:<password>,caleb:auditor:<password>"
+      - key: UI_BOOTSTRAP_ACCOUNTS   # local password accounts, "lab@lab.com:lab:<password>,..."; new names added on every start, existing ones untouched
+        sync: false
+      - key: AIAB_LAB_KEY       # optional: a lab signing key (base64 raw Ed25519); with its certificate below, the server signs every plan version as the lab
+        sync: false
+      - key: AIAB_LAB_CERTIFICATE  # optional: the certificate the lab root made for AIAB_LAB_KEY (one JSON line, sign_digest.py certify)
+        sync: false
+      - key: AIAB_AUDITOR_ROOT_KEY  # optional, prototype: the auditor root's private key (base64 raw Ed25519); the server certifies each auditor's browser key on their first Sign
         sync: false
       - key: LAB_TOKEN          # optional, for the Runs screen: the lab's API token for the box
         sync: false
       - key: LOGGER_KEY         # optional, for the Runs screen: the demo logger's private key (base64)
         sync: false
-      - key: AIAB_LOG_KEY       # optional, for the Logs screen: production's log reader key (LOG_READER_KEY in 1Password); wins over AIAB_PROXY_KEY
+      - key: AIAB_LOG_KEY       # optional, for the Logs screen: production's log reader key (LOG_READER_KEY in 1Password); Prod Agent Logs
         sync: false
-      - key: AIAB_PROXY_KEY     # optional, for the Logs screen: the test proxy's shared key ("tester:<key>" or the key alone)
+      - key: AIAB_PROXY_KEY     # optional, for the Logs screen: the test proxy's shared key ("tester:<key>" or the key alone); Dev Agent Logs
+        sync: false
+      - key: AIAB_SLACK_EXPORT_KEY  # optional, for the Logs screen: opens the committed Slack export bundle (slack-export-bundle in 1Password); Slack Logs
+        sync: false
+      - key: AIAB_GITHUB_EXPORT_KEY  # optional, for the Logs screen: opens the committed GitHub export bundle (github-export-bundle in 1Password); GitHub Logs
         sync: false

@@ -1,0 +1,15 @@
+{# The Logs page's detail pane for a Slack session: the thread (or the channel's day) whole,
+   one row per message, the chosen one (?req=) marked. Included by logs.html with current, req, keep. #}
+<h2 class="logs-h">{{ current.title }}</h2>
+<p class="logs-sub">#{{ current.records[0].channel }} · {{ current.records | length }} message{% if current.records | length != 1 %}s{% endif %} · started {{ current.started_short }} by {{ current.who }} · session {{ current.id }}</p>
+<div class="msgs msgs--chat">
+  {% for m in current.records %}
+  <div class="msg msg--chat {% if m.id == req.id %}on{% endif %}" id="m-{{ m.ts }}">
+    <div class="msg-role">{{ m.who }}<span class="msg-role-sub"><a class="msg-time" href="/logs?session={{ current.id | urlencode }}&req={{ m.id | urlencode }}{{ keep }}#m-{{ m.ts }}">{{ m.when_short }}</a>{% if m.replies %} · {{ m.replies }} repl{% if m.replies == 1 %}y{% else %}ies{% endif %}{% endif %}</span></div>
+    <div class="msg-body">
+      {% if m.text %}{{ block({"kind": "text", "label": "", "text": m.text}, "chat") }}{% else %}<p class="text-muted msg-empty">(no text)</p>{% endif %}
+      {% for n in m.notes %}<p class="msg-note">{{ n }}</p>{% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>

@@ -1,0 +1,15 @@
+# Build context filter for logger/Dockerfile (BuildKit). Only the logger and the part of
+# the static part it imports enter the image.
+**
+!logger/
+logger/.venv
+logger/tests
+!static/
+static/**
+!static/pyproject.toml
+!static/uv.lock
+!static/README.md
+!static/aiab/
+**/__pycache__
+**/*.pyc
+**/*.pyo

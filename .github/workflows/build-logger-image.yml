@@ -1,0 +1,69 @@
+# The logger's side of AIAB (logger/): the server that runs next to the logging proxy,
+# gives the agreement UI log metadata and seals the chosen records to the box. Every push
+# to dev that touches what logger/Dockerfile copies builds ghcr.io/lucid-computing/aiab-logger,
+# tagged with the commit and the branch name. Nothing is deployed from here: the proxy's
+# operator pulls the image. It carries the box's sealing code (static/aiab), so it is built
+# from the same branch as the box it seals to.
+name: Build logger image
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'logger/**'
+      - 'static/pyproject.toml'
+      - 'static/uv.lock'
+      - 'static/README.md'
+      - 'static/aiab/**'
+      - '.github/workflows/build-logger-image.yml'
+  workflow_dispatch:
+concurrency:
+  group: logger-image-${{ github.ref_name }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+  packages: write
+env:
+  IMAGE: ghcr.io/lucid-computing/aiab-logger
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.6"
+      - name: Tests and lint
+        working-directory: logger
+        run: |
+          uv run --locked python -m pytest -q
+          uv run --locked ruff check .
+          uv run --locked ruff format --check .
+  image:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        id: build
+        with:
+          context: .
+          file: logger/Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }},${{ env.IMAGE }}:${{ github.ref_name }}
+          # Links the package to this repository, so this workflow's token may push to it.
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - name: The image
+        run: echo "$IMAGE@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

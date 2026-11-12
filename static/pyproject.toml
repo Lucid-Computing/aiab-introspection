@@ -15,6 +15,9 @@ dependencies = [
     "cryptography>=44,<47",
     # Attested transport to the box and to the model; never plain REST.
     "tinfoil==0.14.0",
+    # HPKE (RFC 9180): records sealed by the logger open only inside the box. Already a
+    # dependency of tinfoil (via tinfoil-ehbp); pinned here because the box relies on it.
+    "pyhpke==0.6.5",
     "jsonschema>=4.23,<5",
     "rfc8785==0.1.4",
 ]

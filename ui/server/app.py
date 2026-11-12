@@ -8,6 +8,7 @@ import re
 import secrets
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -19,11 +20,21 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
-from server import deploystatus, editing, plan_chat, proxylogs, publish, runs
+from server import (
+    deploystatus,
+    editing,
+    githubexport,
+    plan_chat,
+    plantlogs,
+    proxylogs,
+    publish,
+    runs,
+    slackexport,
+)
 from server import plan_view as pv
 from server.auth import LoginError, OidcLogin, SessionSigner, Stamp, authenticate, pkce_pair
 from server.box import box_status
-from server.config import UI_ROOT, Settings, load_settings
+from server.config import UI_ROOT, LogSource, Settings, load_settings
 from server.plan_view import PARTIES
 
 settings = load_settings()
@@ -56,7 +67,19 @@ async def lifespan(_: FastAPI):
         print(f"warning: could not archive old agreements: {exc}")
     if oidc is None:
         print("warning: OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET unset; password login only")
-    proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of the proxy fresh
+    try:
+        moved = proxylogs.adopt_legacy_layout(settings)  # test segments now live in dev/
+        if moved:
+            print(f"moved {len(moved)} test proxy file(s) into the Dev Agent Logs folder")
+    except OSError as exc:
+        print(f"warning: could not move the test proxy's segments into dev/: {exc}")
+    opened = slackexport.unpack_at_start(settings)  # the committed bundle, into logs/slack
+    if opened:
+        print(f"opened the Slack export bundle: {len(opened)} channel file(s)")
+    opened = githubexport.unpack_at_start(settings)  # the same, into logs/github
+    if opened:
+        print(f"opened the GitHub export bundle: {len(opened)} repository file(s)")
+    proxylogs.start_prefetch(settings)  # keeps the Logs page's copy of every proxy fresh
     asyncio.ensure_future(deploystatus.warm_up(settings))  # first Agreements load is fast too
     refresher = asyncio.ensure_future(deploystatus.refresh_loop())  # GitHub answers stay warm
     if settings.auto_pull:
@@ -212,6 +235,12 @@ def render(request: Request, template: str, **context: Any) -> Response:
     context.setdefault("msg", request.query_params.get("msg"))
     context.setdefault("err", request.query_params.get("err"))
     context.setdefault("key_wait", _key_wait() if user_of(request) else None)
+    # Sign buttons get the browser's key certified first when the server holds the party's
+    # root (prototype).
+    who = user_of(request)
+    context.setdefault(
+        "server_certifies", bool(who) and pv.server_certifies(settings, who["party"])
+    )
     context.update(
         user=user_of(request),
         settings=settings,
@@ -429,15 +458,23 @@ async def playground(request: Request, path: str = "") -> Response:
     return FileResponse(target)
 
 
+def _log_source(request: Request, form: Any = None) -> LogSource:
+    """The log source a page works on, from its ``logs`` query parameter (or form field):
+    ``prod`` for Prod Agent Logs, ``dev`` for Dev Agent Logs, the default."""
+    wanted = (form or request.query_params).get("logs")
+    return settings.log_source(str(wanted) if wanted else None)
+
+
 @app.get("/logs")
 async def logs_page(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
+    source = _log_source(request)
     q = request.query_params.get("q", "").strip()
     who = request.query_params.get("who", "").strip()
     wanted = request.query_params.get("session", "")
     wanted_req = request.query_params.get("req", "")
-    records = proxylogs.load_index(settings)
+    records = proxylogs.load_index(settings, source)
     all_sessions = proxylogs.sessions(records)
     whos = sorted({s.who for s in all_sessions})
     matched = [s for s in all_sessions if not who or s.who == who]
@@ -455,13 +492,21 @@ async def logs_page(request: Request) -> Response:
     )
     req = None
     if current:
-        req = proxylogs.load_full(
-            settings,
-            next((r for r in current.requests if r.id == wanted_req), None) or current.requests[-1],
+        picked = (
+            next((r for r in current.records if r.id == wanted_req), None) or (current.records[-1])
+        )
+        # A proxied call is shown by its metadata only; its text is never read back here.
+        # Slack and GitHub posts are public, and shown whole.
+        req = (
+            picked
+            if isinstance(picked, proxylogs.Request)
+            else proxylogs.load_full(settings, source, picked)
         )
     return render(
         request,
         "logs.html",
+        source=source,
+        sources=settings.log_sources,
         shown=shown,
         current=current,
         req=req,
@@ -473,20 +518,22 @@ async def logs_page(request: Request) -> Response:
         recent=LOGS_RECENT,
         matched=len(matched),
         total_requests=len(records),
-        fetch=proxylogs.status(),
+        fetch=proxylogs.status(source),
+        plant=(
+            plantlogs.timeline(source.path(settings), current.records)
+            if current and source.kind == "plant"
+            else None
+        ),
     )
 
 
 @app.get("/logs/earlier/{rid}")
 async def logs_earlier(request: Request, rid: str) -> Response:
-    """The messages the Logs page folds away for one call, rendered when it unfolds them."""
+    """Gone: a proxied call's messages are never served by this server (MAC-377). Kept so an
+    old page's fetch gets a clear answer, not a route error."""
     if user_of(request) is None:
         return Response("not signed in", status_code=401)
-    light = next((r for r in proxylogs.load_index(settings) if r.id == rid), None)
-    if light is None:
-        return Response("no such request", status_code=404)
-    full = proxylogs.load_full(settings, light)
-    return render(request, "logs_earlier.html", messages=full.messages[:-LOGS_RECENT])
+    return Response("the text of a call is not served; it is for the box", status_code=404)
 
 
 @app.get("/logs/raw/{rid}")
@@ -494,8 +541,11 @@ async def logs_raw(request: Request, rid: str) -> Response:
     """The recorded request as the proxy stored it, with the JSON bodies unpacked."""
     if user_of(request) is None:
         return to_login(request)
-    light = next((r for r in proxylogs.load_index(settings) if r.id == rid), None)
-    entry = proxylogs.raw_entry(settings, light) if light else None
+    source = _log_source(request)
+    light = next((r for r in proxylogs.load_index(settings, source) if r.id == rid), None)
+    if isinstance(light, proxylogs.Request):  # a proxied call's text is for the box only
+        return Response("the text of a call is not served; it is for the box", status_code=404)
+    entry = proxylogs.raw_entry(settings, source, light) if light else None
     if entry is None:
         return Response("no such request", status_code=404)
     shown = dict(entry)
@@ -512,14 +562,18 @@ async def logs_raw(request: Request, rid: str) -> Response:
 async def logs_sync(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
+    source = _log_source(request, await request.form())
+    here = f"/logs?logs={source.id}"
+    if not source.fetches:
+        return back(here, err=f"{source.label} are not fetched by this server.")
     try:
-        result = proxylogs.sync_now(settings)
+        result = proxylogs.sync_now(settings, source)
     except proxylogs.ProxyError as exc:
-        return back("/logs", err=str(exc))
+        return back(here, err=str(exc))
     return back(
-        "/logs",
-        msg=f"Fetched {result['new']} new segment(s); {result['segments']} on disk, "
-        f"{result['live_entries']} live request(s) not sealed yet.",
+        here,
+        msg=f"{source.label}: fetched {result['new']} new segment(s); {result['segments']} on "
+        f"disk, {result['live_entries']} live request(s) not sealed yet.",
     )
 
 
@@ -762,18 +816,19 @@ async def runs_index(request: Request) -> Response:
         pre["ok"] = False
     win = {"from": qp.get("from", ""), "to": qp.get("to", ""), "who": qp.get("who", "")}
     lo, hi = _local_ts(win["from"]), _local_ts(win["to"])
-    all_sessions = proxylogs.sessions(proxylogs.load_index(settings))
+    source = _log_source(request)
+    all_sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
     whos = sorted({s.who for s in all_sessions})
     sessions = []
     for s in all_sessions:
-        times = [r.time for r in s.requests]
+        times = [r.time for r in s.records]
         if (
             (win["who"] and s.who != win["who"])
             or (lo and max(times) < lo)
             or (hi and min(times) > hi)
         ):
             continue
-        recs = proxylogs.to_box_records(s.requests)
+        recs = proxylogs.box_records(s.records)
         sessions.append(
             {
                 "session": s,
@@ -793,6 +848,8 @@ async def runs_index(request: Request) -> Response:
         pre=pre,
         choices=choices,
         chosen=chosen,
+        log_source=source,
+        log_sources=settings.log_sources,
         sessions=sessions,
         all_count=len(all_sessions),
         whos=whos,
@@ -828,21 +885,32 @@ async def runs_start(request: Request) -> Response:
     pre = await _run_preflight(target.plan_dir)
     if not pre["ok"]:
         return back(here, err="Cannot start: " + "; ".join(pre["missing"]))
+    source = _log_source(request, form)  # session ids are only unique within one source
+    here += f"&logs={source.id}"
     try:
         chosen_sessions = set(form.getlist("session"))
         picked = [
-            s for s in proxylogs.sessions(proxylogs.load_index(settings)) if s.id in chosen_sessions
+            s
+            for s in proxylogs.sessions(proxylogs.load_index(settings, source))
+            if s.id in chosen_sessions
         ]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
-        records = proxylogs.to_box_records([r for s in picked for r in s.requests])
+        records = proxylogs.box_records([r for s in picked for r in s.records])
         if not records:
             return back(here, err="The chosen sessions hold no text to audit.")
-        label = f"{chosen} · {len(picked)} recorded session(s), {len(records)} records"
+        label = (
+            f"{chosen} · {len(picked)} recorded session(s) from {source.label}, "
+            f"{len(records)} records"
+        )
         run_id = runs.start_run(settings, user, chosen, target.plan_dir, records, label=label)
     except (ValueError, OSError) as exc:
         return back(here, err=str(exc))
-    pv.record_change(target, user, "run", "run", f"run {run_id} started ({len(records)} records)")
+    sent = (runs.load_run(settings, run_id) or {}).get("plan") or {}
+    version = f", version {sent['digest'][7:19]}" if sent.get("digest") else ""
+    pv.record_change(
+        target, user, "run", "run", f"run {run_id} started ({len(records)} records{version})"
+    )
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
 
@@ -854,6 +922,30 @@ async def run_page(request: Request, run_id: str) -> Response:
     if state is None:
         return back("/runs", err="No such run.")
     return render(request, "run.html", run=state)
+
+
+@app.get("/runs/{run_id}/plan")
+async def run_plan(request: Request, run_id: str) -> Response:
+    """The plan version a run sent, read only: the frozen copy in the run folder, not the
+    agreement as it is now."""
+    if user_of(request) is None:
+        return to_login(request)
+    state = runs.load_run(settings, run_id)
+    if state is None:
+        return back("/runs", err="No such run.")
+    view, error = load_view(replace(settings, plan_dir=settings.runs_dir / run_id / "plan"))
+    return render(
+        request,
+        "plan.html",
+        editor=None,
+        view=view,
+        error=error,
+        edit=False,
+        base=f"/a/{state['agreement']}",
+        aid=state["agreement"],
+        changes={},
+        snapshot=state,
+    )
 
 
 @app.get("/attest")
@@ -1139,6 +1231,30 @@ async def plan_bundle(request: Request, aid: str) -> Response:
     )
 
 
+def _sign_next(aid: str, next_path: str) -> str:
+    """Where a signature action returns to: the page the Sign button was on, if it names
+    one on this site, else the Sign screen."""
+    if next_path.startswith("/") and not next_path.startswith("//"):
+        return next_path
+    return f"/a/{aid}/sign"
+
+
+# What the Sign button found missing in the browser before it sent someone here.
+SIGN_WHY = {
+    "unsupported": "This browser cannot sign: it cannot make Ed25519 keys (needs Safari 17, "
+    "Firefox 130 or Chrome 137, or newer). Use the commands under Other ways to sign and paste "
+    "the signature below.",
+    "none": "Signing is not set up in this browser yet. Set it up below, once. After that, "
+    "Sign on the plan signs straight away.",
+    "waiting": "The box does not trust your key yet. Submit it below if you have not; Sign "
+    "works once the release is done.",
+    "old": "This browser has your key from before root keys. Continue with it below, then "
+    "Sign on the plan signs straight away.",
+    "stale": "This browser's key is not one the box trusts. Set up signing again below, or "
+    "use your key file.",
+}
+
+
 @app.get("/a/{aid}/sign")
 async def sign(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid, write=True)
@@ -1160,7 +1276,11 @@ async def sign(request: Request, aid: str) -> Response:
         keys=keys,
         copy=copy,
         auto_sign=bool(settings.lab_signing_key),
-        auto_problem=pv.lab_auto_problem(settings),
+        issuer_parties=[p for p in PARTIES if pv.server_certifies(settings, p)],
+        server_problems={
+            p: pv.server_problem(settings, p) or pv.issuer_problem(settings, p) for p in PARTIES
+        },
+        why=SIGN_WHY.get(request.query_params.get("why", "")),
     )
 
 
@@ -1170,8 +1290,11 @@ async def sign_upload(
     aid: str,
     party: Annotated[str, Form()],
     signature: Annotated[str, Form()] = "",
+    certificate: Annotated[str, Form()] = "",
+    next: Annotated[str, Form()] = "",
 ) -> Response:
-    # The default keeps an empty paste from being a 422; the browser sends "" for an empty box.
+    # The defaults keep an empty paste from being a 422; the browser sends "" for an empty box.
+    # `next` is the page the Sign button was on; a problem always shows on the Sign screen.
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
@@ -1181,17 +1304,42 @@ async def sign_upload(
         return back(here, err="Paste only your own party's signature.")
     if not signature.strip():
         return back(here, err="Paste the line the sign command printed first.")
-    status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user)
+    status, detail = pv.write_signature(target, party, signature.encode("utf-8"), user, certificate)
     if status != "ok":
         return back(here, err=f"Signature not accepted: {detail}")
     editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
     saved(user)
-    return back(here, msg=f"{party} signature verified and stored.")
+    return back(_sign_next(aid, next), msg=f"{party} signature verified and stored.")
+
+
+@app.post("/sign/certificate")
+async def sign_certificate(request: Request) -> Response:
+    """Certify the public key a logged-in member's browser just made, with the party root
+    this server holds (prototype: AIAB_AUDITOR_ROOT_KEY). JSON in and out; a form post from
+    another site cannot reach it (SameSite cookies, and a cross-site JSON post needs CORS)."""
+    user = user_of(request)
+    if user is None:
+        return JSONResponse({"error": "Log in first."}, status_code=401)
+    if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+        return JSONResponse({"error": "Send JSON."}, status_code=415)
+    try:
+        body = await request.json()
+        party, signing_key = str(body["party"]), str(body["signing_key"])
+    except (ValueError, KeyError, TypeError):
+        return JSONResponse({"error": "Send party and signing_key."}, status_code=422)
+    if party != user["party"]:
+        return JSONResponse({"error": "Only your own party's key can be certified."}, 403)
+    status, result = pv.issue_certificate(settings, party, signing_key, user)
+    if status != "ok":
+        return JSONResponse({"error": result}, status_code=409)
+    return JSONResponse({"certificate": result})
 
 
 @app.post("/a/{aid}/sign/remove")
-async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()]) -> Response:
-    """Re-sign: remove your own signature for this version, then the paste form comes back."""
+async def sign_remove(
+    request: Request, aid: str, party: Annotated[str, Form()], next: Annotated[str, Form()] = ""
+) -> Response:
+    """Re-sign: remove your own signature for this version; the Sign button comes back."""
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
@@ -1202,7 +1350,7 @@ async def sign_remove(request: Request, aid: str, party: Annotated[str, Form()])
     if not pv.remove_signature(target, party, user):
         return back(here, err="There is no signature of yours to remove.")
     saved(user)
-    return back(here, msg="Your signature is removed. Sign this version again below.")
+    return back(_sign_next(aid, next), msg="Your signature is removed. Sign this version again.")
 
 
 @app.post("/a/{aid}/sign/key")
@@ -1218,24 +1366,31 @@ async def set_key(
     user = user_of(request)
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
-        return back(here, err="You can only replace your own party's public key.")
+        return back(here, err="You can only replace your own party's root key.")
+    if pv.server_signs(settings, party) or pv.server_certifies(settings, party):
+        held = pv.SERVER_KEY_ENV.get(party) or (pv.ROOT_KEY_ENV[party],)
+        return back(
+            here,
+            err=f"This server signs for the {party} under the current root; a new root would "
+            f"stop that. Unset {' and '.join(held)} first.",
+        )
     public_key, problem = pv.normalize_public_key(public_key)
     if problem or public_key is None:
         return back(here, err=problem or "that is not an Ed25519 public key")
     if pv.load_trust(settings).get(f"{party}_key") == public_key:
-        return back(here, msg=f"Production already trusts this {party} key. Nothing to submit.")
+        return back(here, msg=f"Production already trusts this {party} root. Nothing to submit.")
     pushed = publish.push_key_change(
         settings.git_dir, party, public_key, user, base=settings.deploy_base
     )
     if pushed.error:
         return back(here, err=f"The {party} key was not submitted: {pushed.error}")
-    pv.record_change(target, user, "key", f"public key: {party}", f"submitted {public_key}")
+    pv.record_change(target, user, "key", f"root key: {party}", f"submitted {public_key}")
     where = pushed.pr_url or pushed.compare_url or f"branch {pushed.branch}"
     _remember_key(party, public_key, user, pushed.pr_url)  # every page blocks until the box has it
     return back(
         here,
-        msg=f"The {party} key is submitted ({where}). The check merges it within a minute and"
-        " the box is released with it; every page waits until the box trusts it.",
+        msg=f"The {party} root key is submitted ({where}). The check merges it within a minute"
+        " and the box is released with it; every page waits until the box trusts it.",
     )
 
 

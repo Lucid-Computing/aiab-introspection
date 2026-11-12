@@ -7,6 +7,7 @@ from aiab.audit.protocol import (
     DATE,
     DIGEST,
     ID,
+    KEY,
     AuditError,
     canonical,
     closed,
@@ -16,18 +17,20 @@ from aiab.audit.protocol import (
 )
 from aiab.baked.bundle import KINDS, SCOPE, SIGNED_BUNDLE
 
-RECORD = closed(
-    {
-        "stream": ID,
-        "batch": {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
-        "offset": {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
-        "agent_id": ID,
-        "session_id": ID,
-        "ts": DATE,
-        "kind": {"enum": KINDS},
-        "content": {"type": "string", "maxLength": 1000000},
-    }
-)
+PLAIN = {
+    "stream": ID,
+    "batch": {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
+    "offset": {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
+    "agent_id": ID,
+    "session_id": ID,
+    "ts": DATE,
+    "kind": {"enum": KINDS},
+    "content": {"type": "string", "maxLength": 1000000},
+}
+# A sealed record (aiab.baked.sealing) carries the box boot its key belongs to and the HPKE
+# encapsulated key; its content is then the base64 ciphertext. Everything else stays in the
+# clear: the box checks it against the scope before decrypting, the UI picks records by it.
+RECORD = closed({**PLAIN, "boot_id": ID, "enc": KEY}, required=list(PLAIN))
 SUBMISSION = closed(
     {
         "submission_id": ID,
@@ -86,6 +89,18 @@ def scope_of(records):
     }
 
 
+def check_size(records, cfg):
+    """The plan's input limits. Run on the records as signed and again on the unsealed ones:
+    the ciphertext is larger than the text, but the text is what the plan sees."""
+    if (
+        len(records) > cfg["limits"]["max_records_per_run"]
+        or len(canonical(records)) > cfg["limits"]["max_input_utf8_bytes"]
+    ):
+        raise AuditError("input_too_large", 413)
+    for record in records:
+        validate(record, RECORD, "invalid_records")
+
+
 def verify(submission, cfg, logger_key):
     records, scope, evidence = (
         submission[k] for k in ("records", "input_scope", "logger_evidence")
@@ -126,11 +141,7 @@ def verify(submission, cfg, logger_key):
         if position in positions:
             raise AuditError("invalid_logger_evidence")
         positions.add(position)
-    if (
-        len(records) > cfg["limits"]["max_records_per_run"]
-        or len(canonical(records)) > cfg["limits"]["max_input_utf8_bytes"]
-    ):
-        raise AuditError("input_too_large", 413)
+    check_size(records, cfg)
     return digest(
         {
             "serialization": "aiab-records/v1",

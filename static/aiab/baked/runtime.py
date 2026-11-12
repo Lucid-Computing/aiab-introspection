@@ -22,7 +22,7 @@ from aiab.audit.protocol import (
     verify_signature,
 )
 from aiab.audit.report import ERRORS, ReportSigner
-from aiab.baked import records
+from aiab.baked import records, sealing
 from aiab.baked.bundle import restrictions, submitted_bundle
 from aiab.baked.executor import execute
 from aiab.baked.output import capacity, check_result
@@ -59,6 +59,7 @@ class Runtime:
     def __init__(self, trust, model, aiab_id="aiab-baked-audit"):
         self.trust, self.model, self.aiab_id = trust, model, aiab_id
         self.signer = ReportSigner()
+        self.decryptor = sealing.RecordDecryptor()
         self.boot_id = uuid.uuid4().hex
         self.manifest = {
             "schema": "aiab-baked-manifest/v1",
@@ -68,11 +69,12 @@ class Runtime:
             "model_binding": trust["model"],
             "parties": {k: trust[k] for k in ("lab_key", "auditor_key", "logger_key")},
             "report_schema": "aiab-report/v3",
-            "plan_submission": "signed-bundle-per-run/v1",
+            "plan_submission": "signed-bundle-per-run/v2",  # with each party's certificate
             "max_active_runs": 4,
             "max_retained_runs": 128,
             "retention": "in-memory-per-boot",
             "logger_evidence": "aiab-record-export/v1",
+            "record_encryption": sealing.SCHEME,
             "logger_integration": "synthetic-export-contract-not-native-WORM",
         }
         self.policy_digest = digest(self.manifest)
@@ -90,6 +92,7 @@ class Runtime:
     def identity(self):
         return {
             "public_key": self.signer.public_key,
+            "encryption_key": self.decryptor.public_key,
             "boot_id": self.boot_id,
             "policy_digest": self.policy_digest,
         }
@@ -98,6 +101,10 @@ class Runtime:
         validate(submission, records.SUBMISSION, "invalid_submission")
         bundle = self.plan(submission)
         commitment = records.verify(submission, bundle.config, self.trust["logger_key"])
+        # The logger's signature and the scope were checked on the records as sent; only now
+        # does the content become readable, inside the box, for this run.
+        input_records = self.decryptor.unseal(submission["records"], self.boot_id)
+        records.check_size(input_records, bundle.config)
         fingerprint = digest({"plan_digest": bundle.digest, "input_commitment": commitment})
         key = (principal, submission["submission_id"])
         if key in self.submissions:
@@ -111,9 +118,7 @@ class Runtime:
             raise AuditError("capacity_exceeded", 429)
         run = Run(uuid.uuid4().hex, fingerprint, bundle.digest)
         self.runs[run.run_id] = self.submissions[key] = run
-        run.task = asyncio.create_task(
-            self._execute(run, bundle, submission["records"], commitment)
-        )
+        run.task = asyncio.create_task(self._execute(run, bundle, input_records, commitment))
         run.task.add_done_callback(lambda _: setattr(run, "task", None))
         return run
 

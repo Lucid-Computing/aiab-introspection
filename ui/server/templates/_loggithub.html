@@ -1,0 +1,17 @@
+{# The Logs page's detail pane for a GitHub session: the issue or pull request thread (or a
+   repository's commits on one day) whole, one row per post, the chosen one (?req=) marked.
+   Included by logs.html with current, req, keep. #}
+{% set first = current.records[0] %}
+<h2 class="logs-h">{{ current.title }}</h2>
+<p class="logs-sub">{{ first.repo }}{% if first.number is not none %}#{{ first.number }}{% endif %} · {{ current.records | length }} post{% if current.records | length != 1 %}s{% endif %} · started {{ current.started_short }} by {{ current.who }}{% if first.url %} · <a class="link" href="{{ first.url }}" rel="noopener" target="_blank">on GitHub</a>{% endif %}</p>
+<div class="msgs msgs--chat">
+  {% for m in current.records %}
+  <div class="msg msg--chat {% if m.id == req.id %}on{% endif %}" id="m-{{ m.anchor }}">
+    <div class="msg-role">{{ m.who }}<span class="msg-role-sub">{{ m.action }} · <a class="msg-time" href="/logs?session={{ current.id | urlencode }}&req={{ m.id | urlencode }}{{ keep }}#m-{{ m.anchor }}">{{ m.when_short }}</a></span></div>
+    <div class="msg-body">
+      {% if m.text %}{{ block({"kind": "text", "label": "", "text": m.text}, "chat") }}{% else %}<p class="text-muted msg-empty">(no text)</p>{% endif %}
+      {% for n in m.notes %}<p class="msg-note">{{ n }}</p>{% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
