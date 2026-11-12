@@ -33,7 +33,8 @@ class LogSource:
     key: str | None  # a proxy: nothing is fetched without one; Slack, GitHub: opens the bundle
     key_env: str  # the environment variable the key or folder comes from, for messages
     folder: str  # under settings.logs_dir, unless ``root`` names the folder outright
-    kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack", "github": an export
+    kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack", "github": an export;
+    # "plant": the RSI plant's exports (server.plantlogs)
     root: Path | None = None  # a folder kept elsewhere (the Slack export, a static copy)
 
     def path(self, settings: Settings) -> Path:
@@ -227,11 +228,14 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
     AIAB_SLACK_EXPORT names, or, without one, opened from the committed bundle with
     AIAB_SLACK_EXPORT_KEY into AIAB_LOGS_DIR/slack at start (server.slackexport). GitHub
     Logs, the organisation's public repositories, works the same way with AIAB_GITHUB_EXPORT
-    and AIAB_GITHUB_EXPORT_KEY (server.githubexport)."""
+    and AIAB_GITHUB_EXPORT_KEY (server.githubexport). Plant Logs, the RSI plant's exports,
+    is read in place from the folder AIAB_PLANT_EXPORT names (server.plantlogs), never
+    from git."""
     slack = env.get("AIAB_SLACK_EXPORT", "").strip()
     slack_key = env.get("AIAB_SLACK_EXPORT_KEY", "").strip() or None
     github = env.get("AIAB_GITHUB_EXPORT", "").strip()
     github_key = env.get("AIAB_GITHUB_EXPORT_KEY", "").strip() or None
+    plant = env.get("AIAB_PLANT_EXPORT", "").strip()
     return (
         LogSource(
             id="prod",
@@ -272,6 +276,17 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
             folder="github",
             kind="github",
             root=Path(github).resolve() if github else None,
+        ),
+        LogSource(
+            id="plant",
+            label="Plant Logs",
+            url="",
+            header="",
+            key=None,
+            key_env="AIAB_PLANT_EXPORT",
+            folder="plant",
+            kind="plant",
+            root=Path(plant).resolve() if plant else None,
         ),
     )
 

@@ -49,9 +49,10 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from server import githublogs, slacklogs
+from server import githublogs, plantlogs, slacklogs
 from server.config import LogSource, Settings
 from server.githublogs import GitHubPost
+from server.plantlogs import PlantRecord
 from server.slacklogs import SlackMessage
 
 SESSION_GAP_SECONDS = 30 * 60  # records from one person this close together form one session
@@ -318,7 +319,7 @@ class Request:
         return f"{self.size / 1024:.1f} KB"
 
 
-Record = Request | SlackMessage | GitHubPost  # proxied calls, Slack messages or GitHub posts
+Record = Request | SlackMessage | GitHubPost | PlantRecord  # calls, posts or plant records
 
 
 @dataclass
@@ -332,9 +333,11 @@ class Session:
         """A proxied session is titled by who, when and how many calls, never by what was
         said: the text is for the box, not for this server's lists (MAC-377). A Slack or
         GitHub session, public to begin with, is titled by its first post."""
+        n = len(self.records)
         if isinstance(self.records[0], Request):
-            n = len(self.records)
             return f"{self.who} · {self.started_short} · {n} call{'s' if n != 1 else ''}"
+        if isinstance(self.records[0], PlantRecord):
+            return f"{self.who} · {self.started_short} · {n} record{'s' if n != 1 else ''}"
         for r in self.records:
             if r.title_text:
                 return _one_line(r.title_text, 80)
@@ -357,6 +360,8 @@ def _paths(settings: Settings, source: LogSource) -> list[Path]:
     out = source.path(settings)
     if not out.is_dir():
         return []
+    if source.kind == "plant":
+        return plantlogs.record_files(out)
     if source.chat:
         return sorted(p for p in out.glob("*.jsonl") if p.is_file())
     return [p for p in sorted(out.glob("*.jsonl.zst")) + [out / "live.jsonl"] if p.is_file()]
@@ -403,6 +408,10 @@ def load_index(settings: Settings, source: LogSource) -> list[Record]:
             messages = slacklogs.load_index(paths)
             index.update(stamp=stamp, requests=messages, by_line={})
             return messages
+        if source.kind == "plant":
+            records = plantlogs.load_index(source.path(settings), paths)
+            index.update(stamp=stamp, requests=records, by_line={})
+            return records
         if source.kind == "github":
             posts = githublogs.load_index(paths)
             index.update(stamp=stamp, requests=posts, by_line={})
@@ -579,6 +588,14 @@ def call_parts(r: Request) -> list[tuple[str, str]]:
             name = b["label"].removeprefix("tool call: ")
             parts.append(("tool_call", f"{name} {b['text']}"))
     return [(kind, _cut(body, CONTENT_LIMITS[kind])) for kind, body in parts if body.strip()]
+
+
+def box_records(records: list[Record]) -> list[dict]:
+    """What a run sends for these records: a plant's records as the plant wrote them (their
+    batch set per file, see ``plantlogs``), anything else through ``to_box_records``."""
+    if records and all(isinstance(r, PlantRecord) for r in records):
+        return [r.box for r in sorted(records, key=lambda r: (r.box["batch"], r.box["offset"]))]
+    return to_box_records(records)
 
 
 def to_box_records(records: list[Record]) -> list[dict]:

@@ -204,7 +204,7 @@ def test_each_source_has_its_own_index_and_sync_state(tmp_path, monkeypatch):
 
 def test_settings_default_to_dev_and_both_sources_can_be_configured(tmp_path):
     settings = _settings(tmp_path, prod_key="p", dev_key="tester:t,other:o")
-    assert [s.id for s in settings.log_sources] == ["prod", "dev", "slack", "github"]
+    assert [s.id for s in settings.log_sources] == ["prod", "dev", "slack", "github", "plant"]
     assert settings.log_source(None).id == "dev" and settings.log_source("nope").id == "dev"
     assert settings.log_source("prod").key == "p" and settings.log_source("dev").key == "t"
     assert settings.log_source("prod").header == "x-log-key"
@@ -400,6 +400,138 @@ def test_runs_page_lists_slack_sessions_as_messages(tmp_path, monkeypatch):
     page = _client(monkeypatch, settings).get("/runs?logs=slack").text
     assert "deploy is red" in page and "2 msg · 2 records" in page and " req · " not in page
     assert "from Slack Logs" in page and 'name="logs" value="slack"' in page
+
+
+# ---- Plant Logs -------------------------------------------------------------------------
+
+
+def _plant_export(folder):
+    """Made-up plant export: session s1 split over two runs, session s2 in a third. Every
+    file starts at batch 0, as the plant writes them."""
+
+    def records(run, session, stamps, kinds):
+        (folder / run / "records").mkdir(parents=True)
+        rows = [
+            {
+                "stream": "proxy",
+                "batch": 0,
+                "offset": i,
+                "agent_id": "agt-1",
+                "session_id": session,
+                "ts": ts,
+                "kind": kind,
+                "content": f"secret {run} {i}",
+            }
+            for i, (ts, kind) in enumerate(zip(stamps, kinds, strict=True))
+        ]
+        (folder / run / "records" / f"{session}.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in rows)
+        )
+
+    records(
+        "s/1-first",
+        "s1",
+        ["2026-01-01T10:00:00Z", "2026-01-01T10:10:00Z"],
+        ["request", "tool_call"],
+    )
+    records(
+        "s/2-resumed",
+        "s1",
+        ["2026-01-05T09:00:00Z", "2026-01-05T09:30:00Z"],
+        ["tool_result", "response"],
+    )
+    records("other", "s2", ["2026-01-03T00:00:00Z"], ["request"])
+    (folder / "s/2-resumed/jobs.csv").write_text(
+        "job,state,node,gpus_given,submitted_utc,started_utc,ended_utc,processes,gpu_devices_opened,outlived\n"
+        "7,COMPLETED,gpu-01,1,2026-01-05T09:05:00Z,2026-01-05T09:05:00Z,2026-01-05T09:20:00Z,x,3,0\n"
+    )
+    (folder / "s/2-resumed/network.csv").write_text(
+        "start_utc,from,to,port,proto,service,seconds,bytes_sent,bytes_received,state\n"
+        "2026-01-05T09:10:00.5Z,a,b,443,tcp,ssl,1.0,1000,2000,SF\n"
+        "2026-01-06T00:00:00Z,a,b,443,tcp,ssl,1.0,9,9,SF\n"  # after the run: not drawn
+    )
+
+
+def _plant_settings(tmp_path):
+    from dataclasses import replace
+
+    from server.config import load_settings, log_sources_from_env
+
+    env = {"AIAB_PROXY_KEY": "k", "AIAB_PLANT_EXPORT": str(tmp_path / "plant-export")}
+    return replace(load_settings(), logs_dir=tmp_path, log_sources=log_sources_from_env(env))
+
+
+def test_plant_export_is_sent_as_written_with_a_batch_per_file(tmp_path):
+    from server import plantlogs
+
+    settings = _plant_settings(tmp_path)
+    plant = settings.log_source("plant")
+    assert plant.configured and not plant.fetches and not plant.chat
+    assert not _settings(tmp_path).log_source("plant").configured  # no folder named
+    _plant_export(plant.path(settings))
+    sessions = P.sessions(P.load_index(settings, plant))
+    assert [s.id for s in sessions] == ["s1", "s2"]  # the split session is one
+    s1 = sessions[0]
+    assert s1.title.startswith("agt-1 · ") and s1.title.endswith("· 4 records")
+    assert "secret" not in s1.title
+
+    sent = P.box_records([r for s in sessions for r in s.records])
+    positions = {(r["stream"], r["batch"], r["offset"]) for r in sent}
+    assert len(positions) == len(sent) == 5  # each file its own batch, oldest first
+    assert [(r["batch"], r["offset"]) for r in sent if r["session_id"] == "s1"] == [
+        (0, 0),
+        (0, 1),
+        (2, 0),
+        (2, 1),
+    ]
+    keys = ("stream", "batch", "offset", "agent_id", "session_id", "ts", "kind", "content")
+    assert all(tuple(r) == keys for r in sent)
+    assert sent[0]["content"] == "secret s/1-first 0" and sent[0]["kind"] == "request"
+    assert [r["run"] for r in plantlogs.runs(plant.path(settings))] == [
+        "s/1-first",
+        "other",
+        "s/2-resumed",
+    ]
+
+    first, resumed = plantlogs.timeline(plant.path(settings), s1.records)
+    assert (first["run"], first["batch"], resumed["batch"]) == ("s/1-first", 0, 2)
+    lanes = {lane["name"]: lane for lane in resumed["lanes"]}
+    assert [lane["name"] for lane in resumed["lanes"]] == list(plantlogs.LANES)
+    assert lanes["Slurm jobs"]["count"] == "1" and lanes["GPU use"]["count"] == "1"
+    assert lanes["Model calls"]["count"] == "1" and lanes["Network"]["count"] == "0.0 MB"
+    assert len(lanes["Network"]["marks"]) == 1  # the row after the run is left out
+    job = lanes["Slurm jobs"]["marks"][0]
+    assert job == {"left": 16.667, "width": 50.0}
+    assert {lane["name"]: lane["count"] for lane in first["lanes"]}["Tool calls"] == "1"
+
+
+def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):
+    from server import runs
+
+    settings = _plant_settings(tmp_path)
+    _plant_export(settings.log_source("plant").path(settings))
+    client = _client(monkeypatch, settings)
+    page = client.get("/logs?logs=plant&session=s1").text
+    assert "Plant Logs · 5 records on disk" in page and "a static copy" in page
+    detail = page.split('class="logs-detail"')[1]
+    assert "s/1-first · 2026-01-01 10:00:00 to 2026-01-01 10:10:00 UTC" in detail
+    assert detail.count('class="plant-run"') == 2 and "Slurm jobs" in detail
+    assert "secret" not in page
+    page = client.get("/runs?logs=plant").text
+    assert "4 records" in page and " req · " not in page and "secret" not in page
+
+    # An agreement pinning the plant's agent and window covers both halves.
+    plan = tmp_path / "plan"
+    plan.mkdir()
+    scope = {
+        "agents": ["agt-1"],
+        "window_start": "2026-01-01T00:00:00+00:00",
+        "window_end": "2026-01-06T00:00:00+00:00",
+    }
+    monkeypatch.setattr(runs, "plan_scope", lambda folder: scope)
+    s1 = P.sessions(P.load_index(settings, settings.log_source("plant")))[0]
+    times = [r.time for r in s1.records]
+    assert runs.scope_notes(plan, s1.who, min(times), max(times)) == []
 
 
 # ---- the Slack export bundle ------------------------------------------------------------
