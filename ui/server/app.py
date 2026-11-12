@@ -746,7 +746,13 @@ async def copy_pull(request: Request) -> Response:
 async def new_agreement_form(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
-    return render(request, "new_agreement.html", form={}, taken=pv.taken_names(settings))
+    return render(
+        request,
+        "new_agreement.html",
+        form={},
+        taken=pv.taken_names(settings),
+        agreements=[r["id"] for r in pv.list_agreements(settings)],
+    )
 
 
 @app.post("/agreements/new")
@@ -760,6 +766,7 @@ async def new_agreement(request: Request) -> Response:
             "new_agreement.html",
             form=form,
             taken=pv.taken_names(settings),
+            agreements=[r["id"] for r in pv.list_agreements(settings)],
             err="AI creation is unavailable on this server. Create a draft manually instead.",
         )
     errors, created = pv.new_agreement(settings, form, user_of(request) or {})
@@ -769,6 +776,7 @@ async def new_agreement(request: Request) -> Response:
             "new_agreement.html",
             form=form,
             taken=pv.taken_names(settings),
+            agreements=[r["id"] for r in pv.list_agreements(settings)],
             err="; ".join(errors),
         )
     saved(user_of(request))

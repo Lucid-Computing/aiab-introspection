@@ -289,3 +289,32 @@ def test_in_edit_mode_sign_goes_to_the_sign_screen_because_the_builder_saves_in_
     plan = client.get("/a/bio/plan?edit=1").text
     assert "quick-sign" not in plan and 'href="/a/bio/sign">Sign</a>' in plan
     ui.editing.clear("bio")
+
+
+def test_a_new_agreement_can_copy_another_plan(client, tmp_path):
+    """ "Copy from" takes the plan only: the nodes as they were, a new name, no auditor
+    signature and a history that starts with the copy."""
+    bio = json.loads((tmp_path / "agreements/bio/plan.json").read_text())
+    page = client.get("/agreements/new").text
+    assert 'name="copy_from"' in page and '<option value="bio"' in page
+    response = client.post(
+        "/agreements/new",
+        data={
+            "plan_id": "bio-copy",
+            "problem": "same question",
+            "source": "copy",
+            "copy_from": "bio",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text[-300:]
+    copy = json.loads((tmp_path / "agreements/bio-copy/plan.json").read_text())
+    assert copy["nodes"] == bio["nodes"] and copy["plan_id"] == "bio-copy"
+    assert copy["description"] == "same question"
+    assert not (tmp_path / "agreements/bio-copy/signatures/auditor.sig").exists()
+    assert "copied from bio" in (tmp_path / "agreements/bio-copy/history.jsonl").read_text()
+    refused = client.post(
+        "/agreements/new",
+        data={"plan_id": "x2", "problem": "q", "source": "copy", "copy_from": "nope"},
+    )
+    assert "copy from: pick an existing agreement" in refused.text
