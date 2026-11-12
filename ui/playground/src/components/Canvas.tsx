@@ -68,10 +68,12 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
     [derived.edges, selectedEdges],
   );
 
+  // Refit on request, and when the settings pane opens or closes: it halves the diagram.
+  const paneOpen = Boolean(selected);
   useEffect(() => {
-    const t = setTimeout(() => flow.fitView({ padding: 0.15, duration: 200, maxZoom: 1 }), 30);
+    const t = setTimeout(() => flow.fitView({ padding: 0.15, duration: 200, maxZoom: 1 }), 60);
     return () => clearTimeout(t);
-  }, [state.fitSeq, flow]);
+  }, [state.fitSeq, paneOpen, flow]);
 
   // Selection is ours, and it happens on a click only (onNodeClick): pressing a block to
   // drag it must not open its settings. React Flow's own select changes are dropped.
