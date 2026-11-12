@@ -131,13 +131,14 @@ def test_builder_endpoints_follow_login_lease_frozen_and_version(draft, monkeypa
     editing.clear("builder-test")
 
 
-def test_plan_page_embeds_the_builder_and_lists_the_steps(draft, monkeypatch):
+def test_plan_page_embeds_the_builder_and_the_history(draft, monkeypatch):
     web, client = client_for(monkeypatch, draft)
     page = client.get("/a/builder-test/plan")
     assert page.status_code == 200
     assert "/audit-plan-playground/?agreement=builder-test&amp;readonly=1" in page.text
     assert "Does the agent leak secrets?" in page.text
-    assert "Classifier" in page.text and "releases 2 fields" in page.text
+    assert "The steps, in the order the box runs them" not in page.text  # the builder shows them
+    assert "Changes · who did what" in page.text  # the history sits above the builder
     editing_page = client.get("/a/builder-test/plan?edit=1")
     assert '/audit-plan-playground/?agreement=builder-test"' in editing_page.text
     editing.clear("builder-test")

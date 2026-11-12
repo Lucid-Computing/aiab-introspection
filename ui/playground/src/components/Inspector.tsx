@@ -71,6 +71,12 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
         />
       </Field>
       <InputsEditor plan={plan} node={node} op={op} />
+      {(node.type === "input_logs" || node.type === "classifier") && (
+        <p className="f-hint">
+          Produces {describeNode(plan, node).output?.type}: <span className="mono">{describeNode(plan, node).output?.shape}</span>
+          {node.type === "classifier" && " · a report can read count, any and proportion per label"}
+        </p>
+      )}
 
       {node.type === "input_logs" && <InputLogsForm node={node} set={set} />}
       {node.type === "classifier" && <ClassifierForm node={node} set={set} />}

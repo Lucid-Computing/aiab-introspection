@@ -5,7 +5,7 @@ import type { Layout, Plan, PlanNode } from "./types";
 
 /** Every block has the same size (styles.css .pn): ports sit on the edges, not in rows. */
 export const NODE_W = 280;
-export const NODE_H = 64;
+export const NODE_H = 112;
 
 export function nodeHeight(_n: PlanNode): number {
   return NODE_H;

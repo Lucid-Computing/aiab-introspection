@@ -42,26 +42,6 @@
 <p class="plan-state{% if view.signed_by_both %} ok{% endif %}">{% for party in parties %}{% set s = view.signatures[party] %}{% if s.status == 'ok' %}Signed by the {{ party }}{% if s.auto %} (by the server){% endif %}{% elif s.status == 'missing' %}Waiting for the {{ party }}{% else %}The {{ party }} signed an older version{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}.</p>
 {% endif %}
 
-{# The "Build your plan with AI" chat (plan_chat.html) is hidden for now; the builder is the editor. #}
-
-{% if not snapshot %}<iframe class="builder" id="builder" title="Plan builder" src="/audit-plan-playground/?agreement={{ aid }}{% if not edit %}&amp;readonly=1{% endif %}"></iframe>{% endif %}
-
-<div class="stack" style="margin-top: var(--space-6)">
-<details class="info" {% if snapshot %}open{% endif %}>
-  <summary>The steps, in the order the box runs them</summary>
-  <div class="info-body">
-  {% if view.nodes %}
-  <table class="table nodes-table">
-    <thead><tr><th>Step</th><th>Kind</th><th>Reads</th><th>Produces</th></tr></thead>
-    <tbody>
-    {% for n in view.nodes %}
-    <tr><td><strong>{{ n.title }}</strong><br><span class="mono text-muted">{{ n.id }}</span></td><td>{{ n.label }}</td><td>{% for i in n.inputs %}<span class="mono">{{ i }}</span>{% if not loop.last %}<br>{% endif %}{% else %}<span class="text-muted">the run's records</span>{% endfor %}</td><td class="mono">{{ n.output }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="text-muted">plan.json does not hold a plan the UI can summarise.</p>{% endif %}
-  </div>
-</details>
 {% if not snapshot %}<details class="info" {% if changes.open %}open{% endif %}>
   <summary>Changes · who did what{% if view.history %} <span class="text-muted">({{ view.history | length }})</span>{% endif %}</summary>
   <div class="info-body">
@@ -99,6 +79,12 @@
   {% else %}<p class="text-muted">No changes recorded yet. Saves made through this UI are listed here with the party that made them.</p>{% endif %}
   </div>
 </details>{% endif %}
+
+{# The "Build your plan with AI" chat (plan_chat.html) is hidden for now; the builder is the editor. #}
+
+{% if not snapshot %}<iframe class="builder" id="builder" title="Plan builder" src="/audit-plan-playground/?agreement={{ aid }}{% if not edit %}&amp;readonly=1{% endif %}"></iframe>{% endif %}
+
+<div class="stack" style="margin-top: var(--space-6)">
 <details class="info">
   <summary>What is in the version, and the box's limits</summary>
   <div class="info-body">
