@@ -289,7 +289,8 @@ def test_slack_export_is_a_source_of_messages_grouped_by_thread_and_day(tmp_path
     sessions = {s.id: s for s in P.sessions(index)}
     assert set(sessions) == {"#eng · 1700000000.1", "#eng · 2023-11-14", "#eng · 2023-11-15"}
     thread = sessions["#eng · 1700000000.1"]
-    assert thread.title == "deploy is red" and [m.who for m in thread.records] == ["Ada", "Bob"]
+    assert thread.title.startswith("#eng · ") and thread.title.endswith(" · 2 messages")
+    assert "deploy" not in thread.title and [m.who for m in thread.records] == ["Ada", "Bob"]
     assert thread.model == "" and thread.started_short == "Nov 14, 10:13 PM"
     assert P.load_full(settings, slack, thread.records[-1]) is thread.records[-1]  # whole already
     assert P.raw_entry(settings, slack, thread.records[-1]) is None
@@ -391,9 +392,10 @@ def test_logs_page_selector_switches_source_and_keeps_it_in_every_link(tmp_path,
     slack = client.get("/logs?logs=slack&session=%23eng+%C2%B7+1700000000.1")
     assert "/logs?session=#" not in slack.text
     detail = slack.text.split('class="logs-detail"')[1]
-    assert "deploy is red" in detail and "looking" in detail and "lunch?" not in detail
-    assert "#eng · 2 messages" in detail and "1 reply" in detail
-    assert 'class="msg-role">Ada' in detail and 'class="msg-role">Bob' in detail
+    # Metadata only: who, when and how long, never what was said.
+    assert "deploy is red" not in detail and "looking" not in detail and "lunch?" not in detail
+    assert "2 messages" in detail and "<td>Ada</td>" in detail and "<td>Bob</td>" in detail
+    assert "13 characters" in detail and "reply" in detail
     for proxy_only in ("· ? ·", "· 200", "raw JSON", "System prompt", "this reply", "KB"):
         assert proxy_only not in detail, proxy_only
     assert client.get("/logs/raw/eng:1700000000.1?logs=slack").status_code == 404
@@ -726,14 +728,15 @@ def test_github_export_is_a_source_of_posts_grouped_by_thread_and_commit_day(tmp
     sessions = {s.id: s for s in P.sessions(index)}
     assert set(sessions) == {"aiab#7", "aiab · commits · 2026-11-01", "aiab · commits · 2026-11-02"}
     thread = sessions["aiab#7"]
-    assert thread.title == "Add GitHub Logs" and [m.who for m in thread.records] == [
+    assert thread.title == "aiab#7 · 3 posts" and [m.who for m in thread.records] == [
         "ada",
         "bob",
         "bob",
     ]
     assert thread.records[0].action == "opened pull request #7"
     commits = sessions["aiab · commits · 2026-11-01"]
-    assert commits.title == "Fix the index" and commits.records[0].action == "committed abc1234"
+    assert commits.title == "aiab · commits · 2026-11-01 · 1 post"
+    assert commits.records[0].action == "committed abc1234"
     assert P.load_full(settings, gh, thread.records[0]) is thread.records[0]
     assert P.raw_entry(settings, gh, thread.records[0]) is None
     records = P.to_box_records(thread.records)
@@ -754,9 +757,10 @@ def test_logs_and_runs_pages_show_github_threads_as_posts(tmp_path, monkeypatch)
     assert "<td>3 post</td>" in listing
     page = client.get("/logs?logs=github&session=aiab%237").text
     detail = page.split('class="logs-detail"')[1]
-    assert "A new source." in detail and "looks fine" in detail and "Next day" not in detail
-    assert "aiab#7 · 3 posts" in detail and "opened pull request #7" in detail
-    assert "review: approved" in detail and 'href="https://github.com/x/aiab/pull/7"' in detail
+    # Metadata only: who, when, the kind of post and its length, never the text.
+    assert "A new source." not in detail and "looks fine" not in detail
+    assert "Add GitHub Logs" not in detail and "aiab#7 · 3 posts" in detail
+    assert "<td>ada</td>" in detail and "characters" in detail
     for proxy_only in ("raw JSON", "System prompt", "this reply"):
         assert proxy_only not in detail, proxy_only
     assert client.get("/logs/raw/aiab:pull:1?logs=github").status_code == 404

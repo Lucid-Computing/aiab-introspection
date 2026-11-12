@@ -135,6 +135,8 @@ h1 .badge { vertical-align: middle; margin-left: var(--space-2); }
 
 /* ---- iteration 4: two-item nav, per-agreement actions, read-only step pages ---- */
 .actions { white-space: nowrap; }
+/* Row actions are one width, so Sign and Signed (and their neighbours) line up. */
+.actions .btn { min-width: 5rem; justify-content: center; text-align: center; }
 .actions .btn + .btn, .actions form + .btn, .actions .btn + form, .actions form + form { margin-left: var(--space-2); }
 textarea[readonly], input[readonly] { background: var(--paper-2); color: var(--ink-1); border-color: var(--rule); }
 

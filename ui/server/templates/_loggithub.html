@@ -1,17 +1,19 @@
-{# The Logs page's detail pane for a GitHub session: the issue or pull request thread (or a
-   repository's commits on one day) whole, one row per post, the chosen one (?req=) marked.
-   Included by logs.html with current, req, keep. #}
-{% set first = current.records[0] %}
+{# The Logs page's detail for a GitHub session, by metadata only: who posted, when, what
+   kind of post and how long it is. The text is for the box and is not shown here. Included
+   by logs.html with current, req, keep. #}
 <h2 class="logs-h">{{ current.title }}</h2>
-<p class="logs-sub">{{ first.repo }}{% if first.number is not none %}#{{ first.number }}{% endif %} · {{ current.records | length }} post{% if current.records | length != 1 %}s{% endif %} · started {{ current.started_short }} by {{ current.who }}{% if first.url %} · <a class="link" href="{{ first.url }}" rel="noopener" target="_blank">on GitHub</a>{% endif %}</p>
-<div class="msgs msgs--chat">
+<p class="logs-sub">started {{ current.started_short }} by {{ current.who }} · session {{ current.id }}</p>
+<table class="table">
+  <thead><tr><th>Who</th><th>When</th><th>Kind</th><th>Length</th></tr></thead>
+  <tbody>
   {% for m in current.records %}
-  <div class="msg msg--chat {% if m.id == req.id %}on{% endif %}" id="m-{{ m.anchor }}">
-    <div class="msg-role">{{ m.who }}<span class="msg-role-sub">{{ m.action }} · <a class="msg-time" href="/logs?session={{ current.id | urlencode }}&req={{ m.id | urlencode }}{{ keep }}#m-{{ m.anchor }}">{{ m.when_short }}</a></span></div>
-    <div class="msg-body">
-      {% if m.text %}{{ block({"kind": "text", "label": "", "text": m.text}, "chat") }}{% else %}<p class="text-muted msg-empty">(no text)</p>{% endif %}
-      {% for n in m.notes %}<p class="msg-note">{{ n }}</p>{% endfor %}
-    </div>
-  </div>
+  <tr>
+    <td>{{ m.who }}</td>
+    <td class="mono">{{ m.when_short }}</td>
+    <td>{{ m.kind }}</td>
+    <td class="mono">{{ m.text | length }} characters</td>
+  </tr>
   {% endfor %}
-</div>
+  </tbody>
+</table>
+<p class="text-muted">The text of this session is not shown here. It is sent sealed to the box, which alone can open it for an agreed audit.</p>

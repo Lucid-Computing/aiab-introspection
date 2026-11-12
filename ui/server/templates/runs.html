@@ -15,7 +15,9 @@
   {% else %}<p class="explain">No agreement is signed by both parties yet. Sign one under <a class="link" href="/agreements">Agreements</a>.</p>{% endif %}
 
   <p class="runs-box">
-    {% if pre.release %}Box <span class="mono">{{ pre.release.host }}</span> · release <span class="mono">{{ pre.release.tag }}</span> · plan to send <span class="mono">{{ plan_digest or "none chosen" }}</span> · {% if pre.ok %}<span class="selected-label ok">ready</span>{% else %}<span class="selected-label bad">not ready: {{ pre.missing | join("; ") }}</span>{% endif %}
+    {% if pre.release %}Box <span class="mono">{{ pre.release.host }}</span> · release <span class="mono">{{ pre.release.tag }}</span><br>
+    Plan to send <span class="mono">{{ plan_digest or "none chosen" }}</span><br>
+    {% if pre.ok %}<span class="selected-label ok">Ready</span>{% else %}<span class="selected-label bad">Not ready: {{ pre.missing | join("; ") }}</span>{% endif %}
     {% else %}<span class="selected-label bad">Release pins not found: {{ pre.missing | join(", ") }}</span>{% endif %}
   </p>
 
@@ -29,22 +31,6 @@
   </div>
   {% endif %}
 
-  <details class="info">
-    <summary>Check the box independently (attestation)</summary>
-    <div class="info-body">
-      <p class="explain">The auditor's own check, from <span class="mono">static/</span>, with values approved independently, never copied from the box:</p>
-<pre class="cmd">uv run python -m auditor.baked --folder ../agreements/{{ chosen or "NAME" }} pin-identity --release deploy/tinfoil/audit/release.json \
-    --token-file /absolute/path/auditor.token --output /tmp/anchor.json</pre>
-    </div>
-  </details>
-  {% if not pre.ok %}
-  <details class="info">
-    <summary>Where the credentials come from</summary>
-    <div class="info-body">
-      <p class="explain"><span class="mono">lab.token</span> is the lab's API token for the box and <span class="mono">logger.key</span> is the demo logger's private key, the one whose public key the box pins as the logger. Both are held by the box's operator (Jon) under <span class="mono">~/.local/share/aiab-audit-demo/</span> on his host. Copy them to the same path on the machine running this UI, or point <span class="mono">AIAB_DEMO_KEYS</span> at a folder holding them. Never commit them.</p>
-    </div>
-  </details>
-  {% endif %}
 
   {% if past.any %}
   <div class="runs-past">

@@ -60,7 +60,7 @@ def test_page_renders(client, path):
 
 def test_runs_page_offers_the_signed_agreement_and_names_what_is_missing(client):
     html = client.get("/runs").text
-    assert 'value="bio" selected' in html and "plan to send" in html
+    assert 'value="bio" selected' in html and "Plan to send" in html
     assert "sha256:9b16420a35b9eea517ef88e6715726425d20387967ea40ff7e22f401cc2fcc9e" in html
     assert "lab.token in" in html  # the demo keys are missing, so the run is off
 
