@@ -11,6 +11,7 @@ re-reads state.json on each load.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import secrets
@@ -23,7 +24,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from aiab.audit.protocol import AuditError
+from aiab.baked import plan_ir
 from aiab.baked.bundle import bundle_files, file_digest, load_bundle
+from aiab.baked.graph import select_records
 from aiab.baked.plan_ir import check_plan
 
 from server.config import STATIC_DIR, Settings
@@ -415,12 +418,14 @@ def start_run(
     folder: Path,
     records: list[dict],
     label: str | None = None,
+    sent: dict | None = None,
 ) -> str:
     """Start a run of the agreement in ``folder`` on records chosen from the Logs page.
 
     The agreement is copied into the run folder first, signatures included: that copy is
     what is sent, so an edit made while the run is going changes nothing, and the report
-    can always be verified again against exactly the plan it names."""
+    can always be verified again against exactly the plan it names. ``sent`` lists the
+    sessions sent (``sent_sessions``) for the run page."""
     if not records:
         raise ValueError("no records chosen")
     check_limits(folder, records)
@@ -442,6 +447,7 @@ def start_run(
         "agreement": agreement,
         "transcript": label or agreement,
         "plan": sent_plan(settings, target / "plan", agreement),
+        "input": sent,
         "status": "running",
         "steps": [{"key": k, "title": t, "explain": e, "status": "waiting"} for k, t, e in STEPS],
         "result": None,
@@ -548,4 +554,107 @@ def outcome(state: dict) -> dict:
         "result": result,
         "error": code,
         "help": help_text,
+    }
+
+
+def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list[dict]) -> dict:
+    """What a run sends, by session: id, title, the records sent, and how many of them
+    the agreement's Input filter keeps. The filter is the box's own (``select_records``) run
+    on the records' metadata only: kind, agent, session. When the filter also matches
+    keywords, ``kept`` is None: that reads the text, and which records pass is the box's
+    to know. Written into the run's state at start; the records themselves are deleted."""
+    plan = _plan(folder)
+    node = None
+    try:
+        node = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+    except (TypeError, KeyError, StopIteration):
+        pass
+    keywords = bool(node and any(node["config"]["filter"].get("keywords") or ()))
+    kept: list[dict] | None = None
+    if node is not None and not keywords:
+        meta = copy.deepcopy(node)
+        meta["config"]["filter"]["keywords"] = []
+        meta["config"]["max_records"] = len(records)  # over the limit is a failure, not a drop
+        try:
+            kept = select_records(meta, records)
+        except (KeyError, TypeError, ValueError):
+            kept = None
+    out = []
+    for s in sessions:
+        sent = sum(1 for r in records if r.get("session_id") == s["id"])
+        keeps = None if kept is None else sum(1 for r in kept if r["session_id"] == s["id"])
+        out.append({**s, "records": sent, "kept": keeps})
+    return {
+        "source": source,
+        "sessions": out,
+        "filter": "keywords" if keywords else "metadata" if kept is not None else "unknown",
+    }
+
+
+def run_counts(settings: Settings, state: dict) -> dict | None:
+    """Sessions sent, dropped and classified for the run page. Sent and dropped come from
+    what the UI sent (``sent_sessions``); what reaches the classifier is worked out from the
+    frozen plan when the classifier reads the Input filter directly; classified comes only
+    from fields of the verified report that count the classifier's items. Those are items,
+    not sessions: a session longer than the classifier's window is several items. None for
+    runs saved before runs recorded their sessions."""
+    sent = state.get("input")
+    if not sent:
+        return None
+    sessions = sent["sessions"]
+    plan = _plan(settings.runs_dir / state["id"] / "plan") or {}
+    nodes = {n.get("id"): n for n in plan.get("nodes") or () if isinstance(n, dict)}
+
+    def source_of(node: dict | None, port: str | None = None) -> dict | None:
+        try:
+            ref = node["inputs"][port] if port else next(iter(node["inputs"].values()))
+            return nodes.get(plan_ir.split_ref(ref)[0])
+        except (TypeError, KeyError, StopIteration, ValueError):
+            return None
+
+    report = next((n for n in nodes.values() if n.get("type") == "final_report"), None)
+    classifier = source_of(report, plan_ir.REPORT_INPUT)
+    if not classifier or classifier.get("type") != "classifier":
+        classifier = None
+    cfg = (classifier or {}).get("config") or {}
+    direct = bool(classifier) and (source_of(classifier) or {}).get("type") == "input_logs"
+    known = sent["filter"] == "metadata"
+    dropped = [s for s in sessions if known and not s["kept"]]
+    item_count = None
+    if known and direct:
+        window = max(1, int(cfg.get("window") or 1))
+        per = [s["kept"] for s in sessions if s["kept"]]
+        item_count = (
+            sum(-(-k // window) for k in per) if cfg.get("group_by") == "session" else sum(per)
+        )
+    steps = {s.get("key"): s for s in state.get("steps") or ()}
+    out = state.get("outcome") or {}
+    result = (
+        out.get("result") if out.get("verified") and out.get("execution") == "completed" else None
+    )
+    fields = ((report or {}).get("config") or {}).get("fields") or () if classifier else ()
+    counts = []
+    for f in fields:
+        head, _, label = str(f.get("from", f.get("name"))).partition(".")
+        if head == "count":
+            value = result.get(f["name"]) if isinstance(result, dict) else None
+            counts.append({"name": f["name"], "label": label or None, "value": value})
+    privacy = ((report or {}).get("config") or {}).get("privacy") or {}
+    return {
+        "submitted": (steps.get("submit") or {}).get("status") == "done",
+        "source": sent.get("source"),
+        "sessions": sessions,
+        "sent": len(sessions),
+        "records": sum(s["records"] for s in sessions),
+        "filter": sent["filter"],
+        "dropped": dropped,
+        "reach": len(sessions) - len(dropped) if known else None,
+        "direct": direct,
+        "item_count": item_count,
+        "group_by": cfg.get("group_by"),
+        "window": cfg.get("window"),
+        "threshold": cfg.get("threshold"),
+        "counts": counts,
+        "reported": result is not None,
+        "min_count": privacy.get("min_count") or 1,
     }

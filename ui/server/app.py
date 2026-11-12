@@ -1008,11 +1008,19 @@ async def runs_start(request: Request) -> Response:
             f"{chosen} · {len(picked)} recorded session(s) from {source.label}, "
             f"{len(records)} records"
         )
-        run_id = runs.start_run(settings, user, chosen, target.plan_dir, records, label=label)
+        sent = runs.sent_sessions(
+            target.plan_dir,
+            source.id,
+            [{"id": s.id, "title": s.title} for s in picked],
+            records,
+        )
+        run_id = runs.start_run(
+            settings, user, chosen, target.plan_dir, records, label=label, sent=sent
+        )
     except (ValueError, OSError) as exc:
         return back(here, err=str(exc))
-    sent = (runs.load_run(settings, run_id) or {}).get("plan") or {}
-    version = f", version {sent['digest'][7:19]}" if sent.get("digest") else ""
+    plan = (runs.load_run(settings, run_id) or {}).get("plan") or {}
+    version = f", version {plan['digest'][7:19]}" if plan.get("digest") else ""
     pv.record_change(
         target, user, "run", "run", f"run {run_id} started ({len(records)} records{version})"
     )
@@ -1026,7 +1034,7 @@ async def run_page(request: Request, run_id: str) -> Response:
     state = runs.load_run(settings, run_id)
     if state is None:
         return back("/runs", err="No such run.")
-    return render(request, "run.html", run=state)
+    return render(request, "run.html", run=state, counts=runs.run_counts(settings, state))
 
 
 @app.get("/runs/{run_id}/plan")
