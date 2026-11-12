@@ -176,21 +176,19 @@ def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_pa
     assert started["records"] == rows and "from Plant Logs, 4 records" in started["label"]
 
 
-def test_sign_page_signs_in_the_browser_and_keeps_the_manual_route(client, tmp_path):
+def test_sign_page_is_two_things_per_party_sign_and_the_root_key(client, tmp_path):
     (tmp_path / "agreements/bio/signatures/lab.sig").unlink()  # the fixture is already signed
     html = client.get("/a/bio/sign").text
     assert '<script src="/assets/sign.js" defer></script>' in html
     assert 'class="browser-key" data-party="lab" data-digest="sha256:' in html
-    assert 'id="upload-form-lab"' in html and 'id="key-form-lab"' in html
-    assert 'id="cert-lab"' in html  # a pasted signature carries its certificate
     assert "Set up signing" in html and "Use this key file" in html  # no terminal needed
+    assert 'id="key-form-lab"' in html and "Submit root key" in html
     # The card hides buttons with the hidden attribute, which .btn's display would override.
     css = (REPO_ROOT / "ui/assets/aiab.css").read_text()
     assert ".browser-key [hidden] { display: none !important; }" in css
-    assert (
-        "sign_digest.py certify" not in html.split("Other ways to sign")[1].split("browser-key")[1]
-    )
-    assert "openssl pkeyutl -sign" in html  # a key kept outside the browser still works
+    # No pasted signatures and no commands on the page; the upload route itself stays.
+    assert 'id="upload-form-lab"' not in html and "openssl" not in html
+    assert "sign_digest.py" not in html
     assert 'data-party="auditor"' not in html  # only your own party's card has the key block
 
 

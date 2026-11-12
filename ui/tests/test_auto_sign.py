@@ -242,8 +242,8 @@ def test_the_builder_can_save_twice_and_the_sign_screen_shows_the_badge(
         assert response.status_code == 200, response.text
         lab_signature_verifies(target, keys)
     html = client.get("/a/auto/sign").text
-    assert "signed this version automatically by the server" in html
-    assert "The lab signs on this server automatically" in html
+    assert "Signed by the server" in html
+    assert "whoever controls this server can sign as the lab" in html
     assert 'action="/a/auto/sign/remove"' not in html
     html = (
         client_for(

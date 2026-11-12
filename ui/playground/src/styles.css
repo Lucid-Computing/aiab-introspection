@@ -132,6 +132,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .f-hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 details.f > summary { cursor: pointer; }
 /* The site's own dropdown: a button and a list that opens in the flow under it. */
+/* One height for every control in the pane: text boxes, number boxes and dropdowns. */
+.insp input:not([type="checkbox"]), .insp .sel-btn { height: 32px; box-sizing: border-box; }
 .sel { position: relative; width: 100%; }
 .sel-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 4px 6px; font: inherit; font-size: var(--text-sm); color: var(--ink-1); background: var(--paper-1); border: var(--border-strong); text-align: left; cursor: pointer; }
 .sel-btn:focus-visible, .sel.is-open .sel-btn { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -175,7 +177,7 @@ details.f > summary { cursor: pointer; }
 .sym--final_report { clip-path: circle(50%); }
 .x:hover { color: var(--destructive); }
 .add-input { font-family: var(--font-mono); font-size: var(--text-xs); }
-.f .btn--sm { align-self: flex-start; padding: 2px 8px; font-size: 11px; margin-top: 2px; }
+.f .btn--sm { align-self: flex-start; height: 32px; padding: 0 14px; font-size: var(--text-sm); margin-top: 4px; }
 .cm-wrap { border: var(--border-strong); font-size: 12.5px; }
 .cm-wrap .cm-editor { background: var(--paper-1); }
 

@@ -574,3 +574,11 @@ select[hidden] { display: none !important; }
 .plant-scroll { overflow-x: auto; max-height: 24rem; overflow-y: auto; }
 .plant-scroll .table { white-space: nowrap; }
 .plant-run + .plant-run { margin-top: var(--space-8); }
+
+/* Sign page: per party, the state, the Sign action, and the root key with its form. */
+.sign-card > * + * { margin-top: var(--space-3); }
+.sign-state { margin: 0; font-size: var(--text-base); font-weight: 500; color: var(--ink-2); }
+.sign-state.ok { color: var(--ok); }
+.sign-state.bad { color: var(--destructive); }
+.sign-root { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.sign-root input { flex: 1 1 16rem; min-width: 0; height: 40px; padding: 0 var(--space-3); border: var(--border-strong); background: var(--paper-1); font-family: var(--font-mono); font-size: var(--text-xs); }
