@@ -111,6 +111,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .insp-io ul { margin: 2px 0 0; padding-left: 1.2em; }
 .insp-io .mono { color: var(--ink-1); }
 .insp-io-shape { display: block; color: var(--ink-2) !important; }
+.insp-io-kind { display: block; margin: 2px 0 4px; }
+.insp-spec { width: 100%; border-collapse: collapse; margin: 2px 0 4px; }
+.insp-spec td { padding: 2px 8px 2px 0; border-top: var(--border-hairline); vertical-align: top; }
+.insp-spec td:first-child { width: 34%; white-space: nowrap; }
+.insp-spec td:last-child { color: var(--ink-2) !important; overflow-wrap: anywhere; }
 .insp-issues { list-style: none; border: var(--border-strong); }
 .insp-issues li { padding: 4px 8px; font-size: var(--text-xs); border-bottom: var(--border-hairline); }
 .insp-issues li:last-child { border-bottom: none; }

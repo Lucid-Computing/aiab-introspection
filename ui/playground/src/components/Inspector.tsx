@@ -3,9 +3,10 @@ import { AGREEMENT } from "../agreement";
 import { connect, deleteNodes, disconnect, renameInput, renameOutput, updateNode } from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
-import { blockPython, planPython } from "../plan/python";
+import { blockPython, narrowing, planPython } from "../plan/python";
 import { isQuery, parseQuery, type Query, QUERY_WINDOW_MAX, queryCode } from "../plan/query";
 import { describeNode } from "../plan/shape";
+import { outputSpec } from "../plan/spec";
 import {
   type Classifier,
   FIELD_TYPES,
@@ -144,22 +145,28 @@ function IoLine({ plan, node, side }: { plan: Plan; node: PlanNode; side: "in" |
       </div>
     );
   }
+  const spec = outputSpec(node);
   return (
     <div className="insp-io">
-      <span className="insp-io-k">Output</span>
-      <ul>
-        {output ? (
-          <>
-            <li>
-              <span className="mono">{output.type === "Report" ? "the report" : output.type}</span>
-              <span className="mono insp-io-shape">{output.shape}</span>
-            </li>
-            {node.type === "classifier" && <li>a report can read count, any and proportion per label</li>}
-          </>
-        ) : (
-          <li>nothing</li>
-        )}
-      </ul>
+      <span className="insp-io-k">Output specification</span>
+      <span className="insp-io-kind">
+        {output ? <span className="mono">{output.type === "Report" ? "Report" : output.type}</span> : null} · {spec.kind}
+      </span>
+      {spec.fields.length ? (
+        <table className="insp-spec">
+          <tbody>
+            {spec.fields.map((f) => (
+              <tr key={f.name}>
+                <td className="mono">{f.name}</td>
+                <td className="mono">{f.type}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <span className="is-unbound">no fields declared yet</span>
+      )}
+      {node.type === "classifier" && <span>A report can read count, any and proportion per label.</span>}
     </div>
   );
 }
@@ -324,6 +331,7 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
 function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => void }) {
   const c = node.config;
   const cfg = (patch: Partial<InputLogs["config"]>) => set({ ...node, config: { ...c, ...patch } });
+  const narrowed = narrowing(node);
   return (
     <>
       <Field label="Log source" hint="The logs this agreement may read. A run takes its records from here.">
@@ -344,65 +352,26 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
           cfg({ filter: sessions.length ? { ...rest, sessions } : rest });
         }}
       />
-      <details className="f">
-        <summary className="f-label">Narrow it down</summary>
-        <div className="insp-more">
-      <Field label="Agents (one per line, empty = all)" hint="The agent ids whose logs this plan may read.">
-        <LinesInput
-          value={c.input_scope.agents}
-          onChange={(agents) => cfg({ input_scope: { ...c.input_scope, agents } })}
-        />
-      </Field>
-      <div className="f">
-        <span className="f-label">Record kinds</span>
-        <div className="checks">
-          {RECORD_KINDS.map((k) => (
-            <label key={k}>
-              <input
-                type="checkbox"
-                checked={c.filter.kinds.includes(k)}
-                onChange={(e) =>
-                  cfg({
-                    filter: {
-                      ...c.filter,
-                      kinds: RECORD_KINDS.filter((x) => (x === k ? e.target.checked : c.filter.kinds.includes(x))),
-                    },
-                  })
-                }
-              />
-              {k}
-            </label>
-          ))}
-        </div>
-      </div>
-      <Field label="Keywords (one per line, empty = all)">
-        <LinesInput value={c.filter.keywords} onChange={(keywords) => cfg({ filter: { ...c.filter, keywords } })} />
-      </Field>
-      <div className="row2">
-        <Field label="Window start">
-          <input
-            className="mono"
-            placeholder="2026-10-01T00:00:00Z"
-            value={c.input_scope.window_start ?? ""}
-            onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_start: e.target.value || undefined } })}
-          />
-        </Field>
-        <Field label="Window end">
-          <input
-            className="mono"
-            placeholder="(open)"
-            value={c.input_scope.window_end ?? ""}
-            onChange={(e) => cfg({ input_scope: { ...c.input_scope, window_end: e.target.value || undefined } })}
-          />
-        </Field>
-      </div>
-        </div>
-      </details>
+      {narrowed.length > 0 && (
+        <span className="f-hint">
+          An earlier version of this agreement also narrows by {narrowed.join(", ")}.{" "}
+          <button
+            className="linklike"
+            onClick={() =>
+              cfg({
+                input_scope: { agents: [] },
+                filter: { kinds: [...RECORD_KINDS], keywords: [], ...(c.filter.sessions ? { sessions: c.filter.sessions } : {}) },
+              })
+            }
+          >
+            Remove that
+          </button>
+        </span>
+      )}
     </>
   );
 }
 
-/** The three run limits of the plan, shown on the block that decides how many questions a run asks. */
 function LimitsFields({ limits, setLimits }: { limits: Plan["limits"]; setLimits: (l: Plan["limits"]) => void }) {
   return (
     <>

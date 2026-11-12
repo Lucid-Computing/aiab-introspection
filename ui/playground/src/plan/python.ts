@@ -6,7 +6,8 @@
  * from it.
  */
 import { describeNode } from "./shape";
-import type { Plan, PlanNode } from "./types";
+import { outputSpec } from "./spec";
+import { type Plan, type PlanNode, RECORD_KINDS } from "./types";
 import { outputPort } from "./ports";
 import { topoOrder } from "./validate";
 
@@ -30,24 +31,9 @@ function py(value: unknown, indent = 0): string {
 
 const BODY: Record<PlanNode["type"], string> = {
   input_logs: `def run(records, settings):
-    """Keep the records this agreement may read. The box refuses a run whose records fall
-    outside the agents or the time window."""
-    kinds = set(settings["kinds"])
-    keywords = [k.lower() for k in settings["keywords"] if k]
-    agents = set(settings["agents"])
+    """Keep the records of the sessions this agreement names; none named means all."""
     sessions = set(settings["sessions"])
-    kept = []
-    for r in records:
-        if r["kind"] not in kinds or (agents and r["agent_id"] not in agents):
-            continue
-        if sessions and r["session_id"] not in sessions:
-            continue
-        if keywords and not any(k in r["content"].lower() for k in keywords):
-            continue
-        kept.append(r)
-    if len(kept) > settings["max_records"]:
-        raise ValueError("more records than max_records")
-    return kept`,
+    return [r for r in records if not sessions or r["session_id"] in sessions]`,
   classifier: `def items(records, settings):
     """Query format: cut the records into the texts the model is asked about."""
     if settings["per"] == "record":
@@ -109,19 +95,49 @@ def parse(answers, settings):
     return report`,
 };
 
+const NARROWED_BODY = `def run(records, settings):
+    """Keep the records this agreement may read: its sessions, agents, kinds and keywords.
+    The box refuses a run whose records fall outside the agents or the time window."""
+    sessions = set(settings["sessions"])
+    kinds = set(settings["kinds"])
+    keywords = [k.lower() for k in settings["keywords"] if k]
+    agents = set(settings["agents"])
+    kept = []
+    for r in records:
+        if r["kind"] not in kinds or (agents and r["agent_id"] not in agents):
+            continue
+        if sessions and r["session_id"] not in sessions:
+            continue
+        if keywords and not any(k in r["content"].lower() for k in keywords):
+            continue
+        kept.append(r)
+    return kept`;
+
+/** The filters an Input filter still carries from before the pane was simplified. */
+export function narrowing(node: PlanNode): string[] {
+  if (node.type !== "input_logs") return [];
+  const c = node.config;
+  const out: string[] = [];
+  if (c.input_scope.agents.length) out.push("agents");
+  if (c.input_scope.window_start || c.input_scope.window_end) out.push("a time window");
+  if (c.filter.kinds.length !== RECORD_KINDS.length) out.push("record kinds");
+  if (c.filter.keywords.length) out.push("keywords");
+  return out;
+}
+
 function settingsOf(node: PlanNode): Record<string, unknown> {
   switch (node.type) {
     case "input_logs": {
       const c = node.config;
+      const base = { source: c.source, sessions: c.filter.sessions ?? [] };
+      if (!narrowing(node).length) return base;
       return {
-        source: c.source,
+        ...base,
         agents: c.input_scope.agents,
         window_start: c.input_scope.window_start ?? null,
         window_end: c.input_scope.window_end ?? null,
         kinds: c.filter.kinds,
         keywords: c.filter.keywords,
-        sessions: c.filter.sessions ?? [],
-        max_records: c.max_records,
       };
     }
     case "classifier": {
@@ -163,10 +179,14 @@ export function blockPython(plan: Plan, node: PlanNode): string {
       : bound.length
         ? py(Object.fromEntries(bound.map((i) => [i.name, i.type ?? "?"])))
         : "None  # N/A, not connected";
-  const out = output ? py({ type: output.type, shape: output.shape }) : "None";
+  const spec = outputSpec(node);
+  const out = output
+    ? py({ type: output.type, fields: Object.fromEntries(spec.fields.map((f) => [f.name, f.type])) })
+    : "None";
   const head = `# blocks/${node.id}.py\nINPUT = ${input}\nOUTPUT = ${out}\n`;
   if (node.type === "run_python") return `${head}\n${node.config.code.trimEnd()}\n`;
-  return `${head}SETTINGS = ${py(settingsOf(node))}\n\n\n${BODY[node.type]}\n`;
+  const body = narrowing(node).length ? NARROWED_BODY : BODY[node.type];
+  return `${head}SETTINGS = ${py(settingsOf(node))}\n\n\n${body}\n`;
 }
 
 /**
