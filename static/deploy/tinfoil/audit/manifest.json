@@ -1,7 +1,7 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:e2658aff8f5a92138236161c73b8936e4c2abcc1c1812260347da7f6b7211cdb",
+  "image_digest": "sha256:edf76f074631e1da7171ce6ad531300a6057a5074d2b78378e332049284bbee8",
   "restrictions": {
     "version": "0.2.0",
     "plan_format": "aiab-plan-ir/v0",
@@ -30,10 +30,6 @@
       }
     ],
     "limits": {
-      "max_input_utf8_bytes": 1000000000000,
-      "max_records_per_run": 2000,
-      "max_model_calls_per_run": 256,
-      "max_runtime_seconds_per_run": 300,
       "max_result_bytes": 4096
     },
     "input_serialization_version": "aiab-records/v1",
