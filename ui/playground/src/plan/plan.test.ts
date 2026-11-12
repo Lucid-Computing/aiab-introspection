@@ -560,3 +560,32 @@ describe("Query format block (a Run Python node the builder writes)", () => {
     expect(lintPlan(plan).some((i) => i.nodeId === id && i.severity === "warning" && /settings generate/.test(i.message))).toBe(true);
   });
 });
+
+describe("the wrapper as Python", () => {
+  it("shows only what connects to what", async () => {
+    const { planPython } = await import("./python");
+    const base = { version: "aiab-plan-ir/v0", plan_id: "t", title: "", limits: {}, nodes: [] } as unknown as Plan;
+    let plan = addNode(validatePlanOrThrow(base), "input_logs").plan;
+    const cls = addNode(plan, "classifier");
+    plan = cls.plan;
+    const rep = addNode(plan, "final_report");
+    plan = rep.plan;
+    const ids = plan.nodes.map((n) => n.id);
+    const c1 = connect(plan, { source: ids[0], target: ids[1], targetHandle: "items" });
+    if (!c1.ok) throw new Error(c1.message);
+    const c2 = connect(c1.plan, { source: ids[1], target: ids[2], targetHandle: "result" });
+    if (!c2.ok) throw new Error(c2.message);
+    const text = planPython(c2.plan);
+    expect(text).toContain(`from blocks import ${ids.join(", ")}`);
+    expect(text).toContain(`records = ${ids[0]}()`);
+    expect(text).toContain(`results = ${ids[1]}(items=records)`);
+    expect(text).toContain(`${ids[2]}(result=results)`);
+    expect(text).not.toContain("SETTINGS");
+  });
+});
+
+function validatePlanOrThrow(p: Plan): Plan {
+  const r = validatePlan(p);
+  if (!r.ok) throw new Error(r.issues[0]?.message);
+  return r.plan;
+}

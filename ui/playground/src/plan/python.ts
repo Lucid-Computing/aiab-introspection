@@ -7,6 +7,7 @@
  */
 import { describeNode } from "./shape";
 import type { Plan, PlanNode } from "./types";
+import { outputPort } from "./ports";
 import { topoOrder } from "./validate";
 
 /** A JSON value as a Python literal, indented like a settings block. */
@@ -164,7 +165,10 @@ export function blockPython(plan: Plan, node: PlanNode): string {
   return `${head}SETTINGS = ${py(settingsOf(node))}\n\n\n${BODY[node.type]}\n`;
 }
 
-/** The wrapper: one call per block, in the order the box runs them. */
+/**
+ * The wrapper: only what connects to what. One call per block in the order the box runs
+ * them; a block's result is named after its output, and passed to the blocks that read it.
+ */
 export function planPython(plan: Plan): string {
   let order: string[];
   try {
@@ -173,13 +177,22 @@ export function planPython(plan: Plan): string {
     order = plan.nodes.map((n) => n.id);
   }
   const byId = new Map(plan.nodes.map((n) => [n.id, n]));
-  const lines = order.flatMap((id) => {
-    const n = byId.get(id);
-    if (!n) return [];
-    const args = Object.values(n.inputs)
-      .map((ref) => ref.split(".")[0])
+  const names = plan.nodes.map((n) => outputPort(n)?.name).filter(Boolean);
+  // The result's name: the output's name, or <block>_<output> when two blocks share one.
+  const result = (id: string) => {
+    const name = outputPort(byId.get(id)!)?.name ?? id;
+    return names.filter((x) => x === name).length > 1 ? `${id}_${name}` : name;
+  };
+  const used = order.filter((id) => byId.has(id));
+  const lines = used.map((id) => {
+    const n = byId.get(id)!;
+    const args = Object.entries(n.inputs)
+      .map(([name, ref]) => {
+        const src = ref.split(".")[0];
+        return byId.has(src) ? `${name}=${result(src)}` : `${name}=None`;
+      })
       .join(", ");
-    return [n.type === "final_report" ? `${n.id}(${args})` : `${n.id} = ${n.id}(${args})`];
+    return n.type === "final_report" ? `${id}(${args})` : `${result(id)} = ${id}(${args})`;
   });
-  return `# plan.py\n${lines.join("\n")}\n`;
+  return `# plan.py\nfrom blocks import ${used.join(", ") || "()"}\n\n${lines.join("\n")}\n`;
 }
