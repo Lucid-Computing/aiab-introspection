@@ -37,7 +37,7 @@
 {# state classes: one per step, e.g. s-attest-running, so the map can colour its parts #}
 <div class="runview">
 <div class="map-wrap">
-<svg class="map {% for s in run.steps %}s-{{ s.key }}-{{ s.status }} {% endfor %}" viewBox="0 0 1000 372" role="img" aria-label="Where the run is right now">
+<svg class="map {% for s in run.steps %}s-{{ s.key }}-{{ s.status }} {% endfor %}" viewBox="0 0 1000 210" role="img" aria-label="Where the run is right now">
   <defs>
     <marker id="m-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" style="fill: var(--paper-3)"/></marker>
     <marker id="m-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" style="fill: var(--ink-1)"/></marker>
@@ -45,34 +45,25 @@
     <marker id="m-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" style="fill: var(--destructive)"/></marker>
   </defs>
 
-  <!-- the box: two enclaves on Tinfoil -->
-  <g class="region"><rect x="560" y="24" width="436" height="330"/><text x="572" y="330" class="rt">The box</text><text x="572" y="344" class="rs">Tinfoil · attested hardware</text></g>
+  <g class="region"><rect x="580" y="24" width="405" height="150"/><text x="592" y="164" class="rt">The box</text></g>
 
-  <!-- how the plan got into the box: not a run step, always grey -->
-  <path class="edge ctx" d="M290 100 H 586"/>
-  <text x="438" y="94" class="el ctx" text-anchor="middle">built into the box</text>
+  <path class="edge e-export" d="M150 80 H 296"/>
+  <text x="223" y="70" class="el l-export" text-anchor="middle">3 · encrypted logs</text>
+  <path class="edge e-submit" d="M440 68 H 601"/>
+  <text x="520" y="58" class="el l-submit" text-anchor="middle">4 · plan + logs</text>
+  <path class="edge e-report" d="M605 94 H 444"/>
+  <text x="520" y="112" class="el l-report" text-anchor="middle">5 · signed report</text>
+  <path class="edge e-attest dotted" d="M370 110 V 196 H 680 V 114"/>
+  <text x="525" y="190" class="el l-attest" text-anchor="middle">2 · attest the box</text>
+  <path class="edge e-report two" d="M755 80 H 816"/>
 
-  <!-- run steps, drawn where they belong in the real system -->
-  <path class="edge e-report" d="M590 140 H 294"/>
-  <text x="438" y="156" class="el l-report" text-anchor="middle">5 · signed report</text>
-  <path class="edge e-attest dotted" d="M290 270 H 630 V 194"/>
-  <text x="438" y="264" class="el l-attest" text-anchor="middle">2 · attest the box</text>
-  <path class="edge e-submit" d="M290 300 H 680 V 194"/>
-  <text x="438" y="314" class="el l-submit" text-anchor="middle">4 · signed logs in</text>
-  <path class="edge e-report two" d="M746 135 H 832"/>
-  <text x="789" y="212" class="el l-report" text-anchor="middle">5 · classify</text>
-
-  <!-- nodes -->
-  <g class="node n-verify n-report n-offline"><rect x="30" y="50" width="260" height="110"/><text x="40" y="74" class="nt">Agreement</text><text x="40" y="92" class="ns">lab + auditor write and sign</text><text x="40" y="106" class="ns">the pre-analysis plan on GitHub;</text><text x="40" y="120" class="ns">it is built into the box</text><text x="40" y="134" class="ns">auditor checks the report</text>
-    <g class="chip c-verify"><circle cx="250" cy="144" r="9"/><text x="250" y="148" text-anchor="middle">1</text></g>
-    <g class="chip c-offline"><circle cx="274" cy="144" r="9"/><text x="274" y="148" text-anchor="middle">6</text></g></g>
-  <g class="node n-attest n-export n-submit"><rect x="30" y="236" width="260" height="104"/><text x="40" y="260" class="nt">Logger <tspan class="ns">· under development</tspan></text><text x="40" y="278" class="ns">records + signs the model calls (3),</text><text x="40" y="292" class="ns">checks the box (2), sends logs in (4)</text><text x="40" y="306" class="ns">stand-in today: the UI does this with</text><text x="40" y="320" class="ns">a test key and test transcripts</text>
-    <g class="chip c-export"><circle cx="274" cy="324" r="9"/><text x="274" y="328" text-anchor="middle">3</text></g></g>
-  <g class="node n-attest n-submit n-report"><rect x="590" y="80" width="156" height="114"/><text x="600" y="104" class="nt">CPU enclave</text><text x="600" y="122" class="ns">plan + keys baked in</text><text x="600" y="136" class="ns">checks plan at boot</text><text x="600" y="150" class="ns">runs the plan</text><text x="600" y="164" class="ns">signs the report</text></g>
-  <g class="node n-report"><rect x="832" y="80" width="160" height="114"/><text x="842" y="104" class="nt">GPU enclave</text><text x="842" y="122" class="ns">the model</text><text x="842" y="136" class="ns">gpt-oss-safeguard-120b</text><text x="842" y="150" class="ns">classifies the logs</text></g>
+  <g class="node n-export"><rect x="10" y="50" width="140" height="60"/><text x="80" y="85" class="nt" text-anchor="middle">Logger</text></g>
+  <g class="node n-verify n-attest n-submit n-report n-offline"><rect x="300" y="50" width="140" height="60"/><text x="370" y="80" class="nt" text-anchor="middle">Agreement</text>
+    <g class="chip c-verify"><circle cx="358" cy="96" r="8"/><text x="358" y="99.500" text-anchor="middle">1</text></g>
+    <g class="chip c-offline"><circle cx="382" cy="96" r="8"/><text x="382" y="99.500" text-anchor="middle">6</text></g></g>
+  <g class="node n-attest n-submit n-report"><rect x="605" y="50" width="150" height="60"/><text x="680" y="85" class="nt" text-anchor="middle">CPU enclave</text></g>
+  <g class="node n-report"><rect x="820" y="50" width="150" height="60"/><text x="895" y="85" class="nt" text-anchor="middle">GPU enclave</text></g>
 </svg>
-<p class="map-legend"><span class="lg lg--solid">traffic</span> <span class="lg lg--dotted">verification</span> <span class="lg lg--now">now</span> <span class="lg lg--done">done</span> <span class="lg lg--wait">not yet</span></p>
-<p class="map-note text-muted">Drawn as the real system. 1 checks the plan and both signatures; 6 checks the report again with no network. The logger side is under development: today the UI stands in for it, doing 2, 3 and 4 with a test key and a test transcript. The grey arrow is how the plan got into the box, not part of a run.</p>
 </div>
 
 {% set short = {"verify": "Verify plan", "attest": "Attest box", "export": "Sign export", "submit": "Submit logs", "report": "Get report", "offline": "Check report"} %}

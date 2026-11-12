@@ -596,3 +596,9 @@ select[hidden] { display: none !important; }
 .result-table td { padding-top: var(--space-2); padding-bottom: var(--space-2); }
 .result-value { font-weight: 600; }
 .result-facts { font-size: var(--text-sm); margin: var(--space-3) 0 0; }
+
+/* New agreement: the description is optional, behind one line */
+.add-description > summary { cursor: pointer; font-family: var(--font-sans); font-size: var(--text-sm); color: var(--accent-ink); list-style: none; }
+.add-description > summary::-webkit-details-marker { display: none; }
+.add-description > summary::before { content: "+ "; }
+.add-description[open] > summary { margin-bottom: var(--space-2); }

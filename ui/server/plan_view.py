@@ -876,9 +876,9 @@ def new_agreement(
     agreement's plan (``source=copy``, ``copy_from=<id>``: the plan only, no signatures,
     no history).
 
-    From the template, the question becomes the plan's description and the classifier's
-    instructions. A copy keeps the plan as it was, with the new name and the question as
-    its description. Returns (errors, agreement id).
+    The description is optional. From the template, a description given becomes the plan's
+    description and the classifier's instructions; without one the baseline plan is kept
+    as it is. A copy keeps the plan as it was, with the new name. Returns (errors, id).
     """
     errors: list[str] = []
     plan_id = form.get("plan_id", "").strip()
@@ -894,8 +894,8 @@ def new_agreement(
     elif (settings.agreements_dir / plan_id).exists():
         errors.append(f"name: an agreement called {plan_id} already exists")
     problem = form.get("problem", "").strip().replace("\r\n", "\n")
-    if not 1 <= len(problem) <= 16384:
-        errors.append("question: required, up to 16384 characters")
+    if len(problem) > 16384:
+        errors.append("description: up to 16384 characters")
     if errors:
         return errors, None
 
@@ -908,8 +908,8 @@ def new_agreement(
     plan = decode(path.read_bytes())
     plan["plan_id"] = plan_id
     plan["description"] = problem
-    plan["title"] = problem.splitlines()[0][:120]
-    if origin is None:
+    plan["title"] = problem.splitlines()[0][:120] if problem else plan_id
+    if origin is None and problem:
         for node in plan["nodes"]:
             if node["type"] == "classifier":
                 node["config"]["instructions"] = problem + "\n"
