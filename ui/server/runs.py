@@ -86,6 +86,16 @@ def _plan(folder: Path) -> dict | None:
         return None
 
 
+def plan_source(folder: Path) -> str | None:
+    """The log source the agreement's Input filter names (``config.source``), or None when
+    the plan does not load. The caller decides whether the name is one of its sources."""
+    plan = _plan(folder)
+    try:
+        return str(next(n for n in plan["nodes"] if n["type"] == "input_logs")["config"]["source"])
+    except (TypeError, KeyError, StopIteration):
+        return None
+
+
 def plan_scope(folder: Path) -> dict | None:
     """What the agreement's Input Logs step pins (agents, a time window), or None when it
     pins nothing or the plan does not load."""

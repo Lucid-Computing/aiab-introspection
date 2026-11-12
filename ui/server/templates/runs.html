@@ -22,9 +22,9 @@
 
   <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"><input type="hidden" name="source" value="sessions">{% for item in fits %}<input type="hidden" name="session" value="{{ item.session.id }}">{% endfor %}</form>
 
-  {{ selector(log_sources, log_source, "/runs?agreement=" ~ (chosen | urlencode) ~ "&") }}
+  {% if not source_fixed %}{{ selector(log_sources, log_source, "/runs?agreement=" ~ (chosen | urlencode) ~ "&") }}{% endif %}
   <div class="runs-bar">
-    <span>{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB from {{ log_source.label }}{% if scope %}, within the agreement's input filter{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the filter{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a></span>
+    <span>{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB from {{ log_source.label }}{% if source_fixed %}, as the agreement's input filter says{% elif scope %}, within the agreement's input filter{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the filter{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a></span>
     {% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>
     {% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}
   </div>

@@ -317,3 +317,34 @@ def test_a_new_agreement_can_copy_another_plan(client, tmp_path):
         data={"plan_id": "x2", "problem": "q", "source": "copy", "copy_from": "nope"},
     )
     assert "copy from: pick an existing agreement" in refused.text
+
+
+def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, monkeypatch):
+    """When the agreement's Input filter names one of the server's log sources, the Runs page
+    offers no selector and a run reads that source, whatever the form says."""
+    import server.app as ui
+
+    plan_file = tmp_path / "agreements/bio/plan.json"
+    plan = json.loads(plan_file.read_text())
+    next(n for n in plan["nodes"] if n["type"] == "input_logs")["config"]["source"] = "prod"
+    plan_file.write_text(json.dumps(plan))
+    logs = tmp_path / "logs"
+    for who in ("prod", "dev"):
+        (logs / who).mkdir(parents=True, exist_ok=True)
+        (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
+    page = client.get("/runs?agreement=bio&logs=dev").text
+    assert "from Prod Agent Logs, as the agreement" in page and 'class="srcsel"' not in page
+    started = {}
+
+    async def ready(_folder):
+        return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
+
+    def fake_start(settings, user, agreement, folder, records, label=None):
+        started.update(records=records, label=label)
+        return "run-1"
+
+    monkeypatch.setattr(ui, "_run_preflight", ready)
+    monkeypatch.setattr(ui.runs, "start_run", fake_start)
+    monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
+    client.post("/runs/start", data={"agreement": "bio", "logs": "dev", "session": "shared"})
+    assert [r["content"] for r in started["records"]] == ["prod prompt"]

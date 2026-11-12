@@ -19,7 +19,7 @@ export function newNode(type: NodeType, id: string): PlanNode {
         type,
         inputs: {},
         config: {
-          source: "synthetic/research-agents",
+          source: "dev",
           input_scope: { agents: [] },
           filter: { kinds: ["request", "response", "tool_call", "tool_result"], keywords: [] },
           max_records: 2000,

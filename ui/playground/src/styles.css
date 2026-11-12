@@ -124,6 +124,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .f-label { font-size: 14px; font-weight: 600; color: var(--ink-1); }
 .f-hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 details.f > summary { cursor: pointer; }
+.insp-more { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-3); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); align-items: start; }
 .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); align-items: end; }
 .row2 label, .row3 label { display: flex; flex-direction: column; gap: 3px; }

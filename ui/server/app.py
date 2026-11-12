@@ -457,6 +457,17 @@ async def playground(request: Request, path: str = "") -> Response:
     return FileResponse(target)
 
 
+def _run_source(request: Request, folder: Path | None, form: Any = None) -> tuple[LogSource, bool]:
+    """The log source a run reads: the one the agreement's Input filter names, when it is
+    one of this server's sources; otherwise the page's ``logs`` choice (plans written before
+    the filter named a source). The flag says whether the agreement decided."""
+    named = runs.plan_source(folder) if folder else None
+    by_id = {s.id: s for s in settings.log_sources}
+    if named in by_id:
+        return by_id[named], True
+    return _log_source(request, form), False
+
+
 def _log_source(request: Request, form: Any = None) -> LogSource:
     """The log source a page works on, from its ``logs`` query parameter (or form field):
     ``prod`` for Prod Agent Logs, ``dev`` for Dev Agent Logs, the default."""
@@ -828,7 +839,7 @@ async def runs_index(request: Request) -> Response:
     if folder is None and chosen:
         pre["missing"].insert(0, f"no agreement called {chosen}")
         pre["ok"] = False
-    source = _log_source(request)
+    source, source_fixed = _run_source(request, folder)
     all_sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
     # The agreement's input filter decides what is sent: sessions it takes, sessions outside
     # its scope (the box would refuse them), and sessions with nothing to send.
@@ -855,6 +866,7 @@ async def runs_index(request: Request) -> Response:
         chosen=chosen,
         log_source=source,
         log_sources=settings.log_sources,
+        source_fixed=source_fixed,
         fits=fits,
         outside=outside,
         empty=empty,
@@ -880,7 +892,9 @@ async def runs_start(request: Request) -> Response:
     pre = await _run_preflight(target.plan_dir)
     if not pre["ok"]:
         return back(here, err="Cannot start: " + "; ".join(pre["missing"]))
-    source = _log_source(request, form)  # session ids are only unique within one source
+    source, _ = _run_source(
+        request, target.plan_dir, form
+    )  # session ids are unique within one source
     here += f"&logs={source.id}"
     try:
         chosen_sessions = set(form.getlist("session"))

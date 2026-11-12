@@ -21,7 +21,7 @@ import {
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
 import { CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
-import { NODE_META } from "./nodeMeta";
+import { NODE_META, SOURCE_OPTIONS, sourceLabel } from "./nodeMeta";
 import { TypeBadge } from "./PlanNodeView";
 
 interface Props {
@@ -111,7 +111,7 @@ function IoLine({ plan, node, side }: { plan: Plan; node: PlanNode; side: "in" |
         <span className="insp-io-k">Input</span>
         <ul>
           {node.type === "input_logs" ? (
-            <li>the log source</li>
+            <li>{sourceLabel(node.config.source)}</li>
           ) : bound.length === 0 ? (
             <li>N/A · not connected</li>
           ) : (
@@ -303,6 +303,19 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
   const cfg = (patch: Partial<InputLogs["config"]>) => set({ ...node, config: { ...c, ...patch } });
   return (
     <>
+      <Field label="Log source" hint="The logs this agreement may read. A run takes its records from here.">
+        <select value={c.source} onChange={(e) => cfg({ source: e.target.value })}>
+          {!SOURCE_OPTIONS.some((o) => o.id === c.source) && <option value={c.source}>{c.source} (not a log source)</option>}
+          {SOURCE_OPTIONS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <details className="f">
+        <summary className="f-label">Narrow it down</summary>
+        <div className="insp-more">
       <Field label="Agents (one per line, empty = all)" hint="The agent ids whose logs this plan may read.">
         <LinesInput
           value={c.input_scope.agents}
@@ -352,6 +365,8 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
           />
         </Field>
       </div>
+        </div>
+      </details>
     </>
   );
 }

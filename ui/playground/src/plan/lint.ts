@@ -1,11 +1,14 @@
 /** Problems in a well-formed plan. Shown on nodes and in the issue list; never blocking edits. */
-import { FALLBACK_SOURCE, LOG_SOURCES } from "./mockLogs";
+import { LOG_SOURCES } from "./mockLogs";
 import { acceptedTypes, accepts, inputType } from "./ports";
 import { assignable, fieldPath, resolveReportPath } from "./report";
 import type { Issue, Plan } from "./types";
 import { upstream } from "./validate";
 
 /** Whole modules a Run Python step may import; the box refuses anything else. */
+/** The log sources a run can read: the ids of the agreement UI's sources (server/config.py). */
+export const RUN_SOURCES = ["prod", "dev", "slack", "github", "plant"];
+
 export const PYTHON_MODULES = ["re", "math", "collections", "itertools", "statistics", "json"];
 const FORBIDDEN = /(?<![\w.])(eval|exec|compile|open|globals|locals|vars|getattr|setattr|delattr|breakpoint|input|__import__)\s*\(/;
 
@@ -65,12 +68,8 @@ export function lintPlan(plan: Plan): Issue[] {
     }
     switch (n.type) {
       case "input_logs":
-        if (!LOG_SOURCES[n.config.source])
-          warn(
-            n.id,
-            at(i, "config", "source"),
-            `${n.id}: "${n.config.source}" names the logs the parties mean; the preview uses ${FALLBACK_SOURCE}`,
-          );
+        if (!LOG_SOURCES[n.config.source] && !RUN_SOURCES.includes(n.config.source))
+          warn(n.id, at(i, "config", "source"), `${n.id}: pick a log source; "${n.config.source}" is not one a run can read`);
         if (!n.config.filter.kinds.length)
           err(
             n.id,

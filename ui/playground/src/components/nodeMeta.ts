@@ -25,6 +25,16 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
   },
 };
 
+/** The log sources an Input filter can name: the ids the agreement UI reads (server/config.py). */
+export const SOURCE_OPTIONS: { id: string; label: string }[] = [
+  { id: "prod", label: "Prod Agent Logs" },
+  { id: "dev", label: "Dev Agent Logs" },
+  { id: "slack", label: "Slack Logs" },
+  { id: "github", label: "GitHub Logs" },
+  { id: "plant", label: "Plant Logs" },
+];
+export const sourceLabel = (id: string) => SOURCE_OPTIONS.find((o) => o.id === id)?.label ?? id;
+
 export const MODEL_OPTIONS = ["gpt-oss-safeguard-120b", "gpt-oss-120b", "llama-3.3-70b-instruct", "qwen3-32b"];
 
 /** The one line a block shows under its title: the setting worth seeing without opening it. */
@@ -32,7 +42,7 @@ export function line(n: PlanNode): string {
   switch (n.type) {
     case "input_logs": {
       const c = n.config;
-      const parts = [LOG_SOURCES[c.source]?.label ?? c.source];
+      const parts = [LOG_SOURCES[c.source]?.label ?? sourceLabel(c.source)];
       if (c.input_scope.agents.length) parts.push(`${c.input_scope.agents.length} agent${c.input_scope.agents.length === 1 ? "" : "s"}`);
       if (c.filter.keywords.length) parts.push(`${c.filter.keywords.length} keyword${c.filter.keywords.length === 1 ? "" : "s"}`);
       return parts.join(" · ");
