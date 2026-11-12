@@ -217,10 +217,7 @@ CHANGE_KINDS = {  # filter name -> history "kind" values it covers
     "runs": ("run", "created"),
 }
 FROZEN = "A valid signature exists for this version. Use Edit on the Agreements screen first."
-EDIT_WARNING = (
-    "Editing makes a new version of the plan. Both parties must sign it again, "
-    "and any existing signature is removed now. Continue?"
-)
+EDIT_WARNING = "Editing removes both signatures. Continue?"
 
 
 # --------------------------------------------------------------------------- helpers
