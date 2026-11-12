@@ -243,7 +243,7 @@ def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_
     assert '<script src="/assets/sign.js" defer></script>' in plan
     assert 'quick-sign" href="/a/bio/sign" data-party="lab" data-digest="sha256:' in plan
     assert 'data-upload="/a/bio/sign/upload" data-next="/a/bio/plan"' in plan
-    assert "lab: not signed" in plan and "auditor: signed this version" in plan
+    assert "Waiting for the lab · Signed by the auditor." in plan
     assert 'href="/a/bio/sign">Keys and signatures</a>' in plan
     listing = client.get("/agreements").text
     assert '<script src="/assets/sign.js" defer></script>' in listing
@@ -263,7 +263,7 @@ def test_a_signed_plan_offers_re_sign_and_signature_actions_return_to_the_button
 ):
     plan = client.get("/a/bio/plan").text
     assert 'action="/a/bio/sign/remove"' in plan and 'name="next" value="/a/bio/plan"' in plan
-    assert "quick-sign" not in plan and "lab: signed this version" in plan
+    assert "quick-sign" not in plan and "Signed by the lab · Signed by the auditor." in plan
     assert 'title="You signed this version">Signed</a>' in client.get("/agreements").text
 
     removed = client.post("/a/bio/sign/remove", data={"party": "lab", "next": "/a/bio/plan"})

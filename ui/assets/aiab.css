@@ -534,3 +534,7 @@ code.hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var
 .state-icon.ok { color: var(--ok); }
 .state-icon.bad { color: var(--destructive); }
 .state-icon.none { color: var(--ink-3); opacity: 0.55; }
+
+/* Plan page: one line on where the agreement stands. */
+.plan-state{margin:0 0 var(--space-4);font-size:var(--text-sm);color:var(--ink-2)}
+.plan-state.ok{color:var(--ok)}

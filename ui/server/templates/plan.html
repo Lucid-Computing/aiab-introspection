@@ -9,7 +9,7 @@
 {% else %}<p class="crumb"><a href="/agreements" class="link">← Agreements</a></p>{% endif %}
 <div class="row" style="justify-content: space-between; align-items: baseline; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-3)">
   <h1 style="margin: 0">{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
-  {% if view %}<p style="margin: 0"><span class="digest">{{ view.digest[7:19] }}…</span> <span class="badge {{ view.state_badge }}">{{ view.state }}</span></p>{% endif %}
+  {% if view %}<p style="margin: 0"><span class="digest">{{ view.digest[7:19] }}…</span></p>{% endif %}
 </div>
 {% if error %}<p class="form-message error">{{ error }}</p>{% endif %}
 {% if view %}
@@ -27,7 +27,6 @@
   <form method="post" action="{{ base }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--primary">Edit this plan</button></form>
   {% endif %}
   {% if mine.auto %}
-  <span class="text-muted">Signed as the lab by the server.</span>
   {% elif mine.status == 'ok' %}
   <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?"><input type="hidden" name="party" value="{{ user.party }}"><input type="hidden" name="next" value="{{ base }}/plan"><button class="btn btn--ghost">Re-sign</button></form>
   {% elif view.issue %}
@@ -38,10 +37,9 @@
   {% else %}
   <a class="btn btn--ghost quick-sign" href="{{ base }}/sign" data-party="{{ user.party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[user.party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/plan"{% if server_certifies %} data-certify="/sign/certificate"{% endif %}>Sign</a>
   {% endif %}
-  <a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a>
-  <a class="link" href="{{ base }}/sign">Keys and signatures</a>
+  <span class="text-muted"><a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a> is the folder the box runs · <a class="link" href="{{ base }}/sign">Keys and signatures</a></span>
 </div>
-<p class="explain" style="margin: 0 0 var(--space-4)">{% for party in parties %}{% set s = view.signatures[party] %}<span class="badge {% if s.status == 'ok' %}badge--ok{% elif s.status == 'missing' %}{% else %}badge--danger{% endif %}">{{ party }}: {% if s.auto %}signed by the server{% elif s.status == 'ok' %}signed this version{% elif s.status == 'missing' %}not signed{% else %}signed an older version{% endif %}</span> {% endfor %}</p>
+<p class="plan-state{% if view.signed_by_both %} ok{% endif %}">{% for party in parties %}{% set s = view.signatures[party] %}{% if s.status == 'ok' %}Signed by the {{ party }}{% if s.auto %} (by the server){% endif %}{% elif s.status == 'missing' %}Waiting for the {{ party }}{% else %}The {{ party }} signed an older version{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}.</p>
 {% endif %}
 
 {# The "Build your plan with AI" chat (plan_chat.html) is hidden for now; the builder is the editor. #}
