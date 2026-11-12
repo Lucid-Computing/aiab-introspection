@@ -1,4 +1,5 @@
 import { LOG_SOURCES } from "../plan/mockLogs";
+import { parseQuery, queryLine } from "../plan/query";
 import type { NodeType, PlanNode } from "../plan/types";
 
 /** Each kind has a name and one sentence on why the block exists; its symbol is `.sym--<type>` in styles.css. */
@@ -24,6 +25,19 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
     blurb: "Names the few numbers that leave the box and the rules that stop one person's session from being singled out.",
   },
 };
+
+/** A kind as a person sees it: the node types, plus Query format (a Code block the builder writes, see plan/query.ts). */
+export type BlockKind = NodeType | "query";
+
+export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
+  ...NODE_META,
+  query: {
+    label: "Query format",
+    blurb: "Decides what one model question covers and carries the box's limits, so a run cannot ask or read more than both parties agreed to.",
+  },
+};
+
+export const kindOf = (n: PlanNode): BlockKind => (parseQuery(n) ? "query" : n.type);
 
 /** The log sources an Input filter can name: the ids the agreement UI reads (server/config.py). */
 export const SOURCE_OPTIONS: { id: string; label: string }[] = [
@@ -53,6 +67,8 @@ export function line(n: PlanNode): string {
       return labels ? `labels: ${labels}` : "no labels yet";
     }
     case "run_python": {
+      const q = parseQuery(n);
+      if (q) return queryLine(q);
       const lines = n.config.code.trimEnd().split("\n").length;
       return `${lines} line${lines === 1 ? "" : "s"} of Python → ${n.config.output.type}`;
     }

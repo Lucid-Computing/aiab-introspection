@@ -143,6 +143,7 @@ details.f > summary { cursor: pointer; }
 .x--big { margin-left: auto; font-size: 26px; padding: 0 6px; }
 /* The block-kind symbol: one plain glyph per kind, on blocks, the rail and the pane. */
 .sym { display: inline-block; flex: none; width: 10px; height: 10px; margin-right: 6px; background: var(--ink-2); vertical-align: baseline; }
+.sym--query { clip-path: polygon(0 0, 100% 0, 100% 40%, 0 40%, 0 60%, 100% 60%, 100% 100%, 0 100%); }
 .sym--classifier { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 .sym--run_python { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
 .sym--run_llm { clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }

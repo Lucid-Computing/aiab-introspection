@@ -1,6 +1,7 @@
 /** Problems in a well-formed plan. Shown on nodes and in the issue list; never blocking edits. */
 import { LOG_SOURCES } from "./mockLogs";
 import { acceptedTypes, accepts, inputType } from "./ports";
+import { parseQuery, queryCode } from "./query";
 import { assignable, fieldPath, resolveReportPath } from "./report";
 import type { Issue, Plan } from "./types";
 import { upstream } from "./validate";
@@ -103,6 +104,16 @@ export function lintPlan(plan: Plan): Issue[] {
         if (n.type === "run_python") {
           if (!n.config.code.trim()) warn(n.id, at(i, "config", "code"), `${n.id}: no Python code`);
           for (const why of pythonIssues(n.config.code, ins)) err(n.id, at(i, "config", "code"), `${n.id}: ${why}`);
+          const q = parseQuery(n);
+          if (q) {
+            // The pane shows only the two settings, so the code must be what they generate.
+            if (n.config.code !== queryCode(q))
+              warn(n.id, at(i, "config", "code"), `${n.id}: the code is not what the Query format settings generate`);
+            if (ins.length > 1 || ins.some((k) => (inputType(plan, n, k) ?? "LogRecords") !== "LogRecords"))
+              err(n.id, at(i, "inputs"), `${n.id}: a Query format block reads one LogRecords input`);
+            if (out.type !== "Items")
+              err(n.id, at(i, "config", "output", "type"), `${n.id}: a Query format block outputs Items`);
+          }
         }
         if (n.type === "run_llm") {
           if (!n.config.user_prompt.trim()) warn(n.id, at(i, "config", "user_prompt"), `${n.id}: empty user prompt`);

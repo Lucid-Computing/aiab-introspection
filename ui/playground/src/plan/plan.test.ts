@@ -3,6 +3,8 @@ import { flowToPlan, planToFlow } from "./graph";
 import { completeLayout } from "./layout";
 import { lintPlan, pythonIssues } from "./lint";
 import { addNode, connect, deleteNodes, renameInput, renameNode, renameOutput } from "./ops";
+import { blockPython } from "./python";
+import { addQuery, isQuery, parseQuery, QUERY_OUTPUT, queryCode, queryLine } from "./query";
 import { SAMPLE_SOURCES, deployedSample, samplePlan } from "./samples";
 import deployedPlan from "../../../../plan/plan.json";
 import { classificationShape, describeNode, describeOutput, reportShape } from "./shape";
@@ -486,5 +488,75 @@ describe("new blocks", () => {
     const errors = lintPlan(plan).filter((i) => i.severity === "error");
     expect(errors.length).toBeGreaterThan(0);
     expect(errors.every((i) => i.kind === "incomplete")).toBe(true);
+  });
+});
+
+describe("Query format block (a Run Python node the builder writes)", () => {
+  const code = (c: string) => ({ ...addNode(simple(), "run_python").plan.nodes.at(-1)!, config: { code: c, output: QUERY_OUTPUT } }) as Plan["nodes"][number];
+
+  it("round trips its two settings through the marker line", () => {
+    for (const per of ["session", "record"] as const)
+      for (const window of [1, 8, 32]) expect(parseQuery(code(queryCode({ per, window })))).toEqual({ per, window });
+  });
+
+  it("is recognised only by an exact first line", () => {
+    const body = queryCode({ per: "session", window: 8 }).split("\n").slice(1).join("\n");
+    for (const first of [
+      "# query-format per=session window=0",
+      "# query-format per=session window=33",
+      "# query-format per=agent window=8",
+      "# query-format per=session window=8 ",
+      "#query-format per=session window=8",
+    ])
+      expect(parseQuery(code(`${first}\n${body}`))).toBeNull();
+    expect(parseQuery(code(`\n${queryCode({ per: "session", window: 8 })}`))).toBeNull();
+    expect(simple().nodes.some(isQuery)).toBe(false);
+    expect(isQuery(addNode(simple(), "run_python").plan.nodes.at(-1)!)).toBe(false);
+  });
+
+  it("the generated code is admitted by the text check, for both settings", () => {
+    for (const per of ["session", "record"] as const)
+      expect(pythonIssues(queryCode({ per, window: 8 }), ["records"])).toEqual([]);
+  });
+
+  it("is added as query, then query_2, with an Items output and the default settings", () => {
+    const a = addQuery(simple());
+    const b = addQuery(a.plan);
+    expect([a.id, b.id]).toEqual(["query", "query_2"]);
+    const n = b.plan.nodes.find((x) => x.id === b.id)!;
+    expect(n).toMatchObject({ type: "run_python", title: "Query format 2", config: { output: QUERY_OUTPUT } });
+    expect(parseQuery(n)).toEqual({ per: "session", window: 8 });
+    expect(queryLine(parseQuery(n)!)).toBe("per session · 8 records per question");
+    expect(queryLine({ per: "record", window: 8 })).toBe("per record");
+  });
+
+  it("input_logs → query → classifier → report is a valid plan with no lint errors", () => {
+    const p = simple();
+    const logs = p.nodes.find((n) => n.type === "input_logs")!.id;
+    const classifier = p.nodes.find((n) => n.type === "classifier")!.id;
+    const { plan: added, id } = addQuery(p);
+    const r1 = connect(added, { source: logs, target: id });
+    if (!r1.ok) throw new Error(r1.message);
+    const r2 = connect(r1.plan, { source: id, target: classifier });
+    if (!r2.ok) throw new Error(r2.message);
+    expect(r2.plan.nodes.find((n) => n.id === classifier)!.inputs).toEqual({ items: `${id}.items` });
+    expect(validatePlan(r2.plan).ok).toBe(true);
+    expect(lintPlan(r2.plan).filter((i) => i.severity === "error")).toEqual([]);
+    expect(lintPlan(r2.plan).filter((i) => i.nodeId === id)).toEqual([]);
+    // The plan file is unchanged in format: it survives the JSON round trip as a Run Python node.
+    const back = mustParse(planToJson(r2.plan));
+    expect(parseQuery(back.nodes.find((n) => n.id === id)!)).toEqual({ per: "session", window: 8 });
+    const py = blockPython(r2.plan, r2.plan.nodes.find((n) => n.id === id)!);
+    expect(py).toContain(`INPUT = {\n    "${logs}": "LogRecords",\n}`);
+    expect(py).toContain('"type": "Items"');
+    expect(py).toContain("# query-format per=session window=8\n");
+  });
+
+  it("lint says so when the code no longer matches its settings", () => {
+    const { plan, id } = addQuery(simple());
+    const n = plan.nodes.find((x) => x.id === id)!;
+    if (n.type !== "run_python") throw new Error("expected a Run Python node");
+    n.config.code = n.config.code.replace("WINDOW = 8", "WINDOW = 9");
+    expect(lintPlan(plan).some((i) => i.nodeId === id && i.severity === "warning" && /settings generate/.test(i.message))).toBe(true);
   });
 });

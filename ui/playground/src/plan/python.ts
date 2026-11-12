@@ -148,7 +148,7 @@ function settingsOf(node: PlanNode): Record<string, unknown> {
   }
 }
 
-/** The block as a Python file. A Code block is its own code. */
+/** The block as a Python file. A Code block is its own code, and so is a Query format block. */
 export function blockPython(plan: Plan, node: PlanNode): string {
   const { inputs, output } = describeNode(plan, node);
   const bound = inputs.filter((i) => i.ref);

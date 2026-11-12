@@ -3,7 +3,7 @@ import { memo, useEffect } from "react";
 import { type FlowNode, NEW_INPUT } from "../plan/graph";
 import { accepts, INPUT_RULES } from "../plan/ports";
 import type { PortType } from "../plan/types";
-import { line, NODE_META } from "./nodeMeta";
+import { BLOCK_META, kindOf, line } from "./nodeMeta";
 
 /**
  * One block per node: the kind, the title, one line. The plan flows top to bottom: inputs
@@ -12,7 +12,8 @@ import { line, NODE_META } from "./nodeMeta";
  */
 function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
   const n = data.node;
-  const meta = NODE_META[n.type];
+  const kind = kindOf(n);
+  const meta = BLOCK_META[kind];
   const rule = INPUT_RULES[n.type];
   const { inputs, output } = data.io;
   // A fresh block is unfinished (nothing connected yet); only a real mistake is an error.
@@ -66,7 +67,7 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
           />
         ))}
       <div className="pn-kind">
-        <span className={`sym sym--${n.type}`} /> {meta.label}
+        <span className={`sym sym--${kind}`} /> {meta.label}
       </div>
       <div className="pn-title">{n.title || n.id}</div>
       <div className={`pn-line${errors.length ? " is-bad" : todo ? " is-todo" : ""}`}>{note}</div>

@@ -3,6 +3,7 @@ import { connect, deleteNodes, disconnect, renameInput, renameOutput, updateNode
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
 import { blockPython, planPython } from "../plan/python";
+import { isQuery, parseQuery, type Query, QUERY_WINDOW_MAX, queryCode } from "../plan/query";
 import { describeNode } from "../plan/shape";
 import {
   type Classifier,
@@ -22,7 +23,7 @@ import {
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
 import { CommitInput, Field, LinesInput, NumberInput, PythonEditor } from "./fields";
-import { NODE_META, SOURCE_OPTIONS, sourceLabel } from "./nodeMeta";
+import { BLOCK_META, kindOf, SOURCE_OPTIONS, sourceLabel } from "./nodeMeta";
 import { TypeBadge } from "./PlanNodeView";
 
 interface Props {
@@ -43,13 +44,16 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
     r.ok
       ? dispatch({ type: "setPlan", plan: r.plan, select })
       : dispatch({ type: "toast", text: r.message, kind: "error" });
-  const meta = NODE_META[node.type];
+  const setLimits = (limits: Plan["limits"]) => dispatch({ type: "update", f: (p) => ({ ...p, limits }) });
+  const query = parseQuery(node);
+  const kind = kindOf(node);
+  const meta = BLOCK_META[kind];
   const own = issues.filter((i) => i.nodeId === node.id);
 
   return (
     <div className={`insp insp--${node.type}`}>
       <div className="insp-head">
-        <span className={`sym sym--${node.type}`} /> {meta.label}
+        <span className={`sym sym--${kind}`} /> {meta.label}
         <button className="x x--big" title="Close" onClick={() => dispatch({ type: "select", id: null })}>
           ×
         </button>
@@ -80,10 +84,15 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
           node={node}
           set={set}
           limits={plan.limits}
-          setLimits={(limits) => dispatch({ type: "update", f: (p) => ({ ...p, limits }) })}
+          setLimits={setLimits}
+          fromItems={inputType(plan, node, "items") === "Items"}
+          hasQuery={plan.nodes.some(isQuery)}
         />
       )}
-      {node.type === "run_python" && <RunPythonForm plan={plan} node={node} set={set} op={op} />}
+      {node.type === "run_python" && query && (
+        <QueryForm node={node} query={query} set={set} limits={plan.limits} setLimits={setLimits} />
+      )}
+      {node.type === "run_python" && !query && <RunPythonForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "run_llm" && <RunLlmForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "final_report" && <ReportForm plan={plan} node={node} set={set} />}
 
@@ -384,36 +393,10 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
   );
 }
 
-function ClassifierForm({
-  node,
-  set,
-  limits,
-  setLimits,
-}: {
-  node: Classifier;
-  set: (n: PlanNode) => void;
-  limits: Plan["limits"];
-  setLimits: (l: Plan["limits"]) => void;
-}) {
-  const c = node.config;
-  const cfg = (patch: Partial<Classifier["config"]>) => set({ ...node, config: { ...c, ...patch } });
+/** The three run limits of the plan, shown on the block that decides how many questions a run asks. */
+function LimitsFields({ limits, setLimits }: { limits: Plan["limits"]; setLimits: (l: Plan["limits"]) => void }) {
   return (
     <>
-      <div className="f">
-        <span className="f-label">Query format</span>
-        <div className="row2">
-          <label className="f-hint">
-            one question per
-            <select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as Classifier["config"]["group_by"] })}>
-              <option value="session">session</option>
-              <option value="record">record</option>
-            </select>
-          </label>
-          <label className="f-hint">
-            records per question (1 to 32)
-            <NumberInput value={c.window} min={1} max={32} onChange={(window) => cfg({ window })} />
-          </label>
-        </div>
         <div className="row3">
           <label className="f-hint">
             model calls per run (up to 256)
@@ -447,7 +430,88 @@ function ClassifierForm({
           Each question is one model call. The box takes at most 2,000 records per run, and refuses a run with more
           questions than the call limit or more input than the byte limit.
         </span>
+    </>
+  );
+}
+
+/** A Query format block: its two settings rewrite the block's code; the limits are the plan's. */
+function QueryForm({
+  node,
+  query,
+  set,
+  limits,
+  setLimits,
+}: {
+  node: RunPython;
+  query: Query;
+  set: (n: PlanNode) => void;
+  limits: Plan["limits"];
+  setLimits: (l: Plan["limits"]) => void;
+}) {
+  const put = (patch: Partial<Query>) =>
+    set({ ...node, config: { ...node.config, code: queryCode({ ...query, ...patch }) } });
+  return (
+    <div className="f">
+      <div className="row2">
+        <label className="f-hint">
+          one question per
+          <select value={query.per} onChange={(e) => put({ per: e.target.value as Query["per"] })}>
+            <option value="session">session</option>
+            <option value="record">record</option>
+          </select>
+        </label>
+        <label className="f-hint">
+          records per question (1 to 32)
+          <NumberInput value={query.window} min={1} max={QUERY_WINDOW_MAX} onChange={(window) => put({ window })} />
+        </label>
       </div>
+      <LimitsFields limits={limits} setLimits={setLimits} />
+    </div>
+  );
+}
+
+function ClassifierForm({
+  node,
+  set,
+  limits,
+  setLimits,
+  fromItems,
+  hasQuery,
+}: {
+  node: Classifier;
+  set: (n: PlanNode) => void;
+  limits: Plan["limits"];
+  setLimits: (l: Plan["limits"]) => void;
+  /** The input is already Items (a Query format block or another Items output): group_by and window are unused. */
+  fromItems: boolean;
+  /** The plan has a Query format block, which carries the limits. */
+  hasQuery: boolean;
+}) {
+  const c = node.config;
+  const cfg = (patch: Partial<Classifier["config"]>) => set({ ...node, config: { ...c, ...patch } });
+  return (
+    <>
+      {!(fromItems && hasQuery) && (
+      <div className="f">
+        <span className="f-label">{fromItems ? "Limits" : "Query format"}</span>
+        {!fromItems && (
+        <div className="row2">
+          <label className="f-hint">
+            one question per
+            <select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as Classifier["config"]["group_by"] })}>
+              <option value="session">session</option>
+              <option value="record">record</option>
+            </select>
+          </label>
+          <label className="f-hint">
+            records per question (1 to 32)
+            <NumberInput value={c.window} min={1} max={32} onChange={(window) => cfg({ window })} />
+          </label>
+        </div>
+        )}
+        {!hasQuery && <LimitsFields limits={limits} setLimits={setLimits} />}
+      </div>
+      )}
       <Field label="Instructions" hint="The question the model answers about each item. Examples go here too.">
         <textarea rows={5} value={c.instructions} onChange={(e) => cfg({ instructions: e.target.value })} />
       </Field>

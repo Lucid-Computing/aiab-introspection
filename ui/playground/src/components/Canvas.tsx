@@ -13,9 +13,10 @@ import { type Dispatch, type DragEvent, useCallback, useEffect, useMemo, useStat
 import { type FlowNode, planToFlow } from "../plan/graph";
 import { autoLayout } from "../plan/layout";
 import { connect, deleteNodes, disconnect } from "../plan/ops";
-import { type Issue, NODE_TYPES, type NodeType } from "../plan/types";
+import type { Issue } from "../plan/types";
 import type { Action, State } from "../state/store";
-import NewBlock, { BLOCK_DRAG, placeBlock } from "./NewBlock";
+import NewBlock, { BLOCK_DRAG, OFFERED, placeBlock } from "./NewBlock";
+import type { BlockKind } from "./nodeMeta";
 import PlanNodeView from "./PlanNodeView";
 
 const nodeTypes = {
@@ -123,8 +124,8 @@ export default function Canvas({ state, dispatch, issues, bad }: Props) {
 
   const onDrop = useCallback(
     (e: DragEvent) => {
-      const t = e.dataTransfer.getData(BLOCK_DRAG) as NodeType;
-      if (!NODE_TYPES.includes(t)) return;
+      const t = e.dataTransfer.getData(BLOCK_DRAG) as BlockKind;
+      if (!OFFERED.includes(t)) return;
       e.preventDefault();
       placeBlock(plan, layout, dispatch, t, flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
     },
