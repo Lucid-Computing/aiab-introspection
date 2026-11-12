@@ -531,16 +531,13 @@ ul.plain { list-style: none; margin: 0; padding: 0; } ul.plain li { padding: 2px
 .srcsel-item.on { background: var(--ink-1); color: var(--paper-1); }
 .srcsel-item--off { color: var(--ink-3); cursor: not-allowed; }
 .srcsel-item--off:hover { background: var(--paper-1); color: var(--ink-3); }
-.srcsel-icon { flex: none; }
 .srcsel-note { font-size: 10px; opacity: 0.7; text-transform: none; letter-spacing: 0; }
 
 /* ---- agreements list: short hash, state as icons (details on hover) ---- */
 code.hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-1); background: var(--paper-2); border: 1px solid var(--rule); border-radius: 3px; padding: 1px 5px; cursor: help; }
-.state-icons { white-space: nowrap; }
-.state-icon { display: inline-flex; vertical-align: middle; margin-right: var(--space-2); cursor: help; }
-.state-icon.ok { color: var(--ok); }
-.state-icon.bad { color: var(--destructive); }
-.state-icon.none { color: var(--ink-3); opacity: 0.55; }
+.table td.state { font-size: var(--text-sm); color: var(--ink-2); }
+.table td.state.ok { color: var(--ok); }
+.table td.state.bad { color: var(--destructive); }
 
 /* Plan page: one line on where the agreement stands. */
 .plan-state{margin:0 0 var(--space-4);font-size:var(--text-sm);color:var(--ink-2)}
