@@ -99,8 +99,12 @@ other party's approval of a key change in `approve-keys.yml` is still open.
 
 To make signing one click, the UI server can hold two secrets:
 
-- `AIAB_LAB_KEY` and `AIAB_LAB_CERTIFICATE`: a certified lab signing key. The server
-  signs every plan version as the lab by itself.
+- `AIAB_LAB_KEY` and `AIAB_LAB_CERTIFICATE`: a certified lab signing key. Every page then
+  shows a DEV MODE label, and the Sign screen shows a demo-only Lab Sign button to anyone
+  logged in, the auditor included. Pressing it signs the version the page showed as the
+  lab with this key. Nothing is signed by itself: creating, saving or editing an
+  agreement leaves the lab unsigned. Any logged-in user can therefore produce the lab's
+  signature.
 - `AIAB_AUDITOR_ROOT_KEY`: the auditor root's private key. On an auditor's first Sign,
   the browser makes its own Ed25519 signing key, non-extractable from the start, and
   sends only the public half to `POST /sign/certificate`. The server certifies it for
@@ -126,8 +130,8 @@ What the real version changes, in order:
 1. Each party makes its own root, on its own machine or with Set up signing in its own
    browser, and submits the public half. One PR and one release replace the roots, so
    no root's private half has ever been on the server or with the operator.
-2. Unset `AIAB_LAB_KEY`, `AIAB_LAB_CERTIFICATE` and `AIAB_AUDITOR_ROOT_KEY`. The lab
-   loses automatic signing and presses Sign like the auditor.
+2. Unset `AIAB_LAB_KEY`, `AIAB_LAB_CERTIFICATE` and `AIAB_AUDITOR_ROOT_KEY`. Lab Sign
+   and the DEV MODE label disappear, and the lab presses Sign like the auditor.
 3. Each party runs its own certificate signer (the same protocol as
    `/sign/certificate`), on its own infrastructure, out of the lab's reach, authenticating
    its members with its own identity provider; or the root holder certifies members'

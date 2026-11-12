@@ -39,7 +39,7 @@ services:
         sync: false
       - key: UI_BOOTSTRAP_ACCOUNTS   # local password accounts, "lab@lab.com:lab:<password>,..."; new names added on every start, existing ones untouched
         sync: false
-      - key: AIAB_LAB_KEY       # optional: a lab signing key (base64 raw Ed25519); with its certificate below, the server signs every plan version as the lab
+      - key: AIAB_LAB_KEY       # optional: a lab signing key (base64 raw Ed25519); with its certificate below, the Sign screen offers the demo-only Lab Sign button
         sync: false
       - key: AIAB_LAB_CERTIFICATE  # optional: the certificate the lab root made for AIAB_LAB_KEY (one JSON line, sign_digest.py certify)
         sync: false
