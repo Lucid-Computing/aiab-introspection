@@ -9,7 +9,7 @@
 {% if copy and (copy.behind or copy.last_pull.error or copy.error) %}<div class="form-message error"><p style="margin:0">This server's copy of <span class="mono">{{ copy.branch }}</span> is at {{ copy.head }}{% if copy.behind %}, {{ copy.behind }} commit{{ "s" if copy.behind != 1 }} behind GitHub{% endif %}.{% if copy.last_pull.error %} Last catch-up failed: <span class="mono">{{ copy.last_pull.error }}</span>.{% elif copy.error %} <span class="mono">{{ copy.error }}</span>.{% endif %}</p>
 {% if copy.changes %}<p style="margin: var(--space-2) 0 0">Local changes in the copy:{% for line in copy.changes %} <span class="mono">{{ line }}</span>{% endfor %}{% if copy.dirty > copy.changes | length %} …{% endif %}</p>{% endif %}
 <p style="margin: var(--space-3) 0 0"><form method="post" action="/copy/pull" class="inline"><button class="btn btn--ghost btn--sm">Catch up now</button></form>{% if copy.dirty %} <form method="post" action="/copy/reset" class="inline" data-confirm="This moves the copy's local changes into a git stash (nothing is deleted; git stash list shows them) and then catches up with GitHub. Continue?"><button class="btn btn--ghost btn--sm">Set local changes aside and catch up</button></form>{% endif %}</p></div>{% endif %}
-{% if auto_sign or issuer_parties %}<p class="lead">Prototype: whoever controls this server can sign as {{ "both parties" if auto_sign and issuer_parties else "the lab" if auto_sign else "the auditor" }}.</p>{% endif %}
+{% if lab_sign or issuer_parties %}<p class="lead">Prototype: whoever controls this server can sign as {{ "both parties" if lab_sign and issuer_parties else "the lab" if lab_sign else "the auditor" }}.</p>{% endif %}
 {% for party, problem in server_problems.items() if problem %}<p class="form-message error">The server cannot sign as the {{ party }}: {{ problem }}.</p>{% endfor %}
 {% if view %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
@@ -18,6 +18,7 @@
 <div class="stack">
   {% for party in parties %}{% set s = view.signatures[party] %}
   {% set k = keys.parties[party] if keys else None %}
+  {% set demo = party == 'lab' and lab_sign and s.status != 'ok' %}
   <div class="card">
     <div class="card-header">{{ party }}</div>
     <div class="card-body sign-card">
@@ -25,9 +26,8 @@
 
       {# 1. Sign: one click when this server certifies the party's browser key; otherwise the
             key is set up in this browser once. #}
-      {% if s.auto %}
-      {% elif user.party != party %}
-      <p class="text-muted">Only the {{ party }} signs here.</p>
+      {% if user.party != party %}
+      {% if not demo and not s.auto %}<p class="text-muted">Only the {{ party }} signs here.</p>{% endif %}
       {% elif s.status == 'ok' %}
       <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?">
         <input type="hidden" name="party" value="{{ party }}">
@@ -75,6 +75,17 @@
           </p>
         </div>
       </div>
+      {% endif %}
+
+      {# Lab Sign, for the demo (prototype): anyone logged in signs this version as the lab
+         with the server's lab key. #}
+      {% if demo %}
+      <form method="post" action="{{ base }}/sign/lab" class="demo-sign">
+        <input type="hidden" name="digest" value="{{ view.digest }}">
+        <span class="demo-tag">Demo only</span>
+        <button class="btn demo-btn"{% if view.issue %} disabled{% endif %}>Lab Sign</button>
+        <span class="demo-note">Signs this version as the lab with the server's lab key.</span>
+      </form>
       {% endif %}
 
       {# 2. The root key the box trusts for this party, and a way to submit a new one. #}

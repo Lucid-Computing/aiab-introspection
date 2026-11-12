@@ -85,9 +85,10 @@ class Settings:
     anthropic_api_key: str | None = field(default=None, repr=False)
     # AIAB_LAB_KEY: the lab's signing key (base64 raw Ed25519, the format of lab.key from
     # make dev-keys) and AIAB_LAB_CERTIFICATE: the certificate the lab's root gave it (the
-    # JSON line in lab.cert). Both set, the server signs every plan version as the lab
-    # itself, so nobody waits for the lab; whoever controls the server can then sign as the
-    # lab. The lab's root stays with the lab. Prototype only.
+    # JSON line in lab.cert). Both set, the Sign screen offers Lab Sign, a demo-only button
+    # that signs the shown version as the lab with this key, and every page says DEV MODE;
+    # anyone logged in can then sign as the lab. The lab's root stays with the lab.
+    # Prototype only.
     lab_signing_key: str | None = field(default=None, repr=False)
     lab_signing_certificate: str | None = None
     # AIAB_AUDITOR_ROOT_KEY: the auditor root's private key (base64 raw Ed25519). Set, the
