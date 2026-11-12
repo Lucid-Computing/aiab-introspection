@@ -1,7 +1,7 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:0eb4e1a676e2729d1ad15d2f1f6a9868325d47cde750d4e5af1fe0253da3daaf",
+  "image_digest": "sha256:1408769787cc2c167502dd47381fbab21d03b148efbedafbc9447b466b7eb8a8",
   "restrictions": {
     "version": "0.2.0",
     "plan_format": "aiab-plan-ir/v0",
