@@ -217,7 +217,15 @@ def user_of(request: Request) -> dict[str, str] | None:
 
 
 def to_login(request: Request) -> RedirectResponse:
-    return RedirectResponse(f"/login?next={quote(request.url.path)}", status_code=303)
+    """Send a logged-out request to the login page, and afterwards back to a page that can
+    be opened. A button's address only takes a form post, so for anything but a GET the way
+    back is the page the button was on (the Referer, same site only), else Agreements."""
+    target = request.url.path
+    if request.method != "GET":
+        referer = urlsplit(request.headers.get("referer", ""))
+        same_site = referer.netloc == request.url.netloc and referer.path.startswith("/")
+        target = (referer.path if same_site else "") or "/agreements"
+    return RedirectResponse(f"/login?next={quote(target)}", status_code=303)
 
 
 def back(path: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:

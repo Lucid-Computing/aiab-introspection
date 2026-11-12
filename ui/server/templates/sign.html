@@ -36,6 +36,13 @@
       {% elif party in issuer_parties %}
       <p>{% if view.issue %}<button class="btn btn--primary" disabled>Sign</button>{% else %}<a class="btn btn--primary quick-sign" href="{{ base }}/sign" data-party="{{ party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/sign" data-certify="/sign/certificate">Sign</a>{% endif %}</p>
       {% else %}
+      {# The browser's Sign posts its signature and certificate through this form (sign.js). #}
+      <form id="upload-form-{{ party }}" method="post" action="{{ base }}/sign/upload" hidden>
+        <input type="hidden" name="party" value="{{ party }}">
+        <input type="hidden" name="next" value="{{ base }}/sign">
+        <input type="hidden" id="sig-{{ party }}" name="signature">
+        <input type="hidden" id="cert-{{ party }}" name="certificate">
+      </form>
       <div class="browser-key" data-party="{{ party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[party] or '' }}">
         <p class="field-hint browser-key-note" hidden></p>
         <div data-state="unsupported" hidden>

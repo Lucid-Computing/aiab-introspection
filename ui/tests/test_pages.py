@@ -187,7 +187,9 @@ def test_sign_page_is_two_things_per_party_sign_and_the_root_key(client, tmp_pat
     css = (REPO_ROOT / "ui/assets/aiab.css").read_text()
     assert ".browser-key [hidden] { display: none !important; }" in css
     # No pasted signatures and no commands on the page; the upload route itself stays.
-    assert 'id="upload-form-lab"' not in html and "openssl" not in html
+    # The browser's own Sign posts through a hidden form; nothing to paste, no commands.
+    assert 'id="upload-form-lab" method="post" action="/a/bio/sign/upload" hidden' in html
+    assert 'id="sig-lab"' in html and 'id="cert-lab"' in html and "openssl" not in html
     assert "sign_digest.py" not in html
     assert 'data-party="auditor"' not in html  # only your own party's card has the key block
 
@@ -391,3 +393,22 @@ def test_the_input_filter_can_name_sessions_and_the_runs_page_follows(client, tm
     import server.runs as runs_module
 
     assert runs_module.plan_sessions(tmp_path / "agreements/bio") == {"some-other-session"}
+
+
+def test_a_logged_out_button_press_comes_back_to_a_page_not_to_the_button(client, monkeypatch):
+    """After the session ends, pressing a button goes to the login page and then back to the
+    page the button was on. The button's own address takes only a form post, so returning
+    there with a GET would answer Method Not Allowed."""
+    monkeypatch.setattr(ui, "user_of", lambda request: None)  # the session has ended
+    r = client.post(
+        "/a/bio/plan/edit",
+        headers={"referer": "http://testserver/a/bio/plan"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/login?next=/a/bio/plan"
+    r = client.post("/a/bio/plan/edit", follow_redirects=False)
+    assert r.headers["location"] == "/login?next=/agreements"
+    elsewhere = {"referer": "https://evil.example/a/bio/plan"}
+    r = client.post("/a/bio/plan/edit", headers=elsewhere, follow_redirects=False)
+    assert r.headers["location"] == "/login?next=/agreements"
+    assert client.get("/runs", follow_redirects=False).headers["location"] == "/login?next=/runs"
