@@ -5,14 +5,9 @@
 <p class="lead">Using LLMs to provide privacy-preserving and verifiable audits.</p>
 
 <ol class="howto">
-  <li>The lab and the auditor agree on a plan here: a graph of the steps the box runs in order, from the logs of a run through Python steps, model steps and a classifier to the final report. Every save goes through the box's own loader, so a plan the box would refuse is never saved.</li>
-  <li>Both sign the plan's digest with a signing key of their own. Each party has a root key, kept on its own machine, that certifies its signing keys once; the certificate travels with every signature. {% if settings.auditor_root_key %}On this prototype the server signs every version as the lab, and holds the auditor root: each auditor's browser makes a signing key of its own on the first Sign, and the server certifies it. Whoever controls the server can therefore sign as both parties. In the real version each party keeps its own root and signs on a page it controls, and the server holds no party's key.{% else %}The auditor signs in its own browser or on its own machine; the server never holds that key or the root. The lab's signing key and certificate may be on this server, in which case the server signs every version as the lab and whoever controls the server can sign as the lab.{% endif %} Any change after that voids both signatures.</li>
-  <li>The box is a reproducible container image holding the box code and both parties' root public keys, and no plan. Anyone can rebuild it and check that the published image matches. A new signing key needs no new image; only a new root does.</li>
-  <li>The image runs in a confidential VM on Tinfoil. The hardware encrypts its memory, so not even the server's operator can read what's inside.</li>
-  <li>The chip signs a statement, checkable by anyone, of which image is running. Before each run the Runs screen compares it with the pinned release.</li>
-  <li>The logging proxy signs the lab's recorded model traffic with its own key. A run sends those records and the signed plan to the box together.</li>
-  <li>The box recomputes the plan digest, checks each party's certificate against the root built into its image and the signature against the certified key, applies its limits, and only then runs the plan over the records with the agreed model.</li>
-  <li>Only a short report comes out. The logs are held only in memory, never written to disk, and dropped once the report is signed. The box keeps nothing of the plan either: every run brings its own.</li>
-  <li>The box signs the report with its per-boot key, naming the plan digest, the image digest and the records it saw, so anyone can check it came from this plan and wasn't changed. The auditor checks it offline.</li>
+  <li><span><strong>Only runs signed plans.</strong> The lab and the auditor agree on a plan and both sign it. The box runs nothing else.</span></li>
+  <li><span><strong>Checks what comes in.</strong> The box verifies the logger's signature on the records and reads only the logs the plan names.</span></li>
+  <li><span><strong>Only a short report comes out.</strong> The plan fixes what the report may hold, and the box signs it. The logs never leave.</span></li>
+  <li><span><strong>Attested.</strong> The box runs in a confidential VM. The chip states which image is running, and anyone can check it.</span></li>
 </ol>
 {% endblock %}
