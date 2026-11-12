@@ -7,10 +7,8 @@
 {% block content %}
 {% if snapshot %}<p class="crumb"><a href="/runs/{{ snapshot.id }}" class="link">← Run {{ snapshot.id }}</a></p>
 {% else %}<p class="crumb"><a href="/agreements" class="link">← Agreements</a></p>{% endif %}
-<div class="row" style="justify-content: space-between; align-items: baseline; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-3)">
-  <h1 style="margin: 0">{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
-  {% if view %}<p style="margin: 0"><span class="digest">{{ view.digest[7:19] }}…</span></p>{% endif %}
-</div>
+<h1 style="margin: 0">{% if view %}{{ view.plan_id }}{% else %}Plan{% endif %}</h1>
+{% if view %}<p class="plan-digest">{{ view.digest }}</p>{% endif %}
 {% if error %}<p class="form-message error">{{ error }}</p>{% endif %}
 {% if view %}
 <p class="lead">{% if view.description %}{{ view.description }}{% else %}The plan as a graph: the logs of a run, Python steps, model steps, a classifier and the final report. The box runs exactly this, and releases only the report.{% endif %}</p>
@@ -37,7 +35,8 @@
   {% else %}
   <a class="btn btn--ghost quick-sign" href="{{ base }}/sign" data-party="{{ user.party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[user.party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/plan"{% if server_certifies %} data-certify="/sign/certificate"{% endif %}>Sign</a>
   {% endif %}
-  <span class="text-muted"><a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a> is the folder the box runs · <a class="link" href="{{ base }}/sign">Keys and signatures</a> · <a class="link" href="{{ base }}/history">History{% if view.history %} ({{ view.history | length }}){% endif %}</a></span>
+  <span class="text-muted"><a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a> is the folder the box runs · <a class="link" href="{{ base }}/sign">Keys and signatures</a></span>
+  <a class="plan-history" href="{{ base }}/history" title="History: who changed what" aria-label="History"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>{% if view.history %}<span>{{ view.history | length }}</span>{% endif %}</a>
 </div>
 <p class="plan-state{% if view.signed_by_both %} ok{% endif %}">{% for party in parties %}{% set s = view.signatures[party] %}{% if s.status == 'ok' %}Signed by the {{ party }}{% if s.auto %} (by the server){% endif %}{% elif s.status == 'missing' %}Waiting for the {{ party }}{% else %}The {{ party }} signed an older version{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}.</p>
 {% endif %}
