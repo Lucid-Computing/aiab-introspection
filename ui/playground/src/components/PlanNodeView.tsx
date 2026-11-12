@@ -59,6 +59,13 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
       className={`pn${selected ? " is-selected" : ""}${errors.length ? " has-error" : todo ? " is-unfinished" : ""}`}
       title={hover}
     >
+      {/* AND and OR read two inputs: their ports are labelled A and B. */}
+      {n.type === "combine_logs" &&
+        ports.map((h, k, all) => (
+          <span key={h.id} className="pn-port" aria-hidden="true" style={{ left: `${((k + 1) / (all.length + 1)) * 100}%` }}>
+            {h.id.toUpperCase()}
+          </span>
+        ))}
       {rule.kind !== "none" &&
         ports.map((h, k, all) => (
           <Handle

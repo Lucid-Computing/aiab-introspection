@@ -50,6 +50,8 @@ function ofType(type: string, fields: Record<string, string>, labels?: string[])
 export function outputSpec(node: PlanNode): OutputSpec {
   switch (node.type) {
     case "input_logs":
+    case "filter_logs":
+    case "combine_logs":
       return ofType("LogRecords", {});
     case "classifier":
       return ofType(

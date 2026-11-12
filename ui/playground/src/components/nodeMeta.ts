@@ -1,3 +1,4 @@
+import { combineLine, filterLine } from "../plan/filter";
 import { LOG_SOURCES } from "../plan/mockLogs";
 import { parseQuery, queryLine } from "../plan/query";
 import type { NodeType, PlanNode } from "../plan/types";
@@ -7,6 +8,14 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
   input_logs: {
     label: "Input filter",
     blurb: "Fixes which logs the box may read before anything runs, so the audit cannot reach beyond what both parties agreed to.",
+  },
+  filter_logs: {
+    label: "Filter",
+    blurb: "Keeps only the records that match its rules, or that the model answers yes for.",
+  },
+  combine_logs: {
+    label: "AND / OR",
+    blurb: "Joins two sets of records by record id.",
   },
   classifier: {
     label: "Classifier",
@@ -26,8 +35,11 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
   },
 };
 
-/** A kind as a person sees it: the node types, plus Query format (a Code block the builder writes, see plan/query.ts). */
-export type BlockKind = NodeType | "query";
+/**
+ * A kind as a person sees it: the node types, plus Query format (a Code block the builder
+ * writes, see plan/query.ts), and AND and OR (one node type, combine_logs, by its op).
+ */
+export type BlockKind = NodeType | "query" | "and" | "or";
 
 export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
   ...NODE_META,
@@ -35,9 +47,18 @@ export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
     label: "Query format",
     blurb: "Decides what one model question covers.",
   },
+  and: {
+    label: "AND",
+    blurb: "Keeps the records that are in both A and B.",
+  },
+  or: {
+    label: "OR",
+    blurb: "Keeps the records that are in A or in B, each once.",
+  },
 };
 
-export const kindOf = (n: PlanNode): BlockKind => (parseQuery(n) ? "query" : n.type);
+export const kindOf = (n: PlanNode): BlockKind =>
+  n.type === "combine_logs" ? n.config.op : parseQuery(n) ? "query" : n.type;
 
 /** The log sources an Input filter can name: the ids the agreement UI reads (server/config.py). */
 export const SOURCE_OPTIONS: { id: string; label: string }[] = [
@@ -62,6 +83,10 @@ export function line(n: PlanNode): string {
       if (c.filter.keywords.length) parts.push(`${c.filter.keywords.length} keyword${c.filter.keywords.length === 1 ? "" : "s"}`);
       return parts.join(" · ");
     }
+    case "filter_logs":
+      return filterLine(n);
+    case "combine_logs":
+      return combineLine(n);
     case "classifier": {
       const c = n.config;
       const labels = c.labels.map((l) => l.name).join(", ");

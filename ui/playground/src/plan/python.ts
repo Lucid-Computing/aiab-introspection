@@ -2,8 +2,8 @@
  * A block as the Python file it will become (MAC-468): INPUT, OUTPUT, SETTINGS, then the
  * function. For the fixed blocks the body mirrors what the box runs today
  * (static/aiab/baked/graph.py: select_records, to_items, the classifier and run_llm branches
- * of run_plan, build_report). Read only: the plan is still plan.json, and this text is drawn
- * from it.
+ * of run_plan, build_report; rule_holds, filter_rules and filter_llm for a Filter). Read only:
+ * the plan is still plan.json, and this text is drawn from it.
  */
 import { describeNode } from "./shape";
 import { outputSpec } from "./spec";
@@ -73,6 +73,14 @@ def parse(items, answers, settings):
             "evidence_ids": list(it["record_ids"]),
         })
     return results`,
+  filter_logs: "",
+  combine_logs: `def run(a, b, settings):
+    """and: the records in both a and b; or: the records in either. Matched by record id,
+    each kept once, in the order of the run's records."""
+    in_a, in_b = {r["id"] for r in a}, {r["id"] for r in b}
+    keep = in_a & in_b if settings["op"] == "and" else in_a | in_b
+    given = {r["id"]: r for r in a + b}
+    return [given[i] for i in sorted(keep, key=position_in_the_run)]`,
   run_python: "",
   run_llm: `def prompts(inputs, settings):
     """The text sent to the model: the user prompt with each {{name}} filled in. With an
@@ -93,6 +101,83 @@ def parse(answers, settings):
             x = 0  # a small count would single out a session
         report[f["name"]] = x
     return report`,
+};
+
+const FILTER_BODY = {
+  rules: `def run(records, settings):
+    """Keep the records where all (or any) of the rules hold. With exclude, drop them instead."""
+    test = all if settings["match"] == "all" else any
+    return [
+        r for r in records
+        if test(holds(rule, r) for rule in settings["rules"]) != settings["exclude"]
+    ]
+
+
+def holds(rule, r):
+    """One rule on one record. Text compares in lower case unless the rule is case sensitive;
+    a regex is the box's own subset and matches anywhere; times are UTC; a length counts
+    characters."""
+    field, op, value = rule["field"], rule["op"], rule["value"]
+    if field == "content":
+        text = r["content"]
+        if op == "regex":
+            return search(value, text, rule["case_sensitive"]) is not None
+        if not rule["case_sensitive"]:
+            text, value = text.lower(), value.lower()
+        if op == "contains":
+            return value in text
+        if op == "not_contains":
+            return value not in text
+        if op == "equals":
+            return text == value
+        if op == "starts_with":
+            return text.startswith(value)
+        return text.endswith(value)
+    if field == "kind":
+        return r["kind"] in value
+    if field in ("agent", "session"):
+        found = r["agent_id" if field == "agent" else "session_id"] in value
+        return found if op == "in" else not found
+    if field == "time":
+        ts = datetime.fromisoformat(r["ts"])
+        if op == "between":
+            return datetime.fromisoformat(value[0]) <= ts < datetime.fromisoformat(value[1])
+        at = datetime.fromisoformat(value)
+        return ts < at if op == "before" else ts >= at
+    return len(r["content"]) >= value if op == "at_least" else len(r["content"]) <= value`,
+  llm: `def items(records, settings):
+    """One question per record, or per whole session."""
+    if settings["judge"] == "record":
+        return [{"id": r["id"], "text": r["content"], "record_ids": [r["id"]]} for r in records]
+    sessions = {}
+    for r in records:
+        sessions.setdefault(r["session_id"], []).append(r)
+    out = []
+    for sid, rs in sessions.items():
+        rs = sorted(rs, key=lambda r: (r["batch"], r["offset"]))
+        out.append({
+            "id": sid,
+            "text": "\\n".join(f"{r['kind']}: {r['content']}" for r in rs),
+            "record_ids": [r["id"] for r in rs],
+        })
+    return out
+
+
+def prompts(items, settings):
+    """The question, asked about each item: answer yes or no. The box sends these to the
+    model; this code cannot."""
+    return [it["text"] for it in items]
+
+
+def parse(records, items, answers, settings):
+    """Yes keeps the item's records, no drops them. Below the threshold the answer is
+    unsure, and settings["unsure"] decides."""
+    keep = set()
+    for it, a in zip(items, answers, strict=True):
+        unsure = settings["threshold"] is not None and a["score"] < settings["threshold"]
+        if (settings["unsure"] == "keep") if unsure else a["label"] == "yes":
+            keep.update(it["record_ids"])
+    return [r for r in records if r["id"] in keep]`,
 };
 
 const NARROWED_BODY = `def run(records, settings):
@@ -140,6 +225,21 @@ function settingsOf(node: PlanNode): Record<string, unknown> {
         keywords: c.filter.keywords,
       };
     }
+    case "filter_logs": {
+      const c = node.config;
+      if (c.mode === "rules") return { match: c.match, exclude: c.exclude, rules: c.rules };
+      return {
+        model: c.llm.model.id,
+        question: c.llm.question,
+        judge: c.llm.judge,
+        yes_examples: c.llm.yes_examples,
+        no_examples: c.llm.no_examples,
+        threshold: c.llm.threshold ?? null,
+        unsure: c.llm.unsure,
+      };
+    }
+    case "combine_logs":
+      return { op: node.config.op };
     case "classifier": {
       const c = node.config;
       return {
@@ -185,7 +285,11 @@ export function blockPython(plan: Plan, node: PlanNode): string {
     : "None";
   const head = `# blocks/${node.id}.py\nINPUT = ${input}\nOUTPUT = ${out}\n`;
   if (node.type === "run_python") return `${head}\n${node.config.code.trimEnd()}\n`;
-  const body = narrowing(node).length ? NARROWED_BODY : BODY[node.type];
+  const body = narrowing(node).length
+    ? NARROWED_BODY
+    : node.type === "filter_logs"
+      ? FILTER_BODY[node.config.mode]
+      : BODY[node.type];
   return `${head}SETTINGS = ${py(settingsOf(node))}\n\n\n${body}\n`;
 }
 

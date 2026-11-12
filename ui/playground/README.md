@@ -1,7 +1,7 @@
 # ui/playground: the plan builder
 
-The editor for audit plans: a graph of five block types (Input Logs, Classifier, Run Python,
-Run LLM, Final Report) that can be edited as a graph or as YAML. Each card shows what the
+The editor for audit plans: a graph of block types (Input Logs, Filter, AND / OR, Classifier,
+Run Python, Run LLM, Final Report) that can be edited as a graph or as YAML. Each card shows what the
 block reads and the type and shape of what it produces, so types can be checked across every
 connection. The same rules run in the box (`static/aiab/baked/plan_ir.py`): a plan that is
 valid here is a plan the box loads.
@@ -41,7 +41,8 @@ and the YAML are two projections of it:
 
 | File | What it is |
 | --- | --- |
-| `src/plan/types.ts` | The IR: plan, five node types, their configs. Canvas positions (`Layout`) are separate. |
+| `src/plan/types.ts` | The IR: plan, seven node types, their configs. Canvas positions (`Layout`) are separate. |
+| `src/plan/filter.ts`, `pattern.ts` | Filter rules and the regex subset, checked as the box checks them; what a Filter keeps from the sample logs. |
 | `src/plan/ports.ts` | Typed ports: each node's output, which inputs it takes, the one compatibility table. |
 | `src/plan/validate.ts` | The gate into the IR: schema, unique ids, references that resolve, no cycles. |
 | `src/plan/lint.ts` | Problems in a valid plan (type mismatches, missing inputs, report fields that do not resolve). Shown, not blocking. |
