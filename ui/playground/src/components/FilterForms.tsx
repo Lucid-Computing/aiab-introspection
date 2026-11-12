@@ -557,7 +557,7 @@ function PortPicker({
       }}
     >
       <option value="">nothing</option>
-      {current && !candidates.some((s) => `${s.id}.records` === current) && (
+      {current && !candidates.some((s) => `${s.id}.${outputPort(s)!.name}` === current) && (
         <option value={current}>{title(current.split(".")[0])}</option>
       )}
       {candidates.map((s) => (
