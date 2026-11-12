@@ -23,11 +23,13 @@
   <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"><input type="hidden" name="source" value="sessions">{% for item in fits %}<input type="hidden" name="session" value="{{ item.session.id }}">{% endfor %}</form>
 
   {% if not source_fixed %}{{ selector(log_sources, log_source, "/runs?agreement=" ~ (chosen | urlencode) ~ "&") }}{% endif %}
+  {% if show_bar %}
   <div class="runs-bar">
     <span>{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB from {{ log_source.label }}{% if source_fixed %}, as the agreement's input filter says{% elif scope %}, within the agreement's input filter{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the filter{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a></span>
     {% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>
     {% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}
   </div>
+  {% endif %}
 
   <details class="info">
     <summary>Check the box independently (attestation)</summary>
@@ -46,11 +48,21 @@
   </details>
   {% endif %}
 
-  {% if runs %}
+  {% if past.any %}
+  <div class="runs-past">
+  <form method="get" action="/runs" class="logs-filters">
+    <input type="hidden" name="agreement" value="{{ chosen }}">
+    <input type="hidden" name="logs" value="{{ log_source.id }}">
+    <select name="rby" onchange="this.form.submit()"><option value="">everyone</option>{% for w in past.bys %}<option value="{{ w }}" {% if w == past.by %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>
+    <select name="rstate" onchange="this.form.submit()"><option value="">any state</option>{% for t in past.states %}<option value="{{ t }}" {% if t == past.state %}selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+    <input name="rq" value="{{ past.q }}" placeholder="Search runs">
+    <button class="btn btn--ghost">Search</button>
+  </form>
+  <div class="runs-table">
   <table class="table">
     <thead><tr><th>Started</th><th>Agreement and input</th><th>Plan version</th><th>By</th><th>State</th><th></th></tr></thead>
     <tbody>
-    {% for r in runs %}
+    {% for r in past.shown %}
     <tr>
       <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
       <td class="mono">{{ r.transcript }}</td>
@@ -59,9 +71,20 @@
       <td>{{ r.outcome.title }}{% if r.outcome.verified %}<br><span class="text-muted">Report verified</span>{% endif %}</td>
       <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>
     </tr>
+    {% else %}
+    <tr><td colspan="6" class="text-muted">No run matches.</td></tr>
     {% endfor %}
     </tbody>
   </table>
+  </div>
+  {% if past.pages > 1 %}
+  <nav class="logs-pager">
+    {% if past.page > 1 %}<a class="link" href="/runs?rpage={{ past.page - 1 }}{{ past.filters }}">← newer</a>{% else %}<span></span>{% endif %}
+    <span class="text-muted">page {{ past.page }} of {{ past.pages }} · {{ past.matched }} runs</span>
+    {% if past.page < past.pages %}<a class="link" href="/runs?rpage={{ past.page + 1 }}{{ past.filters }}">older →</a>{% else %}<span></span>{% endif %}
+  </nav>
+  {% endif %}
+  </div>
   {% endif %}
 </div>
 {% endblock %}

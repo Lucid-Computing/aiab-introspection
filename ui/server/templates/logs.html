@@ -10,6 +10,41 @@
 {% set keep = filters ~ "&page=" ~ page %}
 {% set chat = source.chat %}{# posts people wrote (_logslack.html, _loggithub.html), not calls a model answered #}
 {% set unit = "post" if source.kind == "github" else "msg" if chat else "rec" if source.kind == "plant" else "req" %}
+{% set models = not chat and source.kind not in ("github", "plant") %}
+{% if current and req %}
+<p class="crumb"><a href="/logs?{{ keep[1:] }}" class="link">← Logs</a></p>
+<section class="logs-detail">
+  {% if plant is not none %}
+  {% include "_logplant.html" %}
+  {% elif source.kind == "github" %}
+  {% include "_loggithub.html" %}
+  {% elif chat %}
+  {% include "_logslack.html" %}
+  {% else %}
+  <h2 class="logs-h">{{ current.title }}</h2>
+  <p class="logs-sub">{{ current.who }} · started {{ current.started_short }} · session {{ current.id }}{% if req.raw._file %} · from {{ req.raw._file }}{% endif %}</p>
+
+  <details class="fold fold--plain">
+    <summary>Requests in this session ({{ current.records | length }})</summary>
+    <ol class="req-list">
+      {% for r in current.records %}
+      <li><a class="{% if r.id == req.id %}on{% endif %}" href="/logs?session={{ current.id | urlencode }}&req={{ r.id | urlencode }}{{ keep }}">{{ loop.index }} · {{ r.when_short }} · {{ r.model or "?" }} · <span class="{% if r.status and r.status < 300 %}ok{% else %}bad{% endif %}">{{ r.status or "?" }}</span>{% if r.duration_s %} · {{ "%.3f" | format(r.duration_s) }}s{% endif %} · {{ r.size_kb }}</a></li>
+      {% endfor %}
+    </ol>
+  </details>
+
+  {# Metadata only. What was said is for the box: it travels sealed and is never shown or
+     served by this server (MAC-377). #}
+  <p class="req-meta">request {{ current.records.index(req) + 1 }} of {{ current.records | length }} · {{ req.when_short }} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · {{ req.size_kb }}</p>
+  <dl class="req-facts">
+    <dt>Messages in the request</dt><dd>{{ req.message_count }}</dd>
+    <dt>Stop reason</dt><dd>{{ req.stop_reason or "—" }}</dd>
+    <dt>Session</dt><dd class="mono">{{ current.id }}</dd>
+  </dl>
+  <p class="text-muted">The text of this session is not kept readable here. It is sent sealed to the box, which alone can open it for an agreed audit.</p>
+  {% endif %}
+</section>
+{% else %}
 <h1>Logs</h1>
 {{ selector(sources, source, "/logs?") }}
 <div class="logs-tools">
@@ -29,57 +64,30 @@
     {% elif fetch.ago is not none %}fetched {% if fetch.ago < 5 %}just now{% else %}{{ fetch.ago }} s ago{% endif %}, again every {{ fetch.every }} s in the background
     {% else %}not fetched yet{% endif %}{% if empty %} · <a class="link" href="/logs?{{ src }}&who={{ who | urlencode }}&q={{ q | urlencode }}{% if not show_empty %}&empty=1{% endif %}">{% if show_empty %}hide{% else %}show{% endif %} the {{ empty }} with no records</a>{% endif %}</p>
 
-<div class="logs">
-  <aside class="logs-list">
-    {% for s in shown %}
-    <a class="logs-item {% if current and s.id == current.id %}on{% endif %}" href="/logs?session={{ s.id | urlencode }}{{ keep }}">
-      <span class="logs-title">{{ s.title }}</span>
-      <span class="logs-meta">{% if chat or source.kind == "github" %}{{ s.who }} · {{ s.started_short }} · {% endif %}{{ s.records | length }} {{ unit }}{% if s.model %} · {{ s.model }}{% endif %}</span>
-    </a>
-    {% else %}
-    <p class="text-muted" style="padding: var(--space-4)">{% if total_requests %}Nothing matches.{% else %}No records on disk yet for {{ source.label }}.{% endif %}</p>
-    {% endfor %}
-    {% if pages > 1 %}
-    <nav class="logs-pager">
-      {% if page > 1 %}<a class="link" href="/logs?page={{ page - 1 }}{{ filters }}">← newer</a>{% else %}<span></span>{% endif %}
-      <span class="text-muted">page {{ page }} of {{ pages }} · {{ matched }} sessions</span>
-      {% if page < pages %}<a class="link" href="/logs?page={{ page + 1 }}{{ filters }}">older →</a>{% else %}<span></span>{% endif %}
-    </nav>
-    {% endif %}
-  </aside>
-
-  <section class="logs-detail">
-    {% if current and plant is not none %}
-    {% include "_logplant.html" %}
-    {% elif current and req and source.kind == "github" %}
-    {% include "_loggithub.html" %}
-    {% elif current and req and chat %}
-    {% include "_logslack.html" %}
-    {% elif current and req %}
-    <h2 class="logs-h">{{ current.title }}</h2>
-    <p class="logs-sub">{{ current.who }} · started {{ current.started_short }} · session {{ current.id }}{% if req.raw._file %} · from {{ req.raw._file }}{% endif %}</p>
-
-    <details class="fold fold--plain">
-      <summary>Requests in this session ({{ current.records | length }})</summary>
-      <ol class="req-list">
-        {% for r in current.records %}
-        <li><a class="{% if r.id == req.id %}on{% endif %}" href="/logs?session={{ current.id | urlencode }}&req={{ r.id | urlencode }}{{ keep }}">{{ loop.index }} · {{ r.when_short }} · {{ r.model or "?" }} · <span class="{% if r.status and r.status < 300 %}ok{% else %}bad{% endif %}">{{ r.status or "?" }}</span>{% if r.duration_s %} · {{ "%.3f" | format(r.duration_s) }}s{% endif %} · {{ r.size_kb }}</a></li>
-        {% endfor %}
-      </ol>
-    </details>
-
-    {# Metadata only. What was said is for the box: it travels sealed and is never shown or
-       served by this server (MAC-377). #}
-    <p class="req-meta">request {{ current.records.index(req) + 1 }} of {{ current.records | length }} · {{ req.when_short }} · {{ req.model or "?" }} · <span class="{% if req.status and req.status < 300 %}ok{% else %}bad{% endif %}">{{ req.status or "?" }}</span>{% if req.duration_s %} · {{ "%.3f" | format(req.duration_s) }}s{% endif %} · {{ req.size_kb }}</p>
-    <dl class="req-facts">
-      <dt>Messages in the request</dt><dd>{{ req.message_count }}</dd>
-      <dt>Stop reason</dt><dd>{{ req.stop_reason or "—" }}</dd>
-      <dt>Session</dt><dd class="mono">{{ current.id }}</dd>
-    </dl>
-    <p class="text-muted">The text of this session is not kept readable here. It is sent sealed to the box, which alone can open it for an agreed audit.</p>
-    {% else %}
-    <p class="text-muted" style="padding: var(--space-6)">Pick a session on the left.</p>
-    {% endif %}
-  </section>
-</div>
+{% if shown %}
+<table class="table">
+  <thead><tr><th>Session</th><th>Who</th><th>Started</th><th>Size</th>{% if models %}<th>Model</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for s in shown %}
+  <tr>
+    <td><a class="logs-item link" href="/logs?session={{ s.id | urlencode }}{{ keep }}">{{ s.title }}</a></td>
+    <td>{{ s.who }}</td>
+    <td>{{ s.started_short }}</td>
+    <td>{{ s.records | length }} {{ unit }}</td>
+    {% if models %}<td>{{ s.model }}</td>{% endif %}
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-muted">{% if total_requests %}Nothing matches.{% else %}No records on disk yet for {{ source.label }}.{% endif %}</p>
+{% endif %}
+{% if pages > 1 %}
+<nav class="logs-pager">
+  {% if page > 1 %}<a class="link" href="/logs?page={{ page - 1 }}{{ filters }}">← newer</a>{% else %}<span></span>{% endif %}
+  <span class="text-muted">page {{ page }} of {{ pages }} · {{ matched }} sessions</span>
+  {% if page < pages %}<a class="link" href="/logs?page={{ page + 1 }}{{ filters }}">older →</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
+{% endif %}
 {% endblock %}

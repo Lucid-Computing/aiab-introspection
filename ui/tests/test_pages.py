@@ -233,6 +233,31 @@ def test_started_run_records_and_links_the_plan_version_it_sent(client, tmp_path
     assert client.get("/runs/20260101T000000Z-abcdef/plan").status_code == 303
 
 
+def test_past_runs_are_filtered_and_paged(client, tmp_path, monkeypatch):
+    """Past runs come 20 to a page, newest first; the search box narrows them and the pager
+    keeps the agreement and the filters."""
+    monkeypatch.setattr(ui.runs, "_execute", lambda *a: None)  # no CLI, no box
+    for i in range(25):
+        ui.runs.start_run(
+            ui.settings,
+            LAB,
+            "bio",
+            tmp_path / "agreements/bio",
+            [{"content": "hello"}],
+            label="benign session" if i < 3 else f"session {i}",
+        )
+    rows = 'class="btn btn--ghost btn--sm" href="/runs/'
+    page = client.get("/runs?agreement=bio").text
+    assert page.count(rows) == 20 and "page 1 of 2 · 25 runs" in page
+    assert 'href="/runs?rpage=2&amp;agreement=bio&amp;logs=' in page
+    assert client.get("/runs?agreement=bio&rpage=2").text.count(rows) == 5
+
+    found = client.get("/runs?agreement=bio&rq=BENIGN").text
+    assert found.count(rows) == 3 and "logs-pager" not in found
+    assert client.get("/runs?rby=nobody").text.count(rows) == 0
+    assert "No run matches." in client.get("/runs?rq=zzz").text
+
+
 def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_fallback(
     client, tmp_path
 ):
@@ -332,6 +357,8 @@ def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, mon
     for who in ("prod", "dev"):
         (logs / who).mkdir(parents=True, exist_ok=True)
         (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
+    # The edit above broke the signatures; the summary bar shows only for a runnable agreement.
+    monkeypatch.setattr(ui, "_runnable", lambda rows: rows)
     page = client.get("/runs?agreement=bio&logs=dev").text
     assert "from Prod Agent Logs, as the agreement" in page and 'class="srcsel"' not in page
     started = {}

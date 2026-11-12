@@ -502,9 +502,8 @@ async def logs_page(request: Request) -> Response:
     except ValueError:
         page = 1
     shown = matched[(page - 1) * LOGS_PAGE_SIZE : page * LOGS_PAGE_SIZE]
-    current = next((s for s in all_sessions if s.id == wanted), None) or (
-        shown[0] if shown else None
-    )
+    # One session's page only when it was asked for; an unknown id falls back to the list.
+    current = next((s for s in all_sessions if s.id == wanted), None) if wanted else None
     req = None
     if current:
         picked = (
@@ -826,6 +825,51 @@ def _runnable(rows: list[dict]) -> list[dict]:
     return [r for r in rows if r["digest"] and not r["error"] and not r["issue"] and r["signed"]]
 
 
+RUNS_PAGE_SIZE = 20  # past runs per page on the Runs screen
+
+
+def _past_runs(qp: Any, chosen: str, logs: str) -> dict:
+    """The table of past runs on the Runs screen: filtered by ``rq`` (agreement and input,
+    run id, plan digest), ``rby`` (who started it) and ``rstate`` (outcome title), newest
+    first, one page of them (``rpage``)."""
+    every = runs.list_runs(settings)
+    q = qp.get("rq", "").strip()
+    by = qp.get("rby", "").strip()
+    state = qp.get("rstate", "").strip()
+    needle = q.lower()
+
+    def text(r: dict) -> str:
+        digest = (r.get("plan") or {}).get("digest") or ""
+        return f"{r.get('transcript', '')} {r.get('id', '')} {digest}".lower()
+
+    matched = [
+        r
+        for r in every
+        if (not needle or needle in text(r))
+        and (not by or r["by"]["user"] == by)
+        and (not state or r["outcome"]["title"] == state)
+    ]
+    pages = max(1, -(-len(matched) // RUNS_PAGE_SIZE))
+    try:
+        page = min(max(1, int(qp.get("rpage", "1"))), pages)
+    except ValueError:
+        page = 1
+    keep = {"agreement": chosen, "logs": logs, "rq": q, "rby": by, "rstate": state}
+    return {
+        "any": bool(every),
+        "shown": matched[(page - 1) * RUNS_PAGE_SIZE : page * RUNS_PAGE_SIZE],
+        "matched": len(matched),
+        "page": page,
+        "pages": pages,
+        "q": q,
+        "by": by,
+        "state": state,
+        "bys": sorted({r["by"]["user"] for r in every}),
+        "states": sorted({r["outcome"]["title"] for r in every}),
+        "filters": "".join(f"&{k}={quote(v)}" for k, v in keep.items() if v),
+    }
+
+
 @app.get("/runs")
 async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
@@ -873,7 +917,8 @@ async def runs_index(request: Request) -> Response:
         all_count=len(all_sessions),
         totals=totals,
         scope=runs.plan_scope(folder) if folder else None,
-        runs=runs.list_runs(settings),
+        past=_past_runs(qp, chosen, source.id),
+        show_bar=any(c["id"] == chosen for c in choices),
         plan_digest=pre["plan_digest"],
     )
 
