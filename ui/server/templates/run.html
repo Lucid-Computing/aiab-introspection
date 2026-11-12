@@ -80,6 +80,20 @@
       {% if run.result.run_id %}<p>Executor run ID: <code>{{ run.result.run_id }}</code></p>{% endif %}
       {% if run.outcome.verified and run.outcome.execution == 'completed' %}<pre>{{ run.outcome.result | tojson }}</pre>{% endif %}
     </div>
+    {% if counts %}{% set c = counts %}{% set n = "session" if c.sent == 1 else "sessions" %}
+    <table class="kv run-counts" style="margin-top: var(--space-4)">
+      <tr><th>Sent</th><td>{{ c.sent }} {{ n }} · {{ c.records }} records</td></tr>
+      {% if not c.submitted %}
+      <tr><th>Box</th><td>{% if run.status == "running" %}Not submitted yet.{% else %}Not submitted: the run stopped before step 4.{% endif %}</td></tr>
+      {% else %}
+      <tr><th>Dropped</th><td>{% if c.filter == "metadata" %}{{ c.dropped | length }}{% if c.dropped %}: the Input filter takes none of their records ({% for s in c.dropped %}{{ s.title }}{{ ", " if not loop.last }}{% endfor %}){% endif %}{% elif c.filter == "keywords" %}decided in the box: the Input filter matches keywords{% else %}not known: the plan's Input filter did not load{% endif %}</td></tr>
+      <tr><th>To the classifier</th><td>{% if c.reach is not none and c.direct %}{{ c.reach }} {{ "session" if c.reach == 1 else "sessions" }}{% if c.item_count is not none %}, as {{ c.item_count }} item{{ "s" if c.item_count != 1 }}{% if c.group_by == "session" %} (up to {{ c.window }} records of one session each){% endif %}{% endif %}{% elif c.reach is not none %}{{ c.reach }} {{ "session" if c.reach == 1 else "sessions" }} reach the plan's steps; how many reach the classifier is decided in the box{% else %}decided in the box{% endif %}</td></tr>
+      <tr><th>In the report</th><td>{% if not c.counts %}This plan's report has no count of classified items.{% elif not c.reported %}After the verified report.{% else %}{% for f in c.counts %}<span class="mono">{{ f.name }}</span> = {{ f.value }}: items {% if f.label %}labelled {{ f.label }}{% else %}classified{% endif %}{{ "; " if not loop.last }}{% endfor %}.{% endif %}
+        {% if c.threshold is not none %}Items scored below {{ c.threshold }} are labelled abstain and counted under no other label.{% endif %}
+        {% if c.min_count > 1 %}Counts below {{ c.min_count }} are reported as 0.{% endif %}</td></tr>
+      {% endif %}
+    </table>
+    {% endif %}
     {% if now.output %}
     <details class="info" style="margin-top: var(--space-4)">
       <summary>What it returned</summary>
@@ -88,6 +102,24 @@
     {% endif %}
   </div>
 </div>
+
+{% if counts %}
+<h2 style="margin-top: var(--space-6)">Sessions in this run</h2>
+<table class="table run-sessions">
+  <thead><tr><th>Session</th><th>Records sent</th><th>Input filter keeps</th></tr></thead>
+  <tbody>
+  {% for s in counts.sessions %}
+  <tr>
+    <td><a class="link" href="/logs?logs={{ counts.source | urlencode }}&session={{ s.id | urlencode }}">{{ s.title }}</a><br><span class="mono text-muted">{{ s.id }}</span></td>
+    <td>{{ s.records }}</td>
+    <td>{% if s.kept is none %}<span class="text-muted">decided in the box</span>{% else %}{{ s.kept }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-muted" style="margin-top: var(--space-6)">Sessions: not recorded for this run.</p>
+{% endif %}
 
 <details class="info" style="margin-top: var(--space-6)">
   <summary>All six steps in detail</summary>
