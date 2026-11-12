@@ -568,3 +568,9 @@ select[hidden] { display: none !important; }
 .sel-list button { display: block; width: 100%; padding: var(--space-2) var(--space-3); font-family: var(--font-sans); font-size: var(--text-sm); color: var(--ink-1); background: none; border: none; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
 .sel-list button:hover { background: var(--paper-2); }
 .sel-list button.on { background: var(--paper-2); font-weight: 600; }
+
+/* Plant session: the run's numbers, and wide tables that scroll inside their fold. */
+.plant-facts { margin: var(--space-3) 0; }
+.plant-scroll { overflow-x: auto; max-height: 24rem; overflow-y: auto; }
+.plant-scroll .table { white-space: nowrap; }
+.plant-run + .plant-run { margin-top: var(--space-8); }
