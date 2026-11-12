@@ -79,7 +79,8 @@ textarea:disabled, input:disabled { background: var(--paper-2); color: var(--ink
 .flow li strong { color: var(--ink-1); font-weight: 500; }
 .flow li.here { background: var(--paper-2); box-shadow: inset 2px 0 0 0 var(--accent); padding-left: var(--space-3); }
 .flow li.done::before { color: var(--accent-ink); }
-.login { max-width: 420px; margin: var(--space-24) auto; }
+.login { max-width: 360px; margin: var(--space-24) auto; border: var(--border-strong); }
+.login h3 { margin-top: 0; }
 .explain { font-size: var(--text-sm); color: var(--ink-2); max-width: 760px; margin-bottom: var(--space-6); }
 .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); }
 @media (max-width: 900px) { .three { grid-template-columns: 1fr; } }
@@ -457,10 +458,15 @@ details.more[open] .more-btn::before { content: attr(data-open); }
 .kv { width: 100%; table-layout: fixed; }
 .kv td, .mono, .src-sub, .src-title { overflow-wrap: anywhere; }
 pre { max-width: 100%; overflow-x: auto; }
+/* Narrow screens: swiss.css hides the links behind a toggle this site does not have. Keep
+   them in the bar, wrapped, with the bar growing as needed. */
+@media (max-width: 768px) {
+  .navbar { height: auto; min-height: var(--nav-height); padding: var(--space-2) var(--space-4); gap: var(--space-2) var(--space-4); flex-wrap: wrap; }
+  .nav-links { position: static; display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); border: none; padding: 0; }
+  .nav-links .nav-link { padding: 0; border: none; }
+}
 @media (max-width: 640px) {
-  .navbar, .nav-links, .row, .src-head { flex-wrap: wrap; }
-  .navbar { gap: .5rem; }
-  .nav-links { gap: .65rem; }
+  .row, .src-head { flex-wrap: wrap; }
   .container { width: 100%; box-sizing: border-box; }
   table:not(.kv) { display: block; max-width: 100%; overflow-x: auto; }
   .kv th { width: 30%; }
