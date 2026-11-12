@@ -457,7 +457,8 @@ details.more[open] .more-btn::before { content: attr(data-open); }
 .container, .card, .card-body, .panel, .stack, .src, .info-body { min-width: 0; }
 .kv { width: 100%; table-layout: fixed; }
 .kv td, .mono, .src-sub, .src-title { overflow-wrap: anywhere; }
-pre { max-width: 100%; overflow-x: auto; }
+/* Long outputs (run results, change logs) scroll inside their box, never the page. */
+pre { max-width: 100%; max-height: 24rem; overflow: auto; }
 /* Narrow screens: swiss.css hides the links behind a toggle this site does not have. Keep
    them in the bar, wrapped, with the bar growing as needed. */
 @media (max-width: 768px) {
