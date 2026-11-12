@@ -25,3 +25,6 @@ context/
 coding-plan/
 # Agreement drafts live on the UI server; only a deployed plan reaches git (plan/).
 agreements/
+
+# The RSI plant's exports are confidential; Plant Logs reads them from AIAB_PLANT_EXPORT.
+plant-logs/

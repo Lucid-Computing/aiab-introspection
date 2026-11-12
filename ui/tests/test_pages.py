@@ -140,6 +140,45 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
     assert "from Dev Agent Logs" in started["label"]
 
 
+def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_path, monkeypatch):
+    export = tmp_path / "plant" / "run-1" / "records"
+    export.mkdir(parents=True)
+    rows = [
+        {
+            "stream": "proxy",
+            "batch": 0,
+            "offset": i,
+            "agent_id": "agt-1",
+            "session_id": "s1",
+            "ts": f"2026-01-01T10:0{i}:00Z",
+            "kind": kind,
+            "content": f"text {i}",
+        }
+        for i, kind in enumerate(["request", "tool_call", "tool_result", "response"])
+    ]
+    (export / "s1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    env = {"AIAB_PROXY_KEY": "t", "AIAB_PLANT_EXPORT": str(tmp_path / "plant")}
+    monkeypatch.setattr(ui, "settings", replace(ui.settings, log_sources=log_sources_from_env(env)))
+    started = {}
+
+    async def ready(_folder):
+        return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
+
+    def fake_start(settings, user, agreement, folder, records, label=None):
+        started.update(records=records, label=label)
+        return "run-1"
+
+    monkeypatch.setattr(ui, "_run_preflight", ready)
+    monkeypatch.setattr(ui.runs, "start_run", fake_start)
+    monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
+    assert "agt-1" in client.get("/runs?agreement=bio&logs=plant").text
+    response = client.post(
+        "/runs/start", data={"agreement": "bio", "logs": "plant", "session": "s1"}
+    )
+    assert response.status_code == 303
+    assert started["records"] == rows and "from Plant Logs, 4 records" in started["label"]
+
+
 def test_sign_page_signs_in_the_browser_and_keeps_the_manual_route(client, tmp_path):
     (tmp_path / "agreements/bio/signatures/lab.sig").unlink()  # the fixture is already signed
     html = client.get("/a/bio/sign").text

@@ -25,6 +25,7 @@ from server import (
     editing,
     githubexport,
     plan_chat,
+    plantlogs,
     proxylogs,
     publish,
     runs,
@@ -518,6 +519,11 @@ async def logs_page(request: Request) -> Response:
         matched=len(matched),
         total_requests=len(records),
         fetch=proxylogs.status(source),
+        plant=(
+            plantlogs.timeline(source.path(settings), current.records)
+            if current and source.kind == "plant"
+            else None
+        ),
     )
 
 
@@ -822,7 +828,7 @@ async def runs_index(request: Request) -> Response:
             or (hi and min(times) > hi)
         ):
             continue
-        recs = proxylogs.to_box_records(s.records)
+        recs = proxylogs.box_records(s.records)
         sessions.append(
             {
                 "session": s,
@@ -890,7 +896,7 @@ async def runs_start(request: Request) -> Response:
         ]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
-        records = proxylogs.to_box_records([r for s in picked for r in s.records])
+        records = proxylogs.box_records([r for s in picked for r in s.records])
         if not records:
             return back(here, err="The chosen sessions hold no text to audit.")
         label = (
