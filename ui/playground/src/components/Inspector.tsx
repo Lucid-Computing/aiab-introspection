@@ -74,7 +74,14 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
       <InputsEditor plan={plan} node={node} op={op} />
 
       {node.type === "input_logs" && <InputLogsForm node={node} set={set} />}
-      {node.type === "classifier" && <ClassifierForm node={node} set={set} />}
+      {node.type === "classifier" && (
+        <ClassifierForm
+          node={node}
+          set={set}
+          limits={plan.limits}
+          setLimits={(limits) => dispatch({ type: "update", f: (p) => ({ ...p, limits }) })}
+        />
+      )}
       {node.type === "run_python" && <RunPythonForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "run_llm" && <RunLlmForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "final_report" && <ReportForm plan={plan} node={node} set={set} />}
@@ -99,7 +106,7 @@ function IoLine({ plan, node, side }: { plan: Plan; node: PlanNode; side: "in" |
   const { inputs, output } = describeNode(plan, node);
   if (side === "in") {
     if (node.type === "input_logs") return <p className="insp-io">In: the log source.</p>;
-    if (inputs.length === 0) return <p className="insp-io">In: <span className="is-unbound">nothing connected yet</span>.</p>;
+    if (inputs.length === 0) return <p className="insp-io">In: N/A, not connected to a block yet.</p>;
     return (
       <p className="insp-io">
         In:{" "}
@@ -338,12 +345,71 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
   );
 }
 
-function ClassifierForm({ node, set }: { node: Classifier; set: (n: PlanNode) => void }) {
+function ClassifierForm({
+  node,
+  set,
+  limits,
+  setLimits,
+}: {
+  node: Classifier;
+  set: (n: PlanNode) => void;
+  limits: Plan["limits"];
+  setLimits: (l: Plan["limits"]) => void;
+}) {
   const c = node.config;
   const cfg = (patch: Partial<Classifier["config"]>) => set({ ...node, config: { ...c, ...patch } });
   return (
     <>
-      <Field label="Instructions" hint="The question the classifier answers about each item.">
+      <div className="f">
+        <span className="f-label">Query format</span>
+        <div className="row2">
+          <label className="f-hint">
+            one question per
+            <select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as Classifier["config"]["group_by"] })}>
+              <option value="session">session</option>
+              <option value="record">record</option>
+            </select>
+          </label>
+          <label className="f-hint">
+            records per question (1 to 32)
+            <NumberInput value={c.window} min={1} max={32} onChange={(window) => cfg({ window })} />
+          </label>
+        </div>
+        <div className="row3">
+          <label className="f-hint">
+            model calls per run (up to 256)
+            <NumberInput
+              value={limits.max_model_calls_per_run}
+              min={1}
+              max={256}
+              onChange={(v) => setLimits({ ...limits, max_model_calls_per_run: v })}
+            />
+          </label>
+          <label className="f-hint">
+            input bytes
+            <NumberInput
+              value={limits.max_input_utf8_bytes}
+              min={1}
+              max={1000000000000}
+              onChange={(v) => setLimits({ ...limits, max_input_utf8_bytes: v })}
+            />
+          </label>
+          <label className="f-hint">
+            seconds (up to 300)
+            <NumberInput
+              value={limits.max_runtime_seconds_per_run}
+              min={1}
+              max={300}
+              onChange={(v) => setLimits({ ...limits, max_runtime_seconds_per_run: v })}
+            />
+          </label>
+        </div>
+        <span className="f-hint">
+          Each question is one model call. The box takes at most 2,000 records per run, and refuses a run with more
+          questions than the call limit or more input than the byte limit.
+        </span>
+      </div>
+      <Field label="Instructions" hint="The question the model answers about each item. Examples go here too.">
         <textarea rows={5} value={c.instructions} onChange={(e) => cfg({ instructions: e.target.value })} />
       </Field>
       <div className="f">
@@ -670,6 +736,22 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
           onChange={(min_count) => cfg({ privacy: { ...c.privacy, min_count } })}
         />
       </Field>
+      <Field label="Max result bytes" hint="A report larger than this is not released. Up to 4096.">
+        <NumberInput
+          value={c.privacy.max_result_bytes}
+          min={1}
+          max={4096}
+          onChange={(max_result_bytes) => cfg({ privacy: { ...c.privacy, max_result_bytes } })}
+        />
+      </Field>
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={c.privacy.allow_free_text}
+          onChange={(e) => cfg({ privacy: { ...c.privacy, allow_free_text: e.target.checked } })}
+        />
+        Allow text fields written by the model
+      </label>
     </>
   );
 }

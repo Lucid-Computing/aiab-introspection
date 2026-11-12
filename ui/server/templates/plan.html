@@ -37,48 +37,11 @@
   {% else %}
   <a class="btn btn--ghost quick-sign" href="{{ base }}/sign" data-party="{{ user.party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[user.party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/plan"{% if server_certifies %} data-certify="/sign/certificate"{% endif %}>Sign</a>
   {% endif %}
-  <span class="text-muted"><a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a> is the folder the box runs · <a class="link" href="{{ base }}/sign">Keys and signatures</a></span>
+  <span class="text-muted"><a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a> is the folder the box runs · <a class="link" href="{{ base }}/sign">Keys and signatures</a> · <a class="link" href="{{ base }}/history">History{% if view.history %} ({{ view.history | length }}){% endif %}</a></span>
 </div>
 <p class="plan-state{% if view.signed_by_both %} ok{% endif %}">{% for party in parties %}{% set s = view.signatures[party] %}{% if s.status == 'ok' %}Signed by the {{ party }}{% if s.auto %} (by the server){% endif %}{% elif s.status == 'missing' %}Waiting for the {{ party }}{% else %}The {{ party }} signed an older version{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}.</p>
 {% endif %}
 
-{% if not snapshot %}<details class="info" {% if changes.open %}open{% endif %}>
-  <summary>Changes · who did what{% if view.history %} <span class="text-muted">({{ view.history | length }})</span>{% endif %}</summary>
-  <div class="info-body">
-  {% if view.history %}
-  {% set q0 = "edit=1&" if edit else "" %}
-  <p class="changes-filter">
-    <span class="text-muted">who</span>
-    {% for w in ["", "lab", "auditor"] %}<a class="link {% if changes.who == w %}current{% endif %}" href="{{ base }}/plan?{{ q0 }}who={{ w }}&kind={{ changes.kind }}">{{ w or "all" }}</a>{% endfor %}
-    <span class="text-muted">what</span>
-    {% for k in [""] + changes.kinds %}<a class="link {% if changes.kind == k %}current{% endif %}" href="{{ base }}/plan?{{ q0 }}who={{ changes.who }}&kind={{ k }}">{{ k or "all" }}</a>{% endfor %}
-  </p>
-  {% endif %}
-  {% if changes.total %}
-  <ul class="changes">
-    {% for e in changes.entries %}
-    {% set short = e.kind not in ["plan", "code", "prompt"] and e.detail | length <= 60 %}
-    <li>
-      {% if short %}
-      <div class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="mono">{{ e.detail }}</span></div>
-      {% else %}
-      <details class="change">
-        <summary class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="text-muted">{{ "changed" if e.kind in ["plan", "code", "prompt", "settings"] else e.kind }}</span><span class="toggle" aria-hidden="true">+</span></summary>
-        <div class="change-detail"><pre class="cmd">{{ e.detail }}</pre></div>
-      </details>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% if changes.total > changes.entries | length %}
-  <p class="changes-more"><span class="text-muted">Latest {{ changes.entries | length }} of {{ changes.total }}.</span> <a class="link" href="{{ base }}/plan?{{ q0 }}who={{ changes.who }}&kind={{ changes.kind }}&changes=all">Show all</a></p>
-  {% elif changes.all and changes.total > 10 %}
-  <p class="changes-more"><span class="text-muted">All {{ changes.total }}.</span> <a class="link" href="{{ base }}/plan?{{ q0 }}who={{ changes.who }}&kind={{ changes.kind }}">Show the latest 10</a></p>
-  {% endif %}
-  {% elif view.history %}<p class="text-muted">No changes match this filter.</p>
-  {% else %}<p class="text-muted">No changes recorded yet. Saves made through this UI are listed here with the party that made them.</p>{% endif %}
-  </div>
-</details>{% endif %}
 
 {# The "Build your plan with AI" chat (plan_chat.html) is hidden for now; the builder is the editor. #}
 
@@ -94,7 +57,6 @@
     <tr><th>Format</th><td class="mono">{{ view.restrictions.plan_format }}</td></tr>
     <tr><th>Pinned model</th><td class="mono">{{ view.restrictions.models[0].id }}</td></tr>
     <tr><th>Python may import</th><td class="mono">{{ view.restrictions.python_imports | join(", ") }}</td></tr>
-    <tr><th>Box limits</th><td class="mono">{% for k, v in view.restrictions.limits.items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>
   </table>
   </div>
 </details>

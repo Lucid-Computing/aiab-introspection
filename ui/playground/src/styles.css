@@ -123,6 +123,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .f-hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 details.f > summary { cursor: pointer; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); align-items: start; }
+.row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); align-items: end; }
+.row2 label, .row3 label { display: flex; flex-direction: column; gap: 3px; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--text-sm); }
 .checks label, .inline-check { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-sm); }
 .inline-check input[type="number"] { width: 80px; }

@@ -10,17 +10,17 @@ export const NODE_META: Record<NodeType, { symbol: string; label: string; blurb:
   },
   classifier: {
     symbol: "▲",
-    label: "Audit",
+    label: "Classifier",
     blurb: "Asks the model one fixed question about each item and keeps only a label and a score, so nothing the model writes can leave the box.",
   },
   run_python: {
     symbol: "◆",
-    label: "Metric",
-    blurb: "Arithmetic between blocks in Python both parties read and signed; it runs sealed, with no files, network or model.",
+    label: "Code",
+    blurb: "Anything plain Python can compute between blocks, in code both parties read and signed; it runs sealed, with no files, network or model.",
   },
   run_llm: {
     symbol: "◇",
-    label: "Agent",
+    label: "LLM",
     blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
   },
   final_report: {

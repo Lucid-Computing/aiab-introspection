@@ -10,8 +10,8 @@ import { NODE_META } from "./nodeMeta";
 /** dataTransfer type for a block kind dragged from the rail onto the diagram. */
 export const BLOCK_DRAG = "application/x-aiab-block";
 
-/** The kinds a person adds by hand. Metric and Agent stay in the format and open when a plan has them. */
-export const OFFERED: NodeType[] = ["input_logs", "classifier", "final_report"];
+/** The kinds a person adds by hand, in the order a plan usually runs them. */
+export const OFFERED: NodeType[] = ["input_logs", "classifier", "run_llm", "run_python", "final_report"];
 
 /** Add a block of `type` centred on `at` (flow coordinates), moved down until it overlaps no other block. */
 export function placeBlock(

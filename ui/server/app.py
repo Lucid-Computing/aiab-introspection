@@ -940,7 +940,6 @@ async def run_plan(request: Request, run_id: str) -> Response:
         edit=False,
         base=f"/a/{state['agreement']}",
         aid=state["agreement"],
-        changes={},
         snapshot=state,
     )
 
@@ -959,6 +958,33 @@ async def legacy_plan() -> Response:
 # --------------------------------------------------------------------------- one agreement
 
 
+@app.get("/a/{aid}/history")
+async def history_page(request: Request, aid: str) -> Response:
+    """Who changed what in one agreement: filter by party or kind, twenty at a time."""
+    target, redirect = agreement(request, aid)
+    if redirect:
+        return redirect
+    view, error = load_view(target)
+    if view is None:
+        return back(f"/a/{aid}/plan", err=error or "The plan does not load.")
+    q = request.query_params
+    who, kind, show_all = q.get("who", ""), q.get("kind", ""), q.get("changes") == "all"
+    history = list(view.history)
+    if who in PARTIES:
+        history = [e for e in history if e.get("party") == who]
+    if kind in CHANGE_KINDS:
+        history = [e for e in history if e.get("kind") in CHANGE_KINDS[kind]]
+    changes = {
+        "entries": history if show_all else history[:20],
+        "total": len(history),
+        "who": who,
+        "kind": kind,
+        "all": show_all,
+        "kinds": list(CHANGE_KINDS),
+    }
+    return render(request, "history.html", view=view, base=f"/a/{aid}", aid=aid, changes=changes)
+
+
 @app.get("/a/{aid}/plan")
 async def plan(request: Request, aid: str) -> Response:
     target, redirect = agreement(request, aid)
@@ -967,22 +993,6 @@ async def plan(request: Request, aid: str) -> Response:
     view, error = load_view(target)
     q = request.query_params
     edit, editor = _edit_mode(request, aid, q.get("edit") == "1")
-    # The change log can get long: filter by party or kind, show ten at a time.
-    who, kind, show_all = q.get("who", ""), q.get("kind", ""), q.get("changes") == "all"
-    history = view.history if view else []
-    if who in PARTIES:
-        history = [e for e in history if e.get("party") == who]
-    if kind in CHANGE_KINDS:
-        history = [e for e in history if e.get("kind") in CHANGE_KINDS[kind]]
-    changes = {
-        "entries": history if show_all else history[:10],
-        "total": len(history),
-        "who": who,
-        "kind": kind,
-        "all": show_all,
-        "open": bool(who or kind or show_all),
-        "kinds": list(CHANGE_KINDS),
-    }
     return render(
         request,
         "plan.html",
@@ -992,7 +1002,6 @@ async def plan(request: Request, aid: str) -> Response:
         edit=edit,
         base=f"/a/{aid}",
         aid=aid,
-        changes=changes,
         chat_enabled=bool(settings.anthropic_api_key),
         chat_initial=(
             "Create a plan for this question: " + view.description

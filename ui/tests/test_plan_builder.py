@@ -138,7 +138,8 @@ def test_plan_page_embeds_the_builder_and_the_history(draft, monkeypatch):
     assert "/audit-plan-playground/?agreement=builder-test&amp;readonly=1" in page.text
     assert "Does the agent leak secrets?" in page.text
     assert "The steps, in the order the box runs them" not in page.text  # the builder shows them
-    assert "Changes · who did what" in page.text  # the history sits above the builder
+    assert 'href="/a/builder-test/history">History' in page.text  # the history has its own page
+    assert client.get("/a/builder-test/history").status_code == 200
     editing_page = client.get("/a/builder-test/plan?edit=1")
     assert '/audit-plan-playground/?agreement=builder-test"' in editing_page.text
     editing.clear("builder-test")

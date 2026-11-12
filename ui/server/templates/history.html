@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}History · AIAB agreement{% endblock %}
+{% block content %}
+<p class="crumb"><a href="{{ base }}/plan" class="link">← {{ view.plan_id }}</a></p>
+<h1>History</h1>
+  {% if view.history %}
+    <p class="changes-filter">
+    <span class="text-muted">who</span>
+    {% for w in ["", "lab", "auditor"] %}<a class="link {% if changes.who == w %}current{% endif %}" href="{{ base }}/history?who={{ w }}&kind={{ changes.kind }}">{{ w or "all" }}</a>{% endfor %}
+    <span class="text-muted">what</span>
+    {% for k in [""] + changes.kinds %}<a class="link {% if changes.kind == k %}current{% endif %}" href="{{ base }}/history?who={{ changes.who }}&kind={{ k }}">{{ k or "all" }}</a>{% endfor %}
+  </p>
+  {% endif %}
+  {% if changes.total %}
+  <ul class="changes">
+    {% for e in changes.entries %}
+    {% set short = e.kind not in ["plan", "code", "prompt"] and e.detail | length <= 60 %}
+    <li>
+      {% if short %}
+      <div class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="mono">{{ e.detail }}</span></div>
+      {% else %}
+      <details class="change">
+        <summary class="change-head"><span class="mono text-muted">{{ e.at[:16].replace("T", " ") }}</span> <span class="badge {% if e.party == 'lab' %}badge--ink{% else %}badge--ok{% endif %}">{{ e.party }}</span> <span class="text-muted">{{ e.user }}</span> <strong>{{ e.where }}</strong> <span class="text-muted">{{ "changed" if e.kind in ["plan", "code", "prompt", "settings"] else e.kind }}</span><span class="toggle" aria-hidden="true">+</span></summary>
+        <div class="change-detail"><pre class="cmd">{{ e.detail }}</pre></div>
+      </details>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if changes.total > changes.entries | length %}
+  <p class="changes-more"><span class="text-muted">Latest {{ changes.entries | length }} of {{ changes.total }}.</span> <a class="link" href="{{ base }}/history?who={{ changes.who }}&kind={{ changes.kind }}&changes=all">Show all</a></p>
+  {% elif changes.all and changes.total > 10 %}
+  <p class="changes-more"><span class="text-muted">All {{ changes.total }}.</span> <a class="link" href="{{ base }}/history?who={{ changes.who }}&kind={{ changes.kind }}">Show the latest 10</a></p>
+  {% endif %}
+  {% elif view.history %}<p class="text-muted">No changes match this filter.</p>
+  {% else %}<p class="text-muted">No changes recorded yet. Saves made through this UI are listed here with the party that made them.</p>{% endif %}
+  
+{% endblock %}
