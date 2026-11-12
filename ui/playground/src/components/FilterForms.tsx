@@ -3,7 +3,7 @@
  * operator and value, all or any of them, with Exclude) or LLM mode (one yes/no question).
  * Rules mode counts what it keeps from the sample logs; real records are filtered in the box.
  */
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { AGREEMENT } from "../agreement";
 import {
   FIELD_LABELS,
@@ -78,9 +78,6 @@ function useSessions(source: string | undefined): SessionRow[] | null {
   return rows;
 }
 
-/** The other mode's settings while this page is open, so switching back restores them. */
-const stash = new Map<string, Partial<Record<"rules" | "llm", FilterRules | FilterLlm>>>();
-
 const RULES_DEFAULT: FilterRules = { mode: "rules", match: "all", exclude: false, rules: [] };
 const LLM_DEFAULT: FilterLlm = {
   mode: "llm",
@@ -95,13 +92,14 @@ const LLM_DEFAULT: FilterLlm = {
   },
 };
 
+/** Render with `key={node.id}`: the other mode's settings are kept while this pane is open. */
 export function FilterForm({ plan, node, set, op }: { plan: Plan; node: FilterLogs; set: Set; op: Op }) {
   const c = node.config;
+  const stash = useRef<Partial<Record<"rules" | "llm", FilterRules | FilterLlm>>>({});
   const mode = (m: "rules" | "llm") => {
     if (m === c.mode) return;
-    stash.set(node.id, { ...stash.get(node.id), [c.mode]: c });
-    const back = stash.get(node.id)?.[m];
-    set({ ...node, config: back ?? (m === "rules" ? RULES_DEFAULT : LLM_DEFAULT) });
+    stash.current[c.mode] = c;
+    set({ ...node, config: stash.current[m] ?? (m === "rules" ? RULES_DEFAULT : LLM_DEFAULT) });
   };
   return (
     <>

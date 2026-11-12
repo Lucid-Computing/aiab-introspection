@@ -81,7 +81,7 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
       <InputsEditor plan={plan} node={node} op={op} />
 
       {node.type === "input_logs" && <InputLogsForm node={node} set={set} />}
-      {node.type === "filter_logs" && <FilterForm plan={plan} node={node} set={set} op={op} />}
+      {node.type === "filter_logs" && <FilterForm key={node.id} plan={plan} node={node} set={set} op={op} />}
       {node.type === "combine_logs" && <CombineForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "classifier" && (
         <ClassifierForm node={node} set={set} fromItems={inputType(plan, node, "items") === "Items"} />
