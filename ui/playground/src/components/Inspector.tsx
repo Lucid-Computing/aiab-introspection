@@ -4,7 +4,7 @@ import { connect, deleteNodes, disconnect, renameInput, renameOutput, updateNode
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
 import { blockPython, narrowing, planPython } from "../plan/python";
-import { isQuery, parseQuery, type Query, QUERY_WINDOW_MAX, queryCode } from "../plan/query";
+import { isQuery, parseQuery, type Query, queryCode } from "../plan/query";
 import { describeNode } from "../plan/shape";
 import { outputSpec } from "../plan/spec";
 import {
@@ -46,7 +46,6 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
     r.ok
       ? dispatch({ type: "setPlan", plan: r.plan, select })
       : dispatch({ type: "toast", text: r.message, kind: "error" });
-  const setLimits = (limits: Plan["limits"]) => dispatch({ type: "update", f: (p) => ({ ...p, limits }) });
   const query = parseQuery(node);
   const kind = kindOf(node);
   const meta = BLOCK_META[kind];
@@ -82,17 +81,10 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
 
       {node.type === "input_logs" && <InputLogsForm node={node} set={set} />}
       {node.type === "classifier" && (
-        <ClassifierForm
-          node={node}
-          set={set}
-          limits={plan.limits}
-          setLimits={setLimits}
-          fromItems={inputType(plan, node, "items") === "Items"}
-          hasQuery={plan.nodes.some(isQuery)}
-        />
+        <ClassifierForm node={node} set={set} fromItems={inputType(plan, node, "items") === "Items"} />
       )}
       {node.type === "run_python" && query && (
-        <QueryForm node={node} query={query} set={set} limits={plan.limits} setLimits={setLimits} />
+        <QueryForm node={node} query={query} set={set} />
       )}
       {node.type === "run_python" && !query && <RunPythonForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "run_llm" && <RunLlmForm plan={plan} node={node} set={set} op={op} />}
@@ -354,60 +346,8 @@ function InputLogsForm({ node, set }: { node: InputLogs; set: (n: PlanNode) => v
   );
 }
 
-function LimitsFields({ limits, setLimits }: { limits: Plan["limits"]; setLimits: (l: Plan["limits"]) => void }) {
-  return (
-    <>
-        <div className="row3">
-          <label className="f-hint">
-            model calls per run (up to 256)
-            <NumberInput
-              value={limits.max_model_calls_per_run}
-              min={1}
-              max={256}
-              onChange={(v) => setLimits({ ...limits, max_model_calls_per_run: v })}
-            />
-          </label>
-          <label className="f-hint">
-            input bytes
-            <NumberInput
-              value={limits.max_input_utf8_bytes}
-              min={1}
-              max={1000000000000}
-              onChange={(v) => setLimits({ ...limits, max_input_utf8_bytes: v })}
-            />
-          </label>
-          <label className="f-hint">
-            seconds (up to 300)
-            <NumberInput
-              value={limits.max_runtime_seconds_per_run}
-              min={1}
-              max={300}
-              onChange={(v) => setLimits({ ...limits, max_runtime_seconds_per_run: v })}
-            />
-          </label>
-        </div>
-        <span className="f-hint">
-          Each question is one model call. The box takes at most 2,000 records per run, and refuses a run with more
-          questions than the call limit or more input than the byte limit.
-        </span>
-    </>
-  );
-}
-
-/** A Query format block: its two settings rewrite the block's code; the limits are the plan's. */
-function QueryForm({
-  node,
-  query,
-  set,
-  limits,
-  setLimits,
-}: {
-  node: RunPython;
-  query: Query;
-  set: (n: PlanNode) => void;
-  limits: Plan["limits"];
-  setLimits: (l: Plan["limits"]) => void;
-}) {
+/** A Query format block: its two settings rewrite the block's code. */
+function QueryForm({ node, query, set }: { node: RunPython; query: Query; set: (n: PlanNode) => void }) {
   const put = (patch: Partial<Query>) =>
     set({ ...node, config: { ...node.config, code: queryCode({ ...query, ...patch }) } });
   return (
@@ -421,11 +361,10 @@ function QueryForm({
           </Select>
         </label>
         <label className="f-hint">
-          records per question (1 to 32)
-          <NumberInput value={query.window} min={1} max={QUERY_WINDOW_MAX} onChange={(window) => put({ window })} />
+          records per question
+          <NumberInput value={query.window} min={1} onChange={(window) => put({ window })} />
         </label>
       </div>
-      <LimitsFields limits={limits} setLimits={setLimits} />
     </div>
   );
 }
@@ -452,34 +391,59 @@ function SessionPicker({
   value: string[];
   onChange: (sessions: string[]) => void;
 }) {
-  const [rows, setRows] = useState<SessionRow[] | null>(null);
+  // Every log source's sessions, so a session ticked in one source stays in Selected
+  // (with its title) after the pane moves to another source.
+  const [bySource, setBySource] = useState<Record<string, SessionRow[]> | null>(null);
   const [q, setQ] = useState("");
+  // Unticking Select all clears the ticks on screen. The plan itself cannot name "no
+  // session": none named means every session of the log source, which Selected says.
+  const [cleared, setCleared] = useState(false);
   useEffect(() => {
     let live = true;
-    setRows(null);
     if (!AGREEMENT) return;
-    fetch(`/logs/sessions.json?logs=${encodeURIComponent(source)}`, { credentials: "same-origin" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => live && setRows(body && body.source === source ? (body.sessions as SessionRow[]) : []))
-      .catch(() => live && setRows([]));
+    Promise.all(
+      SOURCE_OPTIONS.map((o) =>
+        fetch(`/logs/sessions.json?logs=${encodeURIComponent(o.id)}`, { credentials: "same-origin" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((body) => [o.id, body && body.source === o.id ? (body.sessions as SessionRow[]) : []] as const)
+          .catch(() => [o.id, [] as SessionRow[]] as const),
+      ),
+    ).then((pairs) => live && setBySource(Object.fromEntries(pairs)));
     return () => {
       live = false;
     };
-  }, [source]);
+  }, []);
+  useEffect(() => setCleared(false), [source]);
+  const rows = bySource ? (bySource[source] ?? []) : null;
+  const ids = (rows ?? []).map((r) => r.id);
+  const here = new Set(ids);
   const chosen = new Set(value);
-  const known = new Set((rows ?? []).map((r) => r.id));
-  const gone = value.filter((id) => rows !== null && !known.has(id));
+  const where = new Map<string, { title: string; source: string }>();
+  for (const [id, list] of Object.entries(bySource ?? {}))
+    for (const r of list) where.set(r.id, { title: r.title, source: sourceLabel(id) });
   const needle = q.trim().toLowerCase();
   const shown = (rows ?? []).filter((r) => !needle || `${r.title} ${r.who} ${r.id}`.toLowerCase().includes(needle));
-  const toggle = (id: string) => onChange(chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  // None named means every session of this source. Otherwise this source is "all" when
+  // each of its sessions is named.
+  const implicit = value.length === 0 && !cleared;
+  const all = implicit || (ids.length > 0 && ids.every((id) => chosen.has(id)));
+  const toggle = (id: string) => {
+    setCleared(false);
+    onChange(implicit ? ids.filter((x) => x !== id) : chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  };
+  const toggleAll = () => {
+    if (all) {
+      setCleared(true);
+      onChange(value.filter((x) => !here.has(x)));
+    } else {
+      setCleared(false);
+      const others = value.filter((x) => !here.has(x));
+      onChange(others.length ? [...others, ...ids] : []);
+    }
+  };
   return (
     <div className="f">
       <span className="f-label">Sessions</span>
-      <span className="f-hint">
-        {value.length === 0
-          ? "Every session of the log source. Tick sessions to read only those."
-          : `${value.length} session${value.length === 1 ? "" : "s"} chosen. Untick all to read every session.`}
-      </span>
       {!AGREEMENT || rows === null ? (
         !AGREEMENT ? (
           <LinesInput value={value} onChange={onChange} />
@@ -490,27 +454,58 @@ function SessionPicker({
         <>
           {rows.length > 8 && <input value={q} placeholder="Search sessions" onChange={(e) => setQ(e.target.value)} />}
           <div className="sess-pick">
+            {rows.length > 0 && (
+              <label className="sess-all">
+                <input type="checkbox" checked={all} onChange={toggleAll} />
+                <span>Select all</span>
+              </label>
+            )}
             {shown.map((r) => (
               <label key={r.id}>
-                <input type="checkbox" checked={chosen.has(r.id)} onChange={() => toggle(r.id)} />
+                <input type="checkbox" checked={implicit || chosen.has(r.id)} onChange={() => toggle(r.id)} />
                 <span>
                   {r.title}
                   <span className="muted"> · {r.records} records</span>
                 </span>
               </label>
             ))}
-            {gone.map((id) => (
-              <label key={id}>
-                <input type="checkbox" checked onChange={() => toggle(id)} />
-                <span className="danger">{id} · not in this log source any more</span>
-              </label>
-            ))}
-            {shown.length === 0 && gone.length === 0 && (
+            {shown.length === 0 && (
               <span className="f-hint">
                 {SOURCE_OPTIONS.some((o) => o.id === source) ? "No session here." : "Pick a log source first."}
               </span>
             )}
           </div>
+          <span className="f-label">Selected</span>
+          {implicit ? (
+            <span className="f-hint">
+              All {rows.length} sessions of {sourceLabel(source)}
+            </span>
+          ) : value.length === 0 ? (
+            <span className="f-hint">None. Until one is ticked, the plan reads every session.</span>
+          ) : (
+            <ul className="sess-chosen">
+              {value.map((id) => {
+                const at = where.get(id);
+                return (
+                  <li key={id}>
+                    <span className={at ? undefined : "danger"}>
+                      {at ? (
+                        <>
+                          <span className="muted">{at.source} · </span>
+                          {at.title}
+                        </>
+                      ) : (
+                        `${id} · not in any log source here`
+                      )}
+                    </span>
+                    <button type="button" aria-label="Remove" onClick={() => onChange(value.filter((x) => x !== id))}>
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </>
       )}
     </div>
@@ -520,28 +515,20 @@ function SessionPicker({
 function ClassifierForm({
   node,
   set,
-  limits,
-  setLimits,
   fromItems,
-  hasQuery,
 }: {
   node: Classifier;
   set: (n: PlanNode) => void;
-  limits: Plan["limits"];
-  setLimits: (l: Plan["limits"]) => void;
   /** The input is already Items (a Query format block or another Items output): group_by and window are unused. */
   fromItems: boolean;
-  /** The plan has a Query format block, which carries the limits. */
-  hasQuery: boolean;
 }) {
   const c = node.config;
   const cfg = (patch: Partial<Classifier["config"]>) => set({ ...node, config: { ...c, ...patch } });
   return (
     <>
-      {!(fromItems && hasQuery) && (
+      {!fromItems && (
       <div className="f">
-        <span className="f-label">{fromItems ? "Limits" : "Query format"}</span>
-        {!fromItems && (
+        <span className="f-label">Query format</span>
         <div className="row2">
           <label className="f-hint">
             one question per
@@ -551,12 +538,10 @@ function ClassifierForm({
             </Select>
           </label>
           <label className="f-hint">
-            records per question (1 to 32)
-            <NumberInput value={c.window} min={1} max={32} onChange={(window) => cfg({ window })} />
+            records per question
+            <NumberInput value={c.window} min={1} onChange={(window) => cfg({ window })} />
           </label>
         </div>
-        )}
-        {!hasQuery && <LimitsFields limits={limits} setLimits={setLimits} />}
       </div>
       )}
       <Field label="Prompt" hint="The question the model answers about each item. Examples go here too.">

@@ -383,7 +383,6 @@ def apply(settings: Settings, candidate: dict, actor: dict[str, str]) -> str:
                         display_source(name, before), display_source(name, item["content"])
                     ),
                 )
-            pv.ensure_lab_signature(settings, actor)
             return file_digest(bundle_files(settings.plan_dir))
         except Exception:
             for name, raw in originals.items():

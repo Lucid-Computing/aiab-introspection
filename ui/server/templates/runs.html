@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import party_icon %}
 {% set active = "runs" %}
 {% block title %}Runs · AIAB agreement{% endblock %}
 {% block content %}
@@ -25,7 +26,7 @@
 
   {% if show_bar %}
   <div class="runs-bar">
-    <span>{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB from {{ log_source.label }}{% if source_fixed %}, as the agreement's input filter says{% elif scope %}, within the agreement's input filter{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the filter{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a></span>
+    <span>{{ fits | length }} session{{ "s" if fits | length != 1 }} · {{ totals.records }} records · {{ totals.kb }} KB from {{ (source_labels or [log_source.label]) | join(", ") }}{% if source_fixed %}, as the agreement's input filter says{% elif scope %}, within the agreement's input filter{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the filter{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a></span>
     {% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>
     {% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}
   </div>
@@ -44,15 +45,16 @@
   </form>
   <div class="runs-table">
   <table class="table">
-    <thead><tr><th>Started</th><th>Agreement and input</th><th>Plan version</th><th>By</th><th>State</th><th></th></tr></thead>
+    <thead><tr><th>Started</th><th>Agreement</th><th>Plan</th><th>By</th><th>State</th><th></th></tr></thead>
     <tbody>
     {% for r in past.shown %}
+    {% set name = r.agreement or (r.plan.agreement if r.plan else "") or r.transcript %}
     <tr>
       <td class="mono">{{ r.started[:16].replace("T", " ") }}</td>
-      <td class="mono">{{ r.transcript }}</td>
-      <td>{% if r.plan and r.plan.digest %}<a class="link mono" href="/runs/{{ r.id }}/plan">{{ r.plan.digest[7:19] }}…</a><br><span class="text-muted">{{ "signed by both" if r.plan.signed else "signatures not verified" }}</span>{% else %}<span class="text-muted">not recorded</span>{% endif %}</td>
-      <td>{{ r.by.user }} <span class="badge badge--ink">{{ r.by.party }}</span></td>
-      <td>{{ r.outcome.title }}{% if r.outcome.verified %}<br><span class="text-muted">Report verified</span>{% endif %}</td>
+      <td title="{{ r.transcript }}">{{ name }}</td>
+      <td>{% if r.plan and r.plan.digest %}<a class="link mono" href="/runs/{{ r.id }}/plan" title="{{ r.plan.digest }} · {{ "signed by both" if r.plan.signed else "signatures not verified" }}">{{ r.plan.digest[7:15] }}</a>{% if not r.plan.signed %} <span class="text-muted">unsigned</span>{% endif %}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td><span class="party-icon" title="{{ r.by.party }}" aria-label="{{ r.by.party }}">{{ party_icon(r.by.party) }}</span>{{ r.by.user }}</td>
+      <td>{{ r.outcome.title }}{% if r.outcome.verified %} <span class="text-muted">· verified</span>{% endif %}</td>
       <td class="actions"><a class="btn btn--ghost btn--sm" href="/runs/{{ r.id }}">Open</a></td>
     </tr>
     {% else %}

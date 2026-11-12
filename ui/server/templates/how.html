@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}How it works · AIAB agreement{% endblock %}
 {% block content %}
+<div class="home">
 <h1>Auditor in a Box</h1>
 <p class="lead">Using LLMs to provide privacy-preserving and verifiable audits.</p>
 
@@ -10,4 +11,6 @@
   <li><span><strong>Only a short report comes out.</strong> The plan fixes what the report may hold, and the box signs it. The logs never leave.</span></li>
   <li><span><strong>Attested.</strong> The box runs in a confidential VM. The chip states which image is running, and anyone can check it.</span></li>
 </ol>
+</div>
+{% include "_hills.html" %}
 {% endblock %}

@@ -38,7 +38,7 @@ ARCHIVE_DIR = "_archive"  # agreements in the previous plan format, kept read-on
 # Where the box's loader error codes point. One code at a time: the loader stops at the
 # first problem, exactly as the box does at boot.
 ISSUE_WHERE = {
-    "invalid_bundle": "plan.json is missing, a symlink or larger than 256 KiB",
+    "invalid_bundle": "plan.json is missing or a symlink",
     "invalid_json": "plan.json is not valid JSON",
     "invalid_plan": "the plan graph (the builder lists the problems)",
     "invalid_trust_roots": "the trust file",
@@ -204,13 +204,16 @@ def load_plan_view(settings: Settings) -> PlanView:
     ) < len(PARTIES):
         for entry in signatures.values():
             entry["status"], entry["detail"] = "invalid", "the same signing key for both parties"
-    # With a lab key on the server, the lab signature is the server's own and never
-    # freezes the plan: the server signs the next version again. Only the auditor's does.
-    auto = lab_auto_key(settings) is not None
-    signatures["lab"]["auto"] = auto and signatures["lab"]["status"] == "ok"
-    frozen = any(
-        s["status"] == "ok" and not (auto and role == "lab") for role, s in signatures.items()
+    # "auto": the lab signature was made with the server's own lab key (Lab Sign). It
+    # freezes the plan like any other signature; only the wording differs.
+    server_lab = server_public_key(settings, "lab")
+    lab = signatures["lab"]
+    lab["auto"] = bool(
+        server_lab
+        and lab["status"] == "ok"
+        and key_bytes(lab.get("signing_key") or "") == key_bytes(server_lab)
     )
+    frozen = any(s["status"] == "ok" for s in signatures.values())
     stale = [r for r, s in signatures.items() if s["status"] == "invalid"]
     state, badge = agreement_state(signatures, frozen, issue)
     where = ISSUE_WHERE.get(issue, issue) if issue else None
@@ -365,7 +368,6 @@ def save_plan(
     if before != raw:
         path.write_bytes(raw)
         record_change(settings, actor, "plan", "plan", _short_diff(pretty(before), pretty(raw)))
-    ensure_lab_signature(settings, actor)
     return file_digest({PLAN_FILE: raw}), []
 
 
@@ -488,10 +490,11 @@ def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -
     return removed
 
 
-AUTO_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for auto-signing
+SERVER_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for Lab Sign
 
-# Prototype shortcut: the server may hold the lab's certified signing key and sign every
-# version as the lab (AIAB_LAB_KEY), and the auditor's root and certify each auditor's
+# Prototype shortcut: the server may hold the lab's certified signing key and sign a
+# version as the lab when anyone logged in presses Lab Sign, a button for the demo
+# (AIAB_LAB_KEY), and the auditor's root and certify each auditor's
 # browser key (AIAB_AUDITOR_ROOT_KEY). Whoever controls the server can then sign as both
 # parties. THREAT_MODEL.md, "Prototype shortcut", lists what changes for the real version.
 SERVER_KEY_ENV = {"lab": ("AIAB_LAB_KEY", "AIAB_LAB_CERTIFICATE")}
@@ -552,29 +555,6 @@ def server_problem(settings: Settings, party: str) -> str | None:
 def server_signs(settings: Settings, party: str) -> bool:
     """The server holds a working signing key for `party`."""
     return server_key(settings, party) is not None and server_problem(settings, party) is None
-
-
-def _server_signature_current(settings: Settings, party: str, plan_digest: str) -> bool:
-    """The stored signature is the server's, for this version, under the current root."""
-    target = settings.plan_dir / "signatures" / f"{party}.sig"
-    if not target.is_file():
-        return False
-    try:
-        stored, _ = read_certificate(target.with_suffix(".cert"))
-        # The stored certificate must be the current root's, for this key: after a root
-        # rotation the signature is re-made with the new certificate.
-        public = server_public_key(settings, party)
-        if stored is None or certified_key(stored, party, load_trust(settings)) != public:
-            raise AuditError("invalid_certificate")
-        verify_signature(
-            public,
-            target.read_text(encoding="utf-8").strip(),
-            "plan-bundle",
-            {"plan_digest": plan_digest},
-        )
-        return True
-    except (AuditError, ValueError, KeyError):
-        return False
 
 
 def _write_server_signature(settings: Settings, party: str, plan_digest: str) -> None:
@@ -679,41 +659,37 @@ def issue_certificate(
     return "ok", certificate
 
 
-# The lab's key signs by itself; these names are the lab's view of the functions above.
-def lab_auto_key(settings: Settings) -> Any | None:
-    return server_key(settings, "lab")
-
-
-def lab_auto_public_key(settings: Settings) -> str | None:
-    return server_public_key(settings, "lab")
-
-
-def lab_auto_certificate(settings: Settings) -> dict[str, Any] | None:
-    return server_certificate(settings, "lab")
-
-
-def lab_auto_problem(settings: Settings) -> str | None:
-    return server_problem(settings, "lab")
-
-
-def ensure_lab_signature(settings: Settings, actor: dict[str, str] | None = None) -> bool:
-    """Sign the current version as the lab with the server's key, unless there is no key, it
-    is not the trusted one, or a valid lab signature is already there. True when it signed."""
+def lab_sign(
+    settings: Settings, actor: dict[str, str], shown_digest: str | None = None
+) -> tuple[str, str]:
+    """Lab Sign (prototype, for the demo): sign the current version as the lab with the
+    server's certified lab key, for whoever pressed the button, auditor included. Returns
+    ("ok", digest) or ("error", why). Refuses when the server holds no working lab key, the
+    box would reject the plan, the plan changed since `shown_digest` was shown, or a valid
+    lab signature is already there."""
     if not server_signs(settings, "lab"):
-        return False
-    plan_digest = file_digest(bundle_files(settings.plan_dir))
-    if _server_signature_current(settings, "lab", plan_digest):
-        return False
-    _write_server_signature(settings, "lab", plan_digest)
-    who = f" after a change by {actor['username']}" if actor and actor.get("username") else ""
+        return "error", server_problem(settings, "lab") or "this server holds no lab key"
+    try:
+        view = load_plan_view(settings)
+    except Exception as exc:  # noqa: BLE001 - a plan that does not load is not signed
+        return "error", f"the plan does not load ({type(exc).__name__})"
+    if view.issue:
+        return "error", f"the box would reject this plan ({view.issue})"
+    if shown_digest is not None and shown_digest != view.digest:
+        return "error", "the plan changed since this page was loaded; check it and sign again"
+    # A signature under a rotated root no longer verifies, so it is not "ok" and is re-made.
+    if view.signatures["lab"]["status"] == "ok":
+        return "error", "the lab has already signed this version"
+    _write_server_signature(settings, "lab", view.digest)
+    who = actor.get("username") or "someone"
     record_change(
         settings,
-        AUTO_SIGNER,
+        SERVER_SIGNER,
         "signature",
         "signature: lab",
-        f"signed version {plan_digest[7:19]} automatically with the server's lab key{who}",
+        f"signed version {view.digest[7:19]} with the server's lab key; Lab Sign pressed by {who}",
     )
-    return True
+    return "ok", view.digest
 
 
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"  # no leading _ or .: those folders are ours
@@ -876,9 +852,9 @@ def new_agreement(
     agreement's plan (``source=copy``, ``copy_from=<id>``: the plan only, no signatures,
     no history).
 
-    From the template, the question becomes the plan's description and the classifier's
-    instructions. A copy keeps the plan as it was, with the new name and the question as
-    its description. Returns (errors, agreement id).
+    The description is optional. From the template, a description given becomes the plan's
+    description and the classifier's instructions; without one the baseline plan is kept
+    as it is. A copy keeps the plan as it was, with the new name. Returns (errors, id).
     """
     errors: list[str] = []
     plan_id = form.get("plan_id", "").strip()
@@ -894,8 +870,8 @@ def new_agreement(
     elif (settings.agreements_dir / plan_id).exists():
         errors.append(f"name: an agreement called {plan_id} already exists")
     problem = form.get("problem", "").strip().replace("\r\n", "\n")
-    if not 1 <= len(problem) <= 16384:
-        errors.append("question: required, up to 16384 characters")
+    if len(problem) > 16384:
+        errors.append("description: up to 16384 characters")
     if errors:
         return errors, None
 
@@ -908,8 +884,8 @@ def new_agreement(
     plan = decode(path.read_bytes())
     plan["plan_id"] = plan_id
     plan["description"] = problem
-    plan["title"] = problem.splitlines()[0][:120]
-    if origin is None:
+    plan["title"] = problem.splitlines()[0][:120] if problem else plan_id
+    if origin is None and problem:
         for node in plan["nodes"]:
             if node["type"] == "classifier":
                 node["config"]["instructions"] = problem + "\n"
@@ -922,7 +898,6 @@ def new_agreement(
         f"copied from {origin.plan_dir.name}" if origin is not None else "created from the template"
     )
     record_change(created, actor, "created", "agreement", what)
-    ensure_lab_signature(created, actor)
     return [], plan_id
 
 

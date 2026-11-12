@@ -47,13 +47,11 @@ SCOPE = closed(
             "type": "array",
             "items": ID,
             "minItems": 1,
-            "maxItems": 100,
             "uniqueItems": True,
         },
     }
 )
 PLAN_FILE = "plan.json"
-MAX_PLAN_BYTES = 262144
 PARTIES = ("lab", "auditor")
 SIGNATURE = {"type": "string", "maxLength": 256}
 CERTIFICATE_KIND = "signing-key"
@@ -63,7 +61,7 @@ MAX_CERTIFICATE_BYTES = 1024
 CERTIFICATE = closed({"role": {"enum": list(PARTIES)}, "signing_key": KEY, "signature": SIGNATURE})
 SIGNED_BUNDLE = closed(
     {
-        "files": closed({PLAN_FILE: {"type": "string", "maxLength": MAX_PLAN_BYTES}}),
+        "files": closed({PLAN_FILE: {"type": "string"}}),
         "signatures": closed({role: SIGNATURE for role in PARTIES}),
         "certificates": closed({role: CERTIFICATE for role in PARTIES}),
     }
@@ -135,23 +133,17 @@ def certified_keys(certificates, trust: dict) -> dict[str, str]:
 
 def bundle_files(folder: Path) -> dict[str, bytes]:
     path = folder / PLAN_FILE
-    if (
-        folder.is_symlink()
-        or path.is_symlink()
-        or not path.is_file()
-        or path.stat().st_size > MAX_PLAN_BYTES
-    ):
+    if folder.is_symlink() or path.is_symlink() or not path.is_file():
         raise AuditError("invalid_bundle")
     return check_files_shape({PLAN_FILE: path.read_bytes()})
 
 
 def check_files_shape(files: dict[str, bytes]) -> dict[str, bytes]:
-    """Exactly the plan file, within the same bound as the folder loader."""
+    """Exactly the plan file, as the folder loader reads it."""
     if (
         not isinstance(files, dict)
         or set(files) != {PLAN_FILE}
         or not isinstance(files[PLAN_FILE], bytes)
-        or len(files[PLAN_FILE]) > MAX_PLAN_BYTES
     ):
         raise AuditError("invalid_bundle")
     return files

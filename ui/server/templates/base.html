@@ -1,3 +1,4 @@
+{% from "_icons.html" import party_icon %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -14,13 +15,14 @@
 </head>
 <body>
 <nav class="navbar">
-  <a class="nav-brand" href="/how"><span class="nav-wordmark">AIAB · Agreement</span></a>
+  <a class="nav-brand" href="/how"><img class="nav-logo" src="/assets/lucid-logo.svg" alt="Lucid Computing" width="28" height="28"><span class="nav-wordmark">AIAB · Agreement</span></a>
+  {% if lab_sign %}<span class="dev-mode" title="This server holds the lab's signing key: anyone logged in can sign as the lab.">DEV MODE</span>{% endif %}
   <div class="nav-links">
     {% for href, label in [("/how", "How it works"), ("/logs", "Logs"), ("/agreements", "Agreements"), ("/runs", "Runs")] %}
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
     {% endfor %}
     {% if user %}
-    <span class="chip">{{ user.display_name }} <span class="badge badge--ink">{{ user.party }}</span></span>
+    <span class="chip" title="{{ user.party }}"><span class="party-icon" aria-label="{{ user.party }}">{{ party_icon(user.party) }}</span>{{ user.display_name }}</span>
     <form method="post" action="/logout" class="inline"><button class="btn btn--ghost btn--sm">Log out</button></form>
     {% endif %}
   </div>

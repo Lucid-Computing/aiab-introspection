@@ -21,12 +21,30 @@ STAGES = {
 }
 
 
+def memory_ceiling():
+    """Three quarters of the memory this container may use (its cgroup limit, else the
+    machine's), so plan code cannot starve the box process holding every run's state. Not a
+    fixed figure: a larger box gives a plan more room."""
+    total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as file:  # cgroup v2, then v1; "max" or absent means no limit
+                text = file.read().strip()
+        except OSError:
+            continue
+        if text.isdigit():
+            total = min(total, int(text))
+    return total * 3 // 4
+
+
 def isolate(seconds):
     if sys.platform != "linux" or platform.machine() != "x86_64":
         raise RuntimeError("unsupported_sandbox")
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024,) * 2)
-    resource.setrlimit(resource.RLIMIT_CPU, (seconds + 1,) * 2)
+    resource.setrlimit(resource.RLIMIT_AS, (memory_ceiling(),) * 2)
+    # SIGXCPU at the soft limit, which the parent reports as execution_timeout; SIGKILL at
+    # the hard one in case the signal is ignored.
+    resource.setrlimit(resource.RLIMIT_CPU, (seconds, seconds + 5))
     resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
     libc = ctypes.CDLL(None, use_errno=True)
 
@@ -60,8 +78,8 @@ def send(value):
 
 
 def receive():
-    line = sys.stdin.buffer.readline(2_097_153)
-    if not line.endswith(b"\n") or len(line) > 2_097_152:
+    line = sys.stdin.buffer.readline()
+    if not line.endswith(b"\n"):
         raise ValueError
     return json.loads(line)
 
@@ -83,7 +101,8 @@ def main():
     }
     for module in ("re", "math", "collections", "itertools", "statistics", "json"):
         __import__(module)
-    isolate(request["limits"]["max_runtime_seconds_per_run"])
+    budgets = request["budgets"]
+    isolate(request["cpu_seconds"])
 
     def llm(node_id, texts):
         send({"kind": "llm", "node": node_id, "texts": texts})
@@ -101,7 +120,7 @@ def main():
         global stage
         stage = STAGES[node["type"]]
 
-    result = graph.run_plan(plan, order, records, llm, compiled, progress)
+    result = graph.run_plan(plan, order, records, llm, compiled, progress, budgets)
     stage = "plan_report_failed"
     send({"kind": "result", "result": result})
 

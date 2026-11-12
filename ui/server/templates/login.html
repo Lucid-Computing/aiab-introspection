@@ -3,7 +3,6 @@
 {% block content %}
 <div class="panel login">
   <h3>Log in</h3>
-  <p class="explain">As the lab or the auditor.</p>
 {% if settings.oidc_enabled %}
   <a class="btn btn--primary" href="/login/start?next={{ next | urlencode }}">Sign in with {{ settings.oidc_provider_name }}</a>
 {% endif %}
@@ -14,4 +13,5 @@
     <button class="btn {% if settings.oidc_enabled %}btn--ghost{% else %}btn--primary{% endif %}">Log in</button>
   </form>
 </div>
+{% include "_hills.html" %}
 {% endblock %}

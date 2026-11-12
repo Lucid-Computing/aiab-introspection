@@ -42,13 +42,7 @@ def issues_of(plan, trust_model=None):
 def test_fixture_plan_loads_and_derives_the_runtime_settings(plan, trust_model):
     analysis = check_plan(plan, trust_model)
     assert analysis.order == ("logs", "commands", "effects", "destructive", "report")
-    assert analysis.limits == {
-        "max_input_utf8_bytes": 200000,
-        "max_model_calls_per_run": 128,
-        "max_runtime_seconds_per_run": 240,
-        "max_records_per_run": 2000,
-        "max_result_bytes": 1024,
-    }
+    assert analysis.limits == {"max_result_bytes": 1024}
     assert analysis.input_scope is None  # no window and no agents pinned: chosen per run
     schema = analysis.output_schema
     assert schema["required"] == ["flagged", "destructive_sessions", "sessions"]
@@ -75,7 +69,6 @@ def test_every_issue_names_its_node_and_path(plan):
 @pytest.mark.parametrize(
     ("change", "fragment"),
     [
-        (lambda p: p.pop("limits"), "'limits' is a required property"),
         (lambda p: p.__setitem__("version", "aiab-plan-ir/v1"), "version"),
         (
             lambda p: node(p, "logs")["config"].__setitem__(

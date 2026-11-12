@@ -2,7 +2,7 @@ import { useReactFlow } from "@xyflow/react";
 import type { Dispatch } from "react";
 import { READONLY } from "../agreement";
 import { NODE_H, NODE_W } from "../plan/layout";
-import { addNode } from "../plan/ops";
+import { addNode, cannotAdd } from "../plan/ops";
 import { addQuery } from "../plan/query";
 import type { Plan } from "../plan/types";
 import type { Action, State } from "../state/store";
@@ -50,22 +50,26 @@ export default function NewBlock({
 
   return (
     <div className="newblock" role="toolbar" aria-label="Add a block">
-      {OFFERED.map((t) => (
-        <button
-          key={t}
-          className="newblock-item"
-          title="Click to add, or drag onto the diagram"
-          aria-label={`Add ${BLOCK_META[t].label}`}
-          draggable
-          onDragStart={(e) => {
-            e.dataTransfer.setData(BLOCK_DRAG, t);
-            e.dataTransfer.effectAllowed = "copy";
-          }}
-          onClick={(e) => addAtCentre(t, e.currentTarget)}
-        >
-          <span className={`sym sym--${t}`} /> {BLOCK_META[t].label}
-        </button>
-      ))}
+      {OFFERED.map((t) => {
+        const blocked = cannotAdd(plan, t);
+        return (
+          <button
+            key={t}
+            className="newblock-item"
+            title={blocked ?? "Click to add, or drag onto the diagram"}
+            aria-label={`Add ${BLOCK_META[t].label}`}
+            aria-disabled={blocked !== null}
+            draggable={blocked === null}
+            onDragStart={(e) => {
+              e.dataTransfer.setData(BLOCK_DRAG, t);
+              e.dataTransfer.effectAllowed = "copy";
+            }}
+            onClick={(e) => blocked === null && addAtCentre(t, e.currentTarget)}
+          >
+            <span className={`sym sym--${t}`} /> {BLOCK_META[t].label}
+          </button>
+        );
+      })}
     </div>
   );
 }

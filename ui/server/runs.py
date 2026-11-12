@@ -11,6 +11,7 @@ re-reads state.json on each load.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import secrets
@@ -23,13 +24,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from aiab.audit.protocol import AuditError
+from aiab.baked import plan_ir
 from aiab.baked.bundle import bundle_files, file_digest, load_bundle
-from aiab.baked.plan_ir import check_plan
+from aiab.baked.graph import select_records
 
 from server.config import STATIC_DIR, Settings
 
 RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}")
-STALE_SECONDS = 15 * 60  # a step still "running" after this long was interrupted
+# Runs this server process is performing. A run whose state says "running" but is not here
+# was cut off by a restart. Runs have no time limit, so how long one has taken says nothing.
+LIVE: set[str] = set()
 
 STEPS = (
     (
@@ -142,32 +146,13 @@ def scope_notes(folder: Path, who: str, first: float, last: float) -> list[str]:
     return notes
 
 
-def check_limits(folder: Path, records: list[dict]) -> None:
-    """Refuse here what the box would refuse as input_too_large."""
-    try:
-        limits = check_plan(_plan(folder)).limits
-    except (AuditError, TypeError, KeyError):
-        return
-    size = len(json.dumps(records, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-    if len(records) > limits["max_records_per_run"]:
-        raise ValueError(
-            f"{len(records)} records, the plan allows {limits['max_records_per_run']} per run;"
-            " pick fewer sessions"
-        )
-    if size > limits["max_input_utf8_bytes"]:
-        raise ValueError(
-            f"{size // 1024} KB of records, the plan allows"
-            f" {limits['max_input_utf8_bytes'] // 1024} KB per run; pick fewer sessions"
-        )
-
-
 def preflight(settings: Settings, folder: Path | None) -> dict:
     """What a run of this agreement needs, and what is missing. Shown before starting."""
     release = {}
     missing = []
     plan_digest = None
     if folder is None:
-        missing.append("an agreement signed by both parties")
+        missing.append("no signed agreement")
     else:
         try:
             # Against the keys the box trusts now. After a key change an agreement signed
@@ -178,9 +163,7 @@ def preflight(settings: Settings, folder: Path | None) -> dict:
             plan_digest = bundle.digest
         except AuditError as exc:
             if str(exc) == "invalid_signature":
-                missing.append(
-                    "the agreement is not signed by both parties with the keys the box trusts"
-                )
+                missing.append("not signed by both parties")
             else:
                 missing.append("signed agreement: " + str(exc))
         except (OSError, ValueError) as exc:
@@ -242,7 +225,13 @@ def _write(folder: Path, state: dict) -> None:
     tmp.replace(folder / "state.json")
 
 
-def _cli(settings: Settings, folder: Path, *args: str, offline: bool = False) -> dict | None:
+def _cli(
+    settings: Settings,
+    folder: Path,
+    *args: str,
+    offline: bool = False,
+    timeout: float | None = 400,
+) -> dict | None:
     base = ["--folder", str(folder), "--trust", str(settings.trust_file), *args]
     if offline:
         # The same CLI, with sockets disabled, as the walkthrough does for the offline check.
@@ -254,7 +243,9 @@ def _cli(settings: Settings, folder: Path, *args: str, offline: bool = False) ->
         command = [sys.executable, "-c", code, *base]
     else:
         command = [sys.executable, "-m", "auditor.baked", *base]
-    done = subprocess.run(command, cwd=str(STATIC_DIR), capture_output=True, text=True, timeout=400)
+    done = subprocess.run(
+        command, cwd=str(STATIC_DIR), capture_output=True, text=True, timeout=timeout
+    )
     if done.returncode:
         raise RuntimeError(
             done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "failed"
@@ -327,6 +318,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 "--output",
                 str(files["submission"]),
                 *(("--seal-to", str(files["anchor"])) if sealed else ()),
+                timeout=None,  # as long as the records need
             )
             submission = json.loads(files["submission"].read_text())
             fixture.unlink(missing_ok=True)
@@ -346,6 +338,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 str(files["submission"]),
                 "--output",
                 str(files["admission"]),
+                timeout=None,
             )
             admission.update(json.loads(files["admission"].read_text()))
             return admission
@@ -361,6 +354,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 admission["input_commitment"],
                 "--output",
                 str(files["report"]),
+                timeout=None,  # the box runs as long as the records need; it says when done
             )
             return json.loads(files["report"].read_text())
         if key == "offline":
@@ -415,15 +409,16 @@ def start_run(
     folder: Path,
     records: list[dict],
     label: str | None = None,
+    sent: dict | None = None,
 ) -> str:
     """Start a run of the agreement in ``folder`` on records chosen from the Logs page.
 
     The agreement is copied into the run folder first, signatures included: that copy is
     what is sent, so an edit made while the run is going changes nothing, and the report
-    can always be verified again against exactly the plan it names."""
+    can always be verified again against exactly the plan it names. ``sent`` lists the
+    sessions sent (``sent_sessions``) for the run page."""
     if not records:
         raise ValueError("no records chosen")
-    check_limits(folder, records)
     run_id = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(3)}"
     target = settings.runs_dir / run_id
     target.mkdir(parents=True, exist_ok=False)
@@ -442,13 +437,22 @@ def start_run(
         "agreement": agreement,
         "transcript": label or agreement,
         "plan": sent_plan(settings, target / "plan", agreement),
+        "input": sent,
         "status": "running",
         "steps": [{"key": k, "title": t, "explain": e, "status": "waiting"} for k, t, e in STEPS],
         "result": None,
     }
     _write(target, state)
-    threading.Thread(target=_execute, args=(settings, target, state), daemon=True).start()
+    LIVE.add(run_id)
+    threading.Thread(target=_tracked, args=(settings, target, state), daemon=True).start()
     return run_id
+
+
+def _tracked(settings: Settings, folder: Path, state: dict) -> None:
+    try:
+        _execute(settings, folder, state)
+    finally:
+        LIVE.discard(state["id"])
 
 
 def load_run(settings: Settings, run_id: str) -> dict | None:
@@ -458,10 +462,8 @@ def load_run(settings: Settings, run_id: str) -> dict | None:
     if not path.is_file():
         return None
     state = json.loads(path.read_text(encoding="utf-8"))
-    if state["status"] == "running":
-        started = datetime.strptime(state["started"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-        if (datetime.now(UTC) - started).total_seconds() > STALE_SECONDS:
-            state["status"] = "interrupted"  # the server restarted while this run was going
+    if state["status"] == "running" and run_id not in LIVE:
+        state["status"] = "interrupted"  # the server restarted while this run was going
     if "plan" not in state:
         state["plan"] = _derived_plan(settings, state)
     state["outcome"] = outcome(state)
@@ -477,6 +479,49 @@ def list_runs(settings: Settings) -> list[dict]:
         if state:
             runs.append(state)
     return runs
+
+
+def result_view(settings: Settings, state: dict) -> dict:
+    """What the run page shows of the result: one row per released field with the plan's
+    own description of it (read from the frozen plan copy in the run folder), and a few
+    facts about the run. Empty rows when there is no verified, completed report."""
+    steps = {step["key"]: step for step in state["steps"]}
+    out = state["outcome"]
+    result = out.get("result") if out.get("verified") else None
+    described: dict[str, str] = {}
+    try:
+        plan = json.loads(
+            (settings.runs_dir / state["id"] / "plan" / "plan.json").read_text(encoding="utf-8")
+        )
+        for node in plan.get("nodes", []):
+            if node.get("type") == "final_report":
+                for f in node.get("config", {}).get("fields", []):
+                    described[f.get("name", "")] = f.get("description", "")
+    except (OSError, ValueError, AttributeError):
+        pass
+    rows = [
+        {"name": k, "value": v, "description": described.get(k, "")}
+        for k, v in (result.items() if isinstance(result, dict) else [])
+    ]
+    manifest = (steps.get("attest", {}).get("output") or {}).get("manifest") or {}
+    seconds = None
+    try:
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        seconds = int(
+            (
+                datetime.strptime(state["finished"], fmt)
+                - datetime.strptime(state["started"], fmt)
+            ).total_seconds()
+        )
+    except (KeyError, ValueError, TypeError):
+        pass
+    return {
+        "rows": rows,
+        "records": (steps.get("export", {}).get("output") or {}).get("records"),
+        "seconds": seconds,
+        "model": (manifest.get("model_binding") or {}).get("id"),
+        "image": manifest.get("image_digest"),
+    }
 
 
 def outcome(state: dict) -> dict:
@@ -507,8 +552,9 @@ def outcome(state: dict) -> dict:
             "service before retrying."
         ),
         "input_too_large": (
-            "The records or assembled queries exceed the plan's limits. Select a smaller input "
-            "or review the plan limits."
+            "One model question did not fit the model's context window even after splitting "
+            "long items: a step that asks one question over all its input (a Value output), "
+            "or a prompt that is too long by itself. Review that step."
         ),
         "invalid_output": (
             "The plan returned a result outside its agreed report fields. Review the Final "
@@ -529,8 +575,8 @@ def outcome(state: dict) -> dict:
         ),
         "plan_report_failed": "The plan failed while producing the report from its input.",
         "execution_timeout": (
-            "The plan exceeded its signed runtime limit. Reduce the input or review and re-sign "
-            "the limit."
+            "A Python step used an hour of processor time without finishing; it was stopped. "
+            "Check its code for a loop that never ends."
         ),
         "model_output_truncated": (
             "The classifier exhausted its output-token budget before completing its answer. "
@@ -548,4 +594,107 @@ def outcome(state: dict) -> dict:
         "result": result,
         "error": code,
         "help": help_text,
+    }
+
+
+def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list[dict]) -> dict:
+    """What a run sends, by session: id, title, the records sent, and how many of them
+    the agreement's Input filter keeps. The filter is the box's own (``select_records``) run
+    on the records' metadata only: kind, agent, session. When the filter also matches
+    keywords, ``kept`` is None: that reads the text, and which records pass is the box's
+    to know. Written into the run's state at start; the records themselves are deleted."""
+    plan = _plan(folder)
+    node = None
+    try:
+        node = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+    except (TypeError, KeyError, StopIteration):
+        pass
+    keywords = bool(node and any(node["config"]["filter"].get("keywords") or ()))
+    kept: list[dict] | None = None
+    if node is not None and not keywords:
+        meta = copy.deepcopy(node)
+        meta["config"]["filter"]["keywords"] = []
+        meta["config"]["max_records"] = len(records)  # over the limit is a failure, not a drop
+        try:
+            kept = select_records(meta, records)
+        except (KeyError, TypeError, ValueError):
+            kept = None
+    out = []
+    for s in sessions:
+        sent = sum(1 for r in records if r.get("session_id") == s["id"])
+        keeps = None if kept is None else sum(1 for r in kept if r["session_id"] == s["id"])
+        out.append({**s, "records": sent, "kept": keeps})
+    return {
+        "source": source,
+        "sessions": out,
+        "filter": "keywords" if keywords else "metadata" if kept is not None else "unknown",
+    }
+
+
+def run_counts(settings: Settings, state: dict) -> dict | None:
+    """Sessions sent, dropped and classified for the run page. Sent and dropped come from
+    what the UI sent (``sent_sessions``); what reaches the classifier is worked out from the
+    frozen plan when the classifier reads the Input filter directly; classified comes only
+    from fields of the verified report that count the classifier's items. Those are items,
+    not sessions: a session longer than the classifier's window is several items. None for
+    runs saved before runs recorded their sessions."""
+    sent = state.get("input")
+    if not sent:
+        return None
+    sessions = sent["sessions"]
+    plan = _plan(settings.runs_dir / state["id"] / "plan") or {}
+    nodes = {n.get("id"): n for n in plan.get("nodes") or () if isinstance(n, dict)}
+
+    def source_of(node: dict | None, port: str | None = None) -> dict | None:
+        try:
+            ref = node["inputs"][port] if port else next(iter(node["inputs"].values()))
+            return nodes.get(plan_ir.split_ref(ref)[0])
+        except (TypeError, KeyError, StopIteration, ValueError):
+            return None
+
+    report = next((n for n in nodes.values() if n.get("type") == "final_report"), None)
+    classifier = source_of(report, plan_ir.REPORT_INPUT)
+    if not classifier or classifier.get("type") != "classifier":
+        classifier = None
+    cfg = (classifier or {}).get("config") or {}
+    direct = bool(classifier) and (source_of(classifier) or {}).get("type") == "input_logs"
+    known = sent["filter"] == "metadata"
+    dropped = [s for s in sessions if known and not s["kept"]]
+    item_count = None
+    if known and direct:
+        window = max(1, int(cfg.get("window") or 1))
+        per = [s["kept"] for s in sessions if s["kept"]]
+        item_count = (
+            sum(-(-k // window) for k in per) if cfg.get("group_by") == "session" else sum(per)
+        )
+    steps = {s.get("key"): s for s in state.get("steps") or ()}
+    out = state.get("outcome") or {}
+    result = (
+        out.get("result") if out.get("verified") and out.get("execution") == "completed" else None
+    )
+    fields = ((report or {}).get("config") or {}).get("fields") or () if classifier else ()
+    counts = []
+    for f in fields:
+        head, _, label = str(f.get("from", f.get("name"))).partition(".")
+        if head == "count":
+            value = result.get(f["name"]) if isinstance(result, dict) else None
+            counts.append({"name": f["name"], "label": label or None, "value": value})
+    privacy = ((report or {}).get("config") or {}).get("privacy") or {}
+    return {
+        "submitted": (steps.get("submit") or {}).get("status") == "done",
+        "source": sent.get("source"),
+        "sessions": sessions,
+        "sent": len(sessions),
+        "records": sum(s["records"] for s in sessions),
+        "filter": sent["filter"],
+        "dropped": dropped,
+        "reach": len(sessions) - len(dropped) if known else None,
+        "direct": direct,
+        "item_count": item_count,
+        "group_by": cfg.get("group_by"),
+        "window": cfg.get("window"),
+        "threshold": cfg.get("threshold"),
+        "counts": counts,
+        "reported": result is not None,
+        "min_count": privacy.get("min_count") or 1,
     }

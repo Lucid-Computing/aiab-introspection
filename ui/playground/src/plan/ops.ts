@@ -22,7 +22,6 @@ export function newNode(type: NodeType, id: string): PlanNode {
           source: "dev",
           input_scope: { agents: [] },
           filter: { kinds: ["request", "response", "tool_call", "tool_result"], keywords: [] },
-          max_records: 2000,
         },
       };
     case "classifier":
@@ -109,6 +108,12 @@ export function addNode(plan: Plan, type: NodeType): { plan: Plan; id: string } 
   const { id: i, type: t, ...rest } = newNode(type, id);
   const node = { id: i, type: t, title: same ? `${LABEL[type]} ${same + 1}` : LABEL[type], ...rest } as PlanNode;
   return { plan: { ...plan, nodes: [...plan.nodes, node] }, id };
+}
+
+/** Why the builder will not add a block of this kind to `plan` now, or null when it will. */
+export function cannotAdd(plan: Plan, type: string): string | null {
+  if (type === "final_report" && plan.nodes.some((n) => n.type === "final_report")) return "A plan has one report";
+  return null;
 }
 
 export function deleteNodes(plan: Plan, ids: string[]): Plan {
