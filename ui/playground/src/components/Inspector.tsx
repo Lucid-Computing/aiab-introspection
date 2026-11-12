@@ -2,6 +2,7 @@ import type { Dispatch } from "react";
 import { connect, deleteNodes, disconnect, renameInput, renameOutput, updateNode } from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
+import { blockPython, planPython } from "../plan/python";
 import { describeNode } from "../plan/shape";
 import {
   type Classifier,
@@ -87,6 +88,13 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
       {node.type === "final_report" && <ReportForm plan={plan} node={node} set={set} />}
 
       <IoLine plan={plan} node={node} side="out" />
+      <details className="f">
+        <summary className="f-label">Python</summary>
+        <span className="f-hint">
+          This block as the Python file the box runs. Read only for now: change the settings above and it follows.
+        </span>
+        <pre className="insp-py">{blockPython(plan, node)}</pre>
+      </details>
       <div className="insp-foot">
         <button
           className="linklike danger"
@@ -191,6 +199,11 @@ function PlanPanel({
           onChange={(e) => setMeta({ description: e.target.value || undefined })}
         />
       </Field>
+      <details className="f">
+        <summary className="f-label">Python</summary>
+        <span className="f-hint">The wrapper: which block feeds which, in the order the box runs them. Read only for now.</span>
+        <pre className="insp-py">{planPython(plan)}</pre>
+      </details>
       <div className="f-label">Issues</div>
       {issues.length === 0 ? (
         <p className="ok-line">No issues.</p>

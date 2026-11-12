@@ -124,6 +124,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .f-label { font-size: 14px; font-weight: 600; color: var(--ink-1); }
 .f-hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 details.f > summary { cursor: pointer; }
+.insp-py { margin: 4px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; border: var(--border-strong); background: var(--paper-2); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; white-space: pre; color: var(--ink-1); }
 .insp-more { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-3); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); align-items: start; }
 .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); align-items: end; }
@@ -178,6 +179,8 @@ details.f > summary { cursor: pointer; }
 .toast.error { border-left-color: var(--destructive); }
 
 @media (max-width: 900px) {
+  .newblock { flex-direction: row; flex-wrap: wrap; right: 12px; top: 8px; padding: 2px; }
+  .newblock-item { padding: 2px 8px; }
   .work--two { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .side, .work--two .code { border-left: none; border-top: var(--border-ink); }
 }
