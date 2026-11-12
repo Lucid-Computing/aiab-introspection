@@ -1,5 +1,5 @@
 import type { Dispatch } from "react";
-import { connect, deleteNodes, disconnect, renameInput, renameNode, renameOutput, updateNode } from "../plan/ops";
+import { connect, deleteNodes, disconnect, renameInput, renameOutput, updateNode } from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
 import { describeNode } from "../plan/shape";
@@ -47,13 +47,13 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
 
   return (
     <div className={`insp insp--${node.type}`}>
-      <div className="insp-head" title={meta.blurb}>
-        {meta.label}
-        <CommitInput className="insp-id mono" value={node.id} onCommit={(v) => op(renameNode(plan, node.id, v), v)} />
-        <button className="x" title="Close" onClick={() => dispatch({ type: "select", id: null })}>
+      <div className="insp-head">
+        <span className="sym">{meta.symbol}</span> {meta.label}
+        <button className="x x--big" title="Close" onClick={() => dispatch({ type: "select", id: null })}>
           ×
         </button>
       </div>
+      <p className="insp-blurb">{meta.blurb}</p>
       {own.length > 0 && (
         <ul className="insp-issues">
           {own.map((i, k) => (
@@ -63,7 +63,6 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
           ))}
         </ul>
       )}
-      <IoStrip plan={plan} node={node} />
       <Field label="Title">
         <input
           value={node.title ?? ""}
@@ -92,55 +91,6 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
 }
 
 type Op = (r: { ok: true; plan: Plan } | { ok: false; message: string }, select?: string) => void;
-
-/** What this node reads and what it produces, with the output type first: the thing to match. */
-function IoStrip({ plan, node }: { plan: Plan; node: PlanNode }) {
-  const { inputs, output } = describeNode(plan, node);
-  return (
-    <div className="iostrip">
-      <span className="iostrip-k">In</span>
-      <span className="iostrip-v">
-        {node.type === "input_logs" ? (
-          <span className="muted">none · starts from the log source</span>
-        ) : inputs.length === 0 ? (
-          <span className="is-unbound">no inputs connected</span>
-        ) : (
-          inputs.map((i) => {
-            const bad = i.type !== null && !accepts(node.type, i.type);
-            return (
-              <span key={i.name} className="iostrip-v" style={{ flexBasis: "100%" }}>
-                <span className="mono">{i.name}</span>
-                {i.ref ? (
-                  <>
-                    <span className="muted">←</span>
-                    <TypeBadge type={i.type} bad={bad} />
-                    <span className="mono muted">{i.ref}</span>
-                    {i.shape && <span className="iostrip-shape">{i.shape}</span>}
-                  </>
-                ) : (
-                  <span className="is-unbound">not connected</span>
-                )}
-              </span>
-            );
-          })
-        )}
-      </span>
-      <span className="iostrip-k">Out</span>
-      <span className="iostrip-v">
-        {output ? (
-          <>
-            <TypeBadge type={output.type} />
-            <span className="mono">{output.name}</span>
-            {output.note && <span className="muted">· {output.note}</span>}
-            <span className="iostrip-shape big">{output.shape}</span>
-          </>
-        ) : (
-          <span className="muted">none</span>
-        )}
-      </span>
-    </div>
-  );
-}
 
 function PlanPanel({
   plan,
@@ -222,7 +172,7 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
   const names = Object.keys(node.inputs);
   return (
     <div className="f">
-      <span className="f-label">Inputs</span>
+      <span className="f-label">Reads from</span>
       <table className="io">
         <tbody>
           {names.map((name) => (
@@ -282,7 +232,7 @@ function InputsEditor({ plan, node, op }: { plan: Plan; node: PlanNode; op: Op }
             e.target.value && op(connect(plan, { source: e.target.value, target: node.id, targetHandle: "__new__" }))
           }
         >
-          <option value="">+ add input from…</option>
+          <option value="">+ read from another block…</option>
           {candidates.map(({ s, out }) => (
             <option key={s.id} value={s.id}>
               {s.id}.{out!.name} ({out!.type})

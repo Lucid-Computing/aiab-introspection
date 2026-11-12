@@ -98,22 +98,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .react-flow__connectionline path { stroke: var(--ink-1); stroke-width: 1.5; }
 
 /* ---- inspector ---- */
-.iostrip { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: baseline; font-size: var(--text-xs); padding: 6px 8px; border: var(--border-strong); background: var(--paper-2); }
-.iostrip-k { font-size: 12px; font-weight: 600; color: var(--ink-3); }
-.iostrip-v { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
-.iostrip-v .mono { color: var(--ink-1); }
-.iostrip-shape { font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); flex-basis: 100%; overflow-wrap: anywhere; }
-.iostrip-shape.big { font-size: 12px; color: var(--ink-1); }
-.iostrip .is-unbound { color: var(--destructive); }
 .arglist { margin: 2px 0 0; padding: 0; list-style: none; font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); }
 .arglist li { padding: 1px 0; overflow-wrap: anywhere; }
 .arglist .mono { color: var(--ink-1); }
 .insp { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
 .insp-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 17px; padding-bottom: var(--space-2); border-bottom: 1px solid; }
-.insp-id { margin-left: auto; width: 150px; border-color: transparent; background: transparent; text-align: right; text-transform: none; letter-spacing: 0; color: var(--ink-2); }
-.insp-id:hover { border-color: var(--rule-strong); }
 .insp-head { border-bottom-color: var(--rule-strong) !important; }
-.insp-blurb { color: var(--ink-2); font-size: var(--text-sm); }
+.insp-blurb { color: var(--ink-2); font-size: var(--text-sm); line-height: 1.45; margin: -6px 0 0; }
 .insp-issues { list-style: none; border: var(--border-strong); }
 .insp-issues li { padding: 4px 8px; font-size: var(--text-xs); border-bottom: var(--border-hairline); }
 .insp-issues li:last-child { border-bottom: none; }
@@ -139,6 +130,10 @@ details.f > summary { cursor: pointer; }
 .io-type { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); }
 .labels td:nth-child(3) { width: 34px; text-align: center; }
 .x { font-size: 16px; line-height: 1; padding: 0 4px; color: var(--ink-3); }
+.x--big { margin-left: auto; font-size: 26px; padding: 0 6px; }
+/* The block-kind symbol: one plain glyph per kind, on blocks, the rail and the pane. */
+.sym { display: inline-block; width: 1.1em; text-align: center; font-size: 0.85em; color: var(--ink-2); }
+.insp-head .sym { font-size: 0.75em; }
 .x:hover { color: var(--destructive); }
 .add-input { font-family: var(--font-mono); font-size: var(--text-xs); }
 .f .btn--sm { align-self: flex-start; padding: 2px 8px; font-size: 11px; margin-top: 2px; }

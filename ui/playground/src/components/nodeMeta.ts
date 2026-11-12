@@ -1,12 +1,33 @@
 import { LOG_SOURCES } from "../plan/mockLogs";
 import type { NodeType, PlanNode } from "../plan/types";
 
-export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
-  input_logs: { label: "Input filter", blurb: "Which log records the audit reads." },
-  classifier: { label: "Audit", blurb: "One question the model answers about each item, with a fixed set of labels." },
-  run_python: { label: "Metric", blurb: "Arithmetic between blocks, in Python the parties signed." },
-  run_llm: { label: "Agent", blurb: "A free model call with your own prompts and a declared output." },
-  final_report: { label: "Report", blurb: "The only result that leaves the box, with its release rules." },
+/** Each kind has a plain symbol, a name, and one sentence on why the block exists. */
+export const NODE_META: Record<NodeType, { symbol: string; label: string; blurb: string }> = {
+  input_logs: {
+    symbol: "■",
+    label: "Input filter",
+    blurb: "Fixes which logs the box may read before anything runs, so the audit cannot reach beyond what both parties agreed to.",
+  },
+  classifier: {
+    symbol: "▲",
+    label: "Audit",
+    blurb: "Asks the model one fixed question about each item and keeps only a label and a score, so nothing the model writes can leave the box.",
+  },
+  run_python: {
+    symbol: "◆",
+    label: "Metric",
+    blurb: "Arithmetic between blocks in Python both parties read and signed; it runs sealed, with no files, network or model.",
+  },
+  run_llm: {
+    symbol: "◇",
+    label: "Agent",
+    blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
+  },
+  final_report: {
+    symbol: "●",
+    label: "Report",
+    blurb: "Names the few numbers that leave the box and the rules that stop one person's session from being singled out.",
+  },
 };
 
 export const MODEL_OPTIONS = ["gpt-oss-safeguard-120b", "gpt-oss-120b", "llama-3.3-70b-instruct", "qwen3-32b"];

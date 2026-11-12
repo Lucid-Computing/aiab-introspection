@@ -65,7 +65,9 @@ function PlanNodeView({ id, data, selected }: NodeProps<FlowNode>) {
             style={{ left: `${((k + 1) / (all.length + 1)) * 100}%` }}
           />
         ))}
-      <div className="pn-kind">{meta.label}</div>
+      <div className="pn-kind">
+        <span className="sym">{meta.symbol}</span> {meta.label}
+      </div>
       <div className="pn-title">{n.title || n.id}</div>
       <div className={`pn-line${errors.length ? " is-bad" : todo ? " is-todo" : ""}`}>{note}</div>
       {output && output.type !== "Report" && (

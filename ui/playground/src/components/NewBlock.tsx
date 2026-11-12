@@ -62,7 +62,7 @@ export default function NewBlock({
           }}
           onClick={(e) => addAtCentre(t, e.currentTarget)}
         >
-          + {NODE_META[t].label}
+          <span className="sym">{NODE_META[t].symbol}</span> {NODE_META[t].label}
         </button>
       ))}
     </div>
