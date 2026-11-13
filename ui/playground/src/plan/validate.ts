@@ -138,7 +138,7 @@ export function structuralIssues(plan: Plan): Issue[] {
           path,
           message: out
             ? `${n.id}.inputs.${name}: "${src}" has no output "${port}" (its output is "${out.name}")`
-            : `${n.id}.inputs.${name}: "${src}" is a Final Report and has no output`,
+            : `${n.id}.inputs.${name}: "${src}" is a report and has no output`,
         });
     }
   });

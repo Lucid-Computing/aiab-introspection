@@ -230,6 +230,49 @@ export const FinalReportNode = z.strictObject({
   }),
 });
 
+/** What a Report can say about its records (static/aiab/baked/plan_ir.py METADATA). */
+export const METADATA_FIELDS = [
+  "record_count",
+  "session_count",
+  "agent_count",
+  "agent_ids",
+  "kind_counts",
+  "first_ts",
+  "last_ts",
+  "content_bytes",
+] as const;
+export type MetadataField = (typeof METADATA_FIELDS)[number];
+/** The fields of a record a Report may include. */
+export const RECORD_FIELDS = ["id", "session_id", "agent_id", "kind", "ts", "content"] as const;
+export type RecordField = (typeof RECORD_FIELDS)[number];
+/** The box's caps: the longest list it releases, the largest result, the longest string. */
+export const MAX_INCLUDED = 64;
+export const MAX_RESULT_BYTES = 4096;
+export const MAX_CONTENT_CHARS = 1024;
+
+/**
+ * The Report: facts about a list of records and, with `include_records`, the first records
+ * themselves. `records` is present exactly when they are included.
+ */
+export const RecordsReportNode = z.strictObject({
+  ...node("records_report"),
+  config: z.strictObject({
+    metadata: z.array(z.enum(METADATA_FIELDS)).default([]),
+    include_records: z.boolean().default(false),
+    records: z
+      .strictObject({
+        max_records: z.number().int().min(1).max(MAX_INCLUDED),
+        fields: z.array(z.enum(RECORD_FIELDS)).min(1),
+        /** Longer content is cut to this many characters; the record says its full length. */
+        max_content_chars: z.number().int().min(1).max(MAX_CONTENT_CHARS),
+      })
+      .optional(),
+    /** Counts below this are released as 0. */
+    min_count: z.number().int().min(1).default(1),
+    max_result_bytes: z.number().int().min(1).max(MAX_RESULT_BYTES).default(MAX_RESULT_BYTES),
+  }),
+});
+
 export const PlanNode = z.discriminatedUnion("type", [
   InputLogsNode,
   FilterLogsNode,
@@ -238,6 +281,7 @@ export const PlanNode = z.discriminatedUnion("type", [
   RunPythonNode,
   RunLlmNode,
   FinalReportNode,
+  RecordsReportNode,
 ]);
 
 /**
@@ -272,6 +316,10 @@ export type Classifier = NodeOf<"classifier">;
 export type RunPython = NodeOf<"run_python">;
 export type RunLlm = NodeOf<"run_llm">;
 export type FinalReport = NodeOf<"final_report">;
+export type RecordsReport = NodeOf<"records_report">;
+
+/** The two report kinds; a plan has exactly one report, of either. */
+export const isReport = (n: { type: string }) => n.type === "final_report" || n.type === "records_report";
 
 export const NODE_TYPES: NodeType[] = [
   "input_logs",
@@ -281,6 +329,7 @@ export const NODE_TYPES: NodeType[] = [
   "run_python",
   "run_llm",
   "final_report",
+  "records_report",
 ];
 
 /** Canvas positions by node id. Kept out of the IR: moving a box changes no semantics. */

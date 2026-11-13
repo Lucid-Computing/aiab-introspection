@@ -481,14 +481,42 @@ def list_runs(settings: Settings) -> list[dict]:
     return runs
 
 
+# What each fact of a Report (records_report) means, for the run page.
+METADATA_MEANING = {
+    "record_count": "records that reached the report",
+    "session_count": "sessions they belong to",
+    "agent_count": "agents (who sent them)",
+    "agent_ids": "the agents, at most 64",
+    "kind_counts": "records of each kind",
+    "first_ts": "earliest record",
+    "last_ts": "latest record",
+    "content_bytes": "bytes of text in all of them",
+}
+INCLUDED_KEYS = ("records_total", "records_included", "records")
+
+
+def _shown(name: str, value: object) -> object:
+    """A Report fact as one table cell: the counts per kind and the agent ids on one line."""
+    if name == "kind_counts" and isinstance(value, dict):
+        return " · ".join(f"{k} {v}" for k, v in value.items())
+    if name == "agent_ids" and isinstance(value, list):
+        return ", ".join(map(str, value)) or "none"
+    if name in ("first_ts", "last_ts") and value == "":
+        return "none"
+    return value
+
+
 def result_view(settings: Settings, state: dict) -> dict:
     """What the run page shows of the result: one row per released field with the plan's
     own description of it (read from the frozen plan copy in the run folder), and a few
-    facts about the run. Empty rows when there is no verified, completed report."""
+    facts about the run. Empty rows when there is no verified, completed report. For a
+    Report that includes records, ``disclosed`` holds them and how many of how many."""
     steps = {step["key"]: step for step in state["steps"]}
     out = state["outcome"]
     result = out.get("result") if out.get("verified") else None
     described: dict[str, str] = {}
+    records_report = False
+    min_count = 1
     try:
         plan = json.loads(
             (settings.runs_dir / state["id"] / "plan" / "plan.json").read_text(encoding="utf-8")
@@ -497,12 +525,32 @@ def result_view(settings: Settings, state: dict) -> dict:
             if node.get("type") == "final_report":
                 for f in node.get("config", {}).get("fields", []):
                     described[f.get("name", "")] = f.get("description", "")
+            elif node.get("type") == "records_report":
+                records_report = True
+                described.update(METADATA_MEANING)
+                min_count = node.get("config", {}).get("min_count") or 1
     except (OSError, ValueError, AttributeError):
         pass
+    items = list(result.items()) if isinstance(result, dict) else []
+    if records_report:  # the signed report sorts its keys; show the facts in the builder's order
+        order = {k: i for i, k in enumerate(plan_ir.METADATA)}
+        items.sort(key=lambda kv: order.get(kv[0], len(order)))
     rows = [
-        {"name": k, "value": v, "description": described.get(k, "")}
-        for k, v in (result.items() if isinstance(result, dict) else [])
+        {
+            "name": k,
+            "value": _shown(k, v) if records_report else v,
+            "description": described.get(k, ""),
+        }
+        for k, v in items
+        if not (records_report and k in INCLUDED_KEYS)
     ]
+    disclosed = None
+    if records_report and isinstance(result, dict) and "records" in result:
+        disclosed = {
+            "included": result.get("records_included"),
+            "total": result.get("records_total"),
+            "items": [r for r in result.get("records") or () if isinstance(r, dict)],
+        }
     manifest = (steps.get("attest", {}).get("output") or {}).get("manifest") or {}
     seconds = None
     try:
@@ -516,6 +564,8 @@ def result_view(settings: Settings, state: dict) -> dict:
         pass
     return {
         "rows": rows,
+        "disclosed": disclosed,
+        "min_count": min_count,
         "records": (steps.get("export", {}).get("output") or {}).get("records"),
         "seconds": seconds,
         "model": (manifest.get("model_binding") or {}).get("id"),
@@ -556,8 +606,8 @@ def outcome(state: dict) -> dict:
             "or a prompt that is too long by itself. Review that step."
         ),
         "invalid_output": (
-            "The plan returned a result outside its agreed report fields. Review the Final "
-            "Report, then re-sign the corrected plan."
+            "The plan returned a result outside its agreed report fields, or larger than its"
+            " byte cap. Review the report, then re-sign the corrected plan."
         ),
         "plan_start_failed": (
             "The plan worker failed to start or to compile the plan's Python steps. Check the "
@@ -657,6 +707,7 @@ def run_counts(settings: Settings, state: dict) -> dict | None:
             return None
 
     report = next((n for n in nodes.values() if n.get("type") == "final_report"), None)
+    records_report = any(n.get("type") == "records_report" for n in nodes.values())
     classifier = source_of(report, plan_ir.REPORT_INPUT)
     if not classifier or classifier.get("type") != "classifier":
         classifier = None
@@ -701,4 +752,6 @@ def run_counts(settings: Settings, state: dict) -> dict | None:
         "counts": counts,
         "reported": result is not None,
         "min_count": privacy.get("min_count") or 1,
+        # A Report (records_report) reads records, not a classifier's items.
+        "records_report": records_report,
     }

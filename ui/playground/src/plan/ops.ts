@@ -3,7 +3,7 @@
  * plan (or a reason for refusing), so the IR never leaves the structural tier.
  */
 import { accepts, INPUT_RULES, nodeById, outputPort, splitRef } from "./ports";
-import type { NodeType, Plan, PlanNode } from "./types";
+import { isReport, type MetadataField, type NodeType, type Plan, type PlanNode, type RecordsReport } from "./types";
 import { validatePlan, wouldCycle } from "./validate";
 import { NEW_INPUT } from "./graph";
 
@@ -80,8 +80,33 @@ export function newNode(type: NodeType, id: string): PlanNode {
           privacy: { allow_free_text: false, min_count: 1, max_result_bytes: 1024 },
         },
       };
+    case "records_report":
+      return {
+        id,
+        type,
+        inputs: {},
+        config: { metadata: [...DEFAULT_METADATA], include_records: false, min_count: 1, max_result_bytes: 4096 },
+      };
   }
 }
+
+/** What a new Report says. Agent ids are left out: an agent id is the person who sent the record. */
+export const DEFAULT_METADATA: MetadataField[] = [
+  "record_count",
+  "session_count",
+  "agent_count",
+  "kind_counts",
+  "first_ts",
+  "last_ts",
+  "content_bytes",
+];
+
+/** The included records' settings a Report starts with when its checkbox is ticked. */
+export const DEFAULT_INCLUDED: NonNullable<RecordsReport["config"]["records"]> = {
+  max_records: 10,
+  fields: ["id", "kind", "ts", "content"],
+  max_content_chars: 256,
+};
 
 const ID_BASE: Record<NodeType, string> = {
   input_logs: "logs",
@@ -91,6 +116,7 @@ const ID_BASE: Record<NodeType, string> = {
   run_python: "python",
   run_llm: "llm",
   final_report: "report",
+  records_report: "report",
 };
 
 export function freshId(plan: Plan, base: string): string {
@@ -106,7 +132,8 @@ const LABEL: Record<NodeType, string> = {
   classifier: "Classifier",
   run_python: "Run Python",
   run_llm: "Run LLM",
-  final_report: "Final Report",
+  final_report: "Report (old)",
+  records_report: "Report",
 };
 
 /** Add a block of this kind, titled like the others ("Classifier", then "Classifier 2"). */
@@ -129,7 +156,7 @@ export function addCombine(plan: Plan, op: "and" | "or"): { plan: Plan; id: stri
 
 /** Why the builder will not add a block of this kind to `plan` now, or null when it will. */
 export function cannotAdd(plan: Plan, type: string): string | null {
-  if (type === "final_report" && plan.nodes.some((n) => n.type === "final_report")) return "A plan has one report";
+  if ((type === "final_report" || type === "records_report") && plan.nodes.some(isReport)) return "A plan has one report";
   return null;
 }
 
@@ -173,7 +200,7 @@ export function connect(
   const tgt = byId.get(c.target);
   if (!src || !tgt) return { ok: false, message: "Unknown node" };
   const out = outputPort(src);
-  if (!out) return { ok: false, message: "A Final Report has no output" };
+  if (!out) return { ok: false, message: "A report has no output" };
   const rule = INPUT_RULES[tgt.type];
   if (rule.kind === "none") return { ok: false, message: "Log Source is a starting node and takes no inputs" };
   if (!accepts(tgt.type, out.type))

@@ -187,9 +187,9 @@ describe("lint (soft issues)", () => {
     expect(msgs).toContain("report.wrong: declared boolean but sessions is integer");
   });
 
-  it("requires exactly one Final Report", () => {
+  it("requires exactly one report", () => {
     const p = deleteNodes(simple(), ["report"]);
-    expect(lintPlan(p).some((i) => /no Final Report/.test(i.message))).toBe(true);
+    expect(lintPlan(p).some((i) => /no report/.test(i.message))).toBe(true);
   });
 });
 

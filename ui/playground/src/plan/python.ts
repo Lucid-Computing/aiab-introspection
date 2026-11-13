@@ -7,7 +7,7 @@
  */
 import { describeNode } from "./shape";
 import { outputSpec } from "./spec";
-import { type Plan, type PlanNode, RECORD_KINDS } from "./types";
+import { isReport, type Plan, type PlanNode, RECORD_KINDS } from "./types";
 import { outputPort } from "./ports";
 import { topoOrder } from "./validate";
 
@@ -91,6 +91,21 @@ def parse(items, answers, settings):
 def parse(answers, settings):
     """The model's answer, checked by the box against OUTPUT before any block reads it."""
     return answers`,
+  records_report: `def run(records, settings):
+    """The facts about the records the settings name; with include_records, the first
+    records too, until max_records or max_result_bytes is reached. records_included of
+    records_total says how many went out."""
+    report = {name: fact(name, records, settings["min_count"]) for name in settings["metadata"]}
+    if settings["include_records"]:
+        report["records_total"] = len(records)
+        report["records"] = []
+        for r in records[: settings["records"]["max_records"]]:
+            report["records"].append(include(r, settings["records"]))  # content cut to max_content_chars
+            if size(report) > settings["max_result_bytes"]:
+                report["records"].pop()
+                break
+        report["records_included"] = len(report["records"])
+    return report`,
   final_report: `def run(result, settings):
     """The only values that leave the box. The box checks each against its declared type
     and the byte cap after this returns."""
@@ -255,6 +270,16 @@ function settingsOf(node: PlanNode): Record<string, unknown> {
       const c = node.config;
       return { model: c.model.id, system_prompt: c.system_prompt, user_prompt: c.user_prompt };
     }
+    case "records_report": {
+      const c = node.config;
+      return {
+        metadata: c.metadata,
+        include_records: c.include_records,
+        ...(c.records ? { records: c.records } : {}),
+        min_count: c.min_count,
+        max_result_bytes: c.max_result_bytes,
+      };
+    }
     case "final_report": {
       const c = node.config;
       return {
@@ -320,7 +345,7 @@ export function planPython(plan: Plan): string {
         return byId.has(src) ? `${name}=${result(src)}` : `${name}=None`;
       })
       .join(", ");
-    return n.type === "final_report" ? `${id}(${args})` : `${result(id)} = ${id}(${args})`;
+    return isReport(n) ? `${id}(${args})` : `${result(id)} = ${id}(${args})`;
   });
   return `# plan.py\nfrom blocks import ${used.join(", ") || "()"}\n\n${lines.join("\n")}\n`;
 }

@@ -4,7 +4,7 @@ import { LOG_SOURCES } from "./mockLogs";
 import { acceptedTypes, accepts, inputType } from "./ports";
 import { parseQuery, queryCode } from "./query";
 import { assignable, fieldPath, resolveReportPath } from "./report";
-import type { Issue, Plan } from "./types";
+import { isReport, type Issue, type Plan, type RecordsReport } from "./types";
 import { upstream } from "./validate";
 
 /** Whole modules a Run Python step may import; the box refuses anything else. */
@@ -49,13 +49,15 @@ export function lintPlan(plan: Plan): Issue[] {
   const todo = (nodeId: string, path: (string | number)[], message: string) =>
     issues.push({ severity: "error", kind: "incomplete", nodeId, path, message });
 
-  const reports = plan.nodes.filter((n) => n.type === "final_report");
+  const reports = plan.nodes.filter(isReport);
   if (!plan.nodes.some((n) => n.type === "input_logs"))
     issues.push({ severity: "error", message: "The plan has no Log Source node" });
   if (reports.length === 0)
-    issues.push({ severity: "error", message: "The plan has no Final Report: nothing would be disclosed" });
+    issues.push({ severity: "error", message: "The plan has no report: nothing would be disclosed" });
   if (reports.length > 1)
-    reports.forEach((r) => err(r.id, at(plan.nodes.indexOf(r)), "A plan has exactly one Final Report"));
+    reports.forEach((r) =>
+      err(r.id, at(plan.nodes.indexOf(r)), "A plan has exactly one report: Report or Report (old)"),
+    );
 
   plan.nodes.forEach((n, i) => {
     for (const name of Object.keys(n.inputs)) {
@@ -180,6 +182,10 @@ export function lintPlan(plan: Plan): Issue[] {
         });
         break;
       }
+      case "records_report":
+        for (const [why, where] of recordsReportIssues(n))
+          (where[0] === "inputs" ? todo : err)(n.id, at(i, ...where), `${n.id}: ${why}`);
+        break;
     }
   });
 
@@ -195,10 +201,26 @@ export function lintPlan(plan: Plan): Issue[] {
       todo.push(...(ups.get(id) ?? []));
     }
     plan.nodes.forEach((n, i) => {
-      if (!reach.has(n.id)) warn(n.id, at(i), `${n.id}: does not feed the Final Report`);
+      if (!reach.has(n.id)) warn(n.id, at(i), `${n.id}: does not feed the report`);
     });
   }
   return issues;
+}
+
+/** Why a Report cannot run, each with its path in the node: the box's records_report_issues. */
+export function recordsReportIssues(n: RecordsReport): [string, string[]][] {
+  const c = n.config;
+  const out: [string, string[]][] = [];
+  if (!n.inputs.records) out.push(["connect the records to report on", ["inputs"]]);
+  if (c.include_records !== (c.records !== undefined))
+    out.push([
+      "include_records and the records settings go together",
+      ["config", c.records ? "records" : "include_records"],
+    ]);
+  if (!c.metadata.length && !c.include_records) out.push(["choose something to report", ["config", "metadata"]]);
+  if (c.metadata.includes("agent_ids") && !c.metadata.includes("agent_count"))
+    out.push(["agent ids are reported with the agent count", ["config", "metadata"]]);
+  return out;
 }
 
 /** Input bindings whose port types are incompatible: drawn as invalid edges. */

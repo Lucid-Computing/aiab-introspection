@@ -7,10 +7,11 @@
 <h1>Run <span class="mono" style="font-size: var(--text-xl)">{{ run.id }}</span></h1>
 <p class="run-meta">{% if run.plan and run.plan.digest %}<a class="link" href="/runs/{{ run.id }}/plan" title="{{ run.plan.digest }} · {{ 'signed by both parties' if run.plan.signed else 'signatures not verified' }}">{{ run.plan.agreement }} · <span class="mono">{{ run.plan.digest[7:15] }}</span></a>{% if not run.plan.signed %} (signatures not verified){% endif %} · {% else %}plan version not recorded · {% endif %}{{ run.by.user }} ({{ run.by.party }}) · {{ run.started[:16].replace("T", " ") }}{% if run.status == "running" %} · running, this page refreshes itself{% elif run.status == "interrupted" %} · interrupted, start a new one{% endif %}</p>
 
-{% if result is not defined %}{% set result = {"rows": [], "records": none, "seconds": none, "model": none, "image": none} %}{% endif %}
+{% if result is not defined %}{% set result = {"rows": [], "disclosed": none, "records": none, "seconds": none, "model": none, "image": none} %}{% endif %}
 {% if run.status != "running" %}
 <div class="result">
   <p class="result-title">{{ run.outcome.title }}</p>
+  {% if result.rows or result.disclosed %}
   {% if result.rows %}
   <table class="table result-table">
     <thead><tr><th>Field</th><th>Value</th><th>Meaning</th></tr></thead>
@@ -20,6 +21,22 @@
     {% endfor %}
     </tbody>
   </table>
+  {% if result.min_count and result.min_count > 1 %}<p class="result-facts text-muted">Counts below {{ result.min_count }} are reported as 0.</p>{% endif %}
+  {% endif %}
+  {% if result.disclosed %}{% set d = result.disclosed %}
+  <p class="result-included">{{ d.included }} of {{ d.total }} records included{% if d.included < d.total %}; the plan's record or byte limit held back the rest{% endif %}.</p>
+  {% if d["items"] %}
+  <ol class="result-records">
+    {% for r in d["items"] %}
+    <li>
+      <p class="result-record-meta mono">{% for k in ["id", "kind", "ts", "session_id", "agent_id"] if k in r %}{{ r[k] }}{{ " · " if not loop.last }}{% endfor %}</p>
+      {% if "content" in r %}<pre class="cmd result-record-text">{{ r.content }}</pre>
+      {% if r.content_length is number and r.content_length > r.content | length %}<p class="result-record-cut text-muted">First {{ r.content | length }} of {{ r.content_length }} characters.</p>{% endif %}{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+  {% endif %}
   {% elif run.outcome.error %}
   <p>Error: <code>{{ run.outcome.error }}</code>. {{ run.outcome.help }}</p>
   {% endif %}
@@ -95,10 +112,12 @@
       <tr><th>Box</th><td>{% if run.status == "running" %}Not submitted yet.{% else %}Not submitted: the run stopped before step 4.{% endif %}</td></tr>
       {% else %}
       <tr><th>Dropped</th><td>{% if c.filter == "metadata" %}{{ c.dropped | length }}{% if c.dropped %}: the Log Source takes none of their records ({% for s in c.dropped %}{{ s.title }}{{ ", " if not loop.last }}{% endfor %}){% endif %}{% elif c.filter == "keywords" %}decided in the box: the Log Source matches keywords{% else %}not known: the plan's Log Source did not load{% endif %}</td></tr>
+      {% if not c.records_report %}
       <tr><th>To the classifier</th><td>{% if c.reach is not none and c.direct %}{{ c.reach }} {{ "session" if c.reach == 1 else "sessions" }}{% if c.item_count is not none %}, as {{ c.item_count }} item{{ "s" if c.item_count != 1 }}{% if c.group_by == "session" %} (up to {{ c.window }} records of one session each){% endif %}{% endif %}{% elif c.reach is not none %}{{ c.reach }} {{ "session" if c.reach == 1 else "sessions" }} reach the plan's steps; how many reach the classifier is decided in the box{% else %}decided in the box{% endif %}</td></tr>
       <tr><th>In the report</th><td>{% if not c.counts %}This plan's report has no count of classified items.{% elif not c.reported %}After the verified report.{% else %}{% for f in c.counts %}<span class="mono">{{ f.name }}</span> = {{ f.value }}: items {% if f.label %}labelled {{ f.label }}{% else %}classified{% endif %}{{ "; " if not loop.last }}{% endfor %}.{% endif %}
         {% if c.threshold is not none %}Items scored below {{ c.threshold }} are labelled abstain and counted under no other label.{% endif %}
         {% if c.min_count > 1 %}Counts below {{ c.min_count }} are reported as 0.{% endif %}</td></tr>
+      {% endif %}
       {% endif %}
     </table>
     {% endif %}

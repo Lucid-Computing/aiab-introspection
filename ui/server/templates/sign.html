@@ -14,6 +14,7 @@
 {% if view %}
 {% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
 <p class="plan-digest">{{ view.digest }}</p>
+{% if view.discloses %}<p class="plan-discloses">{{ view.discloses }}</p>{% endif %}
 
 <div class="stack">
   {% for party in parties %}{% set s = view.signatures[party] %}

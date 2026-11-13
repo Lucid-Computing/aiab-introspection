@@ -1,6 +1,6 @@
 import { type Dispatch, useEffect, useState } from "react";
 import { AGREEMENT } from "../agreement";
-import { connect, deleteNodes, disconnect, renameInput, renameOutput, updateNode } from "../plan/ops";
+import { connect, DEFAULT_INCLUDED, deleteNodes, disconnect, renameInput, renameOutput, updateNode } from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
 import { blockPython, narrowing, planPython } from "../plan/python";
@@ -14,18 +14,26 @@ import {
   type FinalReport,
   type InputLogs,
   type Issue,
+  MAX_CONTENT_CHARS,
+  MAX_INCLUDED,
+  MAX_RESULT_BYTES,
+  METADATA_FIELDS,
+  type MetadataField,
   type Output,
   PORT_TYPES,
   type Plan,
   type PlanNode,
+  RECORD_FIELDS,
   RECORD_KINDS,
+  type RecordField,
+  type RecordsReport,
   type RunLlm,
   type RunPython,
 } from "../plan/types";
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
 import { CommitInput, Field, LinesInput, NumberInput, PythonEditor, Select } from "./fields";
-import { CombineForm, FilterForm } from "./FilterForms";
+import { CombineForm, FilterForm, PortPicker } from "./FilterForms";
 import { BLOCK_META, kindOf, SOURCE_OPTIONS, sourceLabel } from "./nodeMeta";
 import { TypeBadge } from "./PlanNodeView";
 
@@ -92,6 +100,7 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
       {node.type === "run_python" && !query && <RunPythonForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "run_llm" && <RunLlmForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "final_report" && <ReportForm plan={plan} node={node} set={set} />}
+      {node.type === "records_report" && <RecordsReportForm plan={plan} node={node} set={set} op={op} />}
 
       <IoLine plan={plan} node={node} side="out" />
       <details className="f">
@@ -895,6 +904,145 @@ function ReportForm({ plan, node, set }: { plan: Plan; node: FinalReport; set: (
         />
         Allow text fields written by the model
       </label>
+    </>
+  );
+}
+
+const METADATA_LABEL: Record<MetadataField, string> = {
+  record_count: "Record count",
+  session_count: "Session count",
+  agent_count: "Agent count",
+  agent_ids: "Agent ids",
+  kind_counts: "Count per kind",
+  first_ts: "Earliest time",
+  last_ts: "Latest time",
+  content_bytes: "Text size",
+};
+const RECORD_FIELD_LABEL: Record<RecordField, string> = {
+  id: "Record id",
+  session_id: "Session id",
+  agent_id: "Agent id",
+  kind: "Kind",
+  ts: "Time",
+  content: "Text",
+};
+
+/** The Report: one checkbox in sight, what it says and its limits under More settings. */
+function RecordsReportForm({
+  plan,
+  node,
+  set,
+  op,
+}: {
+  plan: Plan;
+  node: RecordsReport;
+  set: (n: PlanNode) => void;
+  op: Op;
+}) {
+  const c = node.config;
+  const cfg = (patch: Partial<RecordsReport["config"]>) => set({ ...node, config: { ...c, ...patch } });
+  const toggleFact = (f: MetadataField, on: boolean) => {
+    const next = new Set(c.metadata);
+    if (on) next.add(f);
+    else next.delete(f);
+    // Agent ids go with the agent count, which shows when the list is cut.
+    if (on && f === "agent_ids") next.add("agent_count");
+    if (!on && f === "agent_count") next.delete("agent_ids");
+    cfg({ metadata: METADATA_FIELDS.filter((x) => next.has(x)) });
+  };
+  const included = c.records;
+  const putIncluded = (patch: Partial<NonNullable<RecordsReport["config"]["records"]>>) =>
+    included && cfg({ records: { ...included, ...patch } });
+  const toggleField = (f: RecordField, on: boolean) => {
+    if (!included) return;
+    const fields = RECORD_FIELDS.filter((x) => (x === f ? on : included.fields.includes(x)));
+    if (fields.length) putIncluded({ fields });
+  };
+  return (
+    <>
+      <PortPicker plan={plan} node={node} port="records" label="Reads from" op={op} />
+      <label className="inline-check">
+        <input
+          type="checkbox"
+          checked={c.include_records}
+          onChange={(e) =>
+            e.target.checked
+              ? cfg({ include_records: true, records: { ...DEFAULT_INCLUDED, fields: [...DEFAULT_INCLUDED.fields] } })
+              : cfg({ include_records: false, records: undefined })
+          }
+        />
+        Include the records
+      </label>
+      {included && (
+        <span className="f-hint">
+          Up to {included.max_records} records leave the box with the report. It says how many of how many.
+        </span>
+      )}
+      <details className="f">
+        <summary className="f-label">More settings</summary>
+        <div className="insp-more">
+          <div className="f">
+            <span className="f-label">Metadata</span>
+            <div className="checks">
+              {METADATA_FIELDS.map((f) => (
+                <label key={f}>
+                  <input type="checkbox" checked={c.metadata.includes(f)} onChange={(e) => toggleFact(f, e.target.checked)} />
+                  {METADATA_LABEL[f]}
+                </label>
+              ))}
+            </div>
+            <span className="f-hint">Agent ids name the people who sent the records.</span>
+          </div>
+          <Field label="Min count" hint="A count below this number is reported as 0.">
+            <NumberInput value={c.min_count} min={1} onChange={(min_count) => cfg({ min_count })} />
+          </Field>
+          <Field label="Max result bytes" hint={`Up to ${MAX_RESULT_BYTES}. Records stop before the report would pass it.`}>
+            <NumberInput
+              value={c.max_result_bytes}
+              min={1}
+              max={MAX_RESULT_BYTES}
+              onChange={(max_result_bytes) => cfg({ max_result_bytes })}
+            />
+          </Field>
+          {included && (
+            <>
+              <Field label="Max records" hint={`Up to ${MAX_INCLUDED}.`}>
+                <NumberInput
+                  value={included.max_records}
+                  min={1}
+                  max={MAX_INCLUDED}
+                  onChange={(max_records) => putIncluded({ max_records })}
+                />
+              </Field>
+              <div className="f">
+                <span className="f-label">Record fields</span>
+                <div className="checks">
+                  {RECORD_FIELDS.map((f) => (
+                    <label key={f}>
+                      <input
+                        type="checkbox"
+                        checked={included.fields.includes(f)}
+                        onChange={(e) => toggleField(f, e.target.checked)}
+                      />
+                      {RECORD_FIELD_LABEL[f]}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {included.fields.includes("content") && (
+                <Field label="Characters of text per record" hint={`Up to ${MAX_CONTENT_CHARS}. Longer text is cut; the record gives its full length.`}>
+                  <NumberInput
+                    value={included.max_content_chars}
+                    min={1}
+                    max={MAX_CONTENT_CHARS}
+                    onChange={(max_content_chars) => putIncluded({ max_content_chars })}
+                  />
+                </Field>
+              )}
+            </>
+          )}
+        </div>
+      </details>
     </>
   );
 }

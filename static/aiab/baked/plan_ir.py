@@ -1,14 +1,18 @@
 """The audit plan as a graph (``aiab-plan-ir/v0``): schema, checks and derived settings.
 
 A plan is one JSON document: a list of nodes, each with typed inputs that read another
-node's output. Seven node types: ``input_logs`` (the records of a run), ``filter_logs`` (keeps
+node's output. Eight node types: ``input_logs`` (the records of a run), ``filter_logs`` (keeps
 the records that match rules, or that a model answers yes for), ``combine_logs`` (the records
 in both of two inputs, or in either), ``classifier`` (one model call per item, a label and a
 score each), ``run_python`` (a ``run`` function over its inputs), ``run_llm`` (a model call per
-item, or one call in total) and ``final_report`` (the only thing that leaves the box). What
-travels between nodes is one of four port types: LogRecords, Items, Classifications or Value.
-The two record nodes were added without a new format name: every plan that loaded before
-still loads and means the same, and a box without them refuses a plan that uses them.
+item, or one call in total), and the two reports, the only things that leave the box:
+``final_report`` (named fields of a Value or aggregates of Classifications; "Report (old)" in
+the builder) and ``records_report`` (facts about a list of records and, when the plan says
+so, some of the records themselves; "Report"). A plan has exactly one report, of either type.
+What travels between nodes is one of four port types: LogRecords, Items, Classifications or
+Value. The record nodes and the records report were added without a new format name: every
+plan that loaded before still loads and means the same, and a box without them refuses a
+plan that uses them.
 
 This module mirrors the builder's rules (ui/playground/src/plan: types, validate, lint,
 report), so a plan the builder calls valid is a plan the box accepts, and the other way
@@ -47,8 +51,28 @@ NODE_TYPES = (
     "run_python",
     "run_llm",
     "final_report",
+    "records_report",
 )
+REPORT_TYPES = ("final_report", "records_report")
 REPORT_INPUT = "result"
+RECORDS_INPUT = "records"
+# What a records report can say about its records, in the order the builder lists them.
+# agent_ids is the proxy's "who" of each record: a person, so no plan gets it by default.
+METADATA = (
+    "record_count",
+    "session_count",
+    "agent_count",
+    "agent_ids",
+    "kind_counts",
+    "first_ts",
+    "last_ts",
+    "content_bytes",
+)
+# The fields of a record a records report may include, and the most records it may include
+# (the egress gate's longest list, output.check_schema).
+RECORD_FIELDS = ("id", "session_id", "agent_id", "kind", "ts", "content")
+MAX_INCLUDED = 64
+MAX_AGENT_IDS = 64
 ABSTAIN = "abstain"
 
 # The box's one ceiling, on what a report discloses; the manifest publishes it.
@@ -268,6 +292,29 @@ CONFIGS = {
         }
     ),
 }
+# Included records' settings are present exactly when the records are included, so a signed
+# plan holds nothing that does not run.
+CONFIGS["records_report"] = _obj(
+    {
+        "metadata": _list({"enum": list(METADATA)}, unique=True),
+        "include_records": FLAG,
+        "records": _obj(
+            {
+                "max_records": {"type": "integer", "minimum": 1, "maximum": MAX_INCLUDED},
+                "fields": _list({"enum": list(RECORD_FIELDS)}, minimum=1, unique=True),
+                # Longer content is cut to this many characters; the record says its length.
+                "max_content_chars": {"type": "integer", "minimum": 1, "maximum": 1024},
+            }
+        ),
+        "min_count": {"type": "integer", "minimum": 1, "maximum": 1_000_000},
+        "max_result_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": LIMITS["max_result_bytes"],
+        },
+    },
+    optional=("records",),
+)
 NODE = _obj(
     {
         "id": IDENT,
@@ -302,8 +349,10 @@ ACCEPTS = {
     "classifier": ("LogRecords", "Items"),
     "run_python": PORT_TYPES,
     "run_llm": PORT_TYPES,
-    # Only aggregated results may be disclosed: never raw records or per-item text.
+    # The old report discloses only aggregated results: never raw records or per-item text.
     "final_report": ("Classifications", "Value"),
+    # Facts about a list of records; the records themselves only when the plan says so.
+    "records_report": ("LogRecords",),
 }
 INPUT_RULES = {
     "input_logs": ("none", ()),
@@ -313,6 +362,7 @@ INPUT_RULES = {
     "run_python": ("dynamic", ()),
     "run_llm": ("dynamic", ()),
     "final_report": ("fixed", (REPORT_INPUT,)),
+    "records_report": ("fixed", (RECORDS_INPUT,)),
 }
 LIST_TYPES = ("LogRecords", "Items")
 PLACEHOLDER = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
@@ -356,7 +406,7 @@ class Analysis:
 
 
 def output_port(node: dict) -> tuple[str, str] | None:
-    """(name, type) of a node's single output; None for the Final Report."""
+    """(name, type) of a node's single output; None for a report."""
     t = node["type"]
     if t in ("input_logs", "filter_logs", "combine_logs"):
         return "records", "LogRecords"
@@ -640,7 +690,7 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
             out = output_port(src)
             if out is None:
                 issue(
-                    f'{n["id"]}.inputs.{name}: "{src_id}" is a Final Report and has no output',
+                    f'{n["id"]}.inputs.{name}: "{src_id}" is a report and has no output',
                     n["id"],
                     path,
                 )
@@ -660,11 +710,11 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
 
     # Semantics: the builder's lint errors, plus what the box pins.
     sources = [n for n in nodes_raw if n["type"] == "input_logs"]
-    reports = [n for n in nodes_raw if n["type"] == "final_report"]
+    reports = [n for n in nodes_raw if n["type"] in REPORT_TYPES]
     if len(sources) != 1:
         issue("A plan has exactly one Log Source node")
     if len(reports) != 1:
-        issue("A plan has exactly one Final Report")
+        issue("A plan has exactly one report: Report or Report (old)")
 
     def input_type(n: dict, name: str) -> str | None:
         ref = n["inputs"].get(name)
@@ -808,6 +858,9 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
                         nid,
                         p + ["type"],
                     )
+        if n["type"] == "records_report":
+            for why, where in records_report_issues(n):
+                issue(f"{nid}: {why}", nid, at + where)
     if issues:
         raise PlanError(issues)
 
@@ -821,7 +874,7 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
             "window_end": scope["window_end"],
             "agents": sorted(scope["agents"]),
         }
-    limits = {"max_result_bytes": report["config"]["privacy"]["max_result_bytes"]}
+    limits = {"max_result_bytes": result_bytes(report)}
     return Analysis(
         plan=raw,
         nodes=nodes,
@@ -834,8 +887,102 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
     )
 
 
+def records_report_issues(node: dict) -> list[tuple[str, list]]:
+    """Why a records report cannot run, each with its path in the node. The builder's lint
+    says the same (lint.ts)."""
+    cfg = node["config"]
+    out = []
+    if not node["inputs"].get(RECORDS_INPUT):
+        out.append(("connect the records to report on", ["inputs"]))
+    if cfg["include_records"] != ("records" in cfg):
+        out.append(
+            (
+                "include_records and the records settings go together",
+                ["config", "records" if "records" in cfg else "include_records"],
+            )
+        )
+    if not cfg["metadata"] and not cfg["include_records"]:
+        out.append(("choose something to report", ["config", "metadata"]))
+    if "agent_ids" in cfg["metadata"] and "agent_count" not in cfg["metadata"]:
+        # The list stops at MAX_AGENT_IDS; the count shows when it does.
+        out.append(("agent ids are reported with the agent count", ["config", "metadata"]))
+    return out
+
+
+def result_bytes(report: dict) -> int:
+    """The report's own cap on the result's size, at most the box's (LIMITS)."""
+    cfg = report["config"]
+    if report["type"] == "records_report":
+        return cfg["max_result_bytes"]
+    return cfg["privacy"]["max_result_bytes"]
+
+
+COUNT = {"type": "integer", "minimum": 0, "maximum": 2**31}
+TIME = {"type": "string", "maxLength": 32}
+
+
+def records_report_schema(report: dict) -> dict:
+    """The records report's result: the metadata it names, then, when it includes records,
+    how many it includes of how many and the records with their chosen fields."""
+    cfg = report["config"]
+    meta = {
+        "record_count": COUNT,
+        "session_count": COUNT,
+        "agent_count": COUNT,
+        "agent_ids": {
+            "type": "array",
+            "items": {"type": "string", "maxLength": 128},
+            "maxItems": MAX_AGENT_IDS,
+        },
+        "kind_counts": {
+            "type": "object",
+            "properties": {k: dict(COUNT) for k in KINDS},
+            "required": list(KINDS),
+            "additionalProperties": False,
+        },
+        "first_ts": TIME,
+        "last_ts": TIME,
+        "content_bytes": COUNT,
+    }
+    props = {k: meta[k] for k in METADATA if k in cfg["metadata"]}
+    if cfg["include_records"]:
+        rc = cfg["records"]
+        fields = {
+            "id": {"type": "string", "maxLength": 256},
+            "session_id": {"type": "string", "maxLength": 128},
+            "agent_id": {"type": "string", "maxLength": 128},
+            "kind": {"type": "string", "enum": list(KINDS)},
+            "ts": TIME,
+            "content": {"type": "string", "maxLength": rc["max_content_chars"]},
+        }
+        item = {k: dict(fields[k]) for k in RECORD_FIELDS if k in rc["fields"]}
+        if "content" in item:
+            item["content_length"] = dict(COUNT)
+        props["records_total"] = COUNT
+        props["records_included"] = COUNT
+        props["records"] = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": item,
+                "required": list(item),
+                "additionalProperties": False,
+            },
+            "maxItems": rc["max_records"],
+        }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {k: dict(v) for k, v in props.items()},
+        "required": list(props),
+        "additionalProperties": False,
+    }
+
+
 def report_schema(report: dict) -> dict:
     """The report's JSON Schema in the bounded form the egress gate checks (output.py)."""
+    if report["type"] == "records_report":
+        return records_report_schema(report)
     types = {
         "boolean": {"type": "boolean"},
         "integer": {"type": "integer", "minimum": -(2**31), "maximum": 2**31},

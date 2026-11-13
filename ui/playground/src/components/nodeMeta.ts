@@ -30,8 +30,12 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
     blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
   },
   final_report: {
-    label: "Report",
+    label: "Report (old)",
     blurb: "Names the few numbers that leave the box and the rules that stop one person's session from being singled out.",
+  },
+  records_report: {
+    label: "Report",
+    blurb: "Says how many records reached it, from how many sessions, of which kinds and when. Ticked, it also releases the records.",
   },
 };
 
@@ -103,6 +107,11 @@ export function line(n: PlanNode): string {
     case "final_report": {
       const f = n.config.fields.map((x) => x.name).join(", ");
       return f ? `releases: ${f}` : "no fields yet";
+    }
+    case "records_report": {
+      const c = n.config;
+      const facts = `${c.metadata.length} fact${c.metadata.length === 1 ? "" : "s"}`;
+      return c.records ? `${facts} · up to ${c.records.max_records} records` : facts;
     }
   }
 }

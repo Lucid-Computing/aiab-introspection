@@ -6,7 +6,7 @@ export interface OutputPort {
   type: PortType;
 }
 
-/** The single output of a node, or null for the Final Report. */
+/** The single output of a node, or null for a report. */
 export function outputPort(node: PlanNode): OutputPort | null {
   switch (node.type) {
     case "input_logs":
@@ -19,6 +19,7 @@ export function outputPort(node: PlanNode): OutputPort | null {
     case "run_llm":
       return { name: node.config.output.name, type: node.config.output.type };
     case "final_report":
+    case "records_report":
       return null;
   }
 }
@@ -38,6 +39,7 @@ export const INPUT_RULES: Record<
   run_python: { kind: "dynamic" },
   run_llm: { kind: "dynamic" },
   final_report: { kind: "fixed", ports: ["result"] },
+  records_report: { kind: "fixed", ports: ["records"] },
 };
 
 const ACCEPTS: Record<NodeType, readonly PortType[]> = {
@@ -47,8 +49,10 @@ const ACCEPTS: Record<NodeType, readonly PortType[]> = {
   classifier: ["LogRecords", "Items"],
   run_python: ["LogRecords", "Items", "Classifications", "Value"],
   run_llm: ["LogRecords", "Items", "Classifications", "Value"],
-  // Only aggregated results may be disclosed: never raw records or per-item text.
+  // The old report discloses only aggregated results: never raw records or per-item text.
   final_report: ["Classifications", "Value"],
+  // Facts about a list of records; the records themselves only when the plan says so.
+  records_report: ["LogRecords"],
 };
 
 export function accepts(target: NodeType, type: PortType): boolean {

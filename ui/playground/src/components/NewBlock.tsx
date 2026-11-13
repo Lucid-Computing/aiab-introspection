@@ -12,10 +12,10 @@ import { BLOCK_META, type BlockKind } from "./nodeMeta";
 export const BLOCK_DRAG = "application/x-aiab-block";
 
 /** The kinds shown at the top of the rail, in the order a plan usually runs them. */
-export const MAIN: BlockKind[] = ["input_logs", "filter_logs", "and", "or", "final_report"];
+export const MAIN: BlockKind[] = ["input_logs", "filter_logs", "and", "or", "records_report"];
 
 /** The kinds kept under the collapsed "Deprecated" section at the bottom of the rail. */
-export const DEPRECATED: BlockKind[] = ["query", "classifier", "run_llm", "run_python"];
+export const DEPRECATED: BlockKind[] = ["query", "classifier", "run_llm", "run_python", "final_report"];
 
 /** Every kind a person adds by hand: the diagram accepts a drop of any of these. */
 export const OFFERED: BlockKind[] = [...MAIN, ...DEPRECATED];
