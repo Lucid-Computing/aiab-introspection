@@ -84,6 +84,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export function describeOutput(node: PlanNode): OutputDesc | null {
   switch (node.type) {
     case "input_logs":
+    case "filter_logs":
+    case "combine_logs":
       return { name: "records", type: "LogRecords", shape: genericShape("LogRecords") };
     case "classifier":
       return {

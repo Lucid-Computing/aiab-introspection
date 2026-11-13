@@ -51,16 +51,20 @@ export function NumberInput({
   min,
   max,
   step,
+  label,
 }: {
   value: number;
   onChange: (v: number) => void;
   min?: number;
   max?: number;
   step?: number;
+  /** The name a screen reader gives the box, when no visible label names it. */
+  label?: string;
 }) {
   return (
     <input
       type="number"
+      aria-label={label}
       value={value}
       min={min}
       max={max}
@@ -134,6 +138,59 @@ export function PythonEditor({ value, onChange }: { value: string; onChange: (v:
   );
 }
 
+/**
+ * A segmented control: two or three choices side by side, one on. A radio group to a
+ * screen reader; the arrow keys move the choice, Tab leaves the group.
+ */
+export function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  className,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+  className?: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const move = (k: number) => {
+    const next = (k + options.length) % options.length;
+    onChange(options[next].value);
+    refs.current[next]?.focus();
+  };
+  return (
+    <div className={`seg${className ? ` ${className}` : ""}`} role="radiogroup" aria-label={label}>
+      {options.map((o, k) => (
+        <button
+          key={o.value}
+          ref={(el) => {
+            refs.current[k] = el;
+          }}
+          type="button"
+          role="radio"
+          aria-checked={o.value === value}
+          tabIndex={o.value === value ? 0 : -1}
+          className={o.value === value ? "on" : undefined}
+          onClick={() => o.value !== value && onChange(o.value)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+              e.preventDefault();
+              move(k + 1);
+            } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+              e.preventDefault();
+              move(k - 1);
+            }
+          }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /** The text of a node: strings and numbers joined, elements' children followed. */
 function textOf(node: ReactNode): string {
@@ -167,11 +224,14 @@ export function Select({
   value,
   onChange,
   className,
+  label,
   children,
 }: {
   value: string | number;
   onChange: (e: { target: { value: string } }) => void;
   className?: string;
+  /** The name a screen reader gives the button, when no visible label names it. */
+  label?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -194,6 +254,7 @@ export function Select({
       <button
         type="button"
         className="sel-btn"
+        aria-label={label ? `${label}: ${current?.label ?? ""}` : undefined}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={(e) => {

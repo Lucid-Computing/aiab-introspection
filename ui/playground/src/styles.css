@@ -85,6 +85,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .pn-handle--new { opacity: 0.4; }
 .pn:hover .pn-handle--new, .pn-handle--new.connectingto { opacity: 1; }
 .pn-handle.is-bad { background: var(--destructive); }
+/* AND and OR name their two input ports A and B, just under each port. */
+.pn-port { position: absolute; top: 8px; transform: translateX(-50%); font-family: var(--font-mono); font-size: 10px; line-height: 12px; font-weight: 600; color: var(--ink-2); pointer-events: none; }
 
 /* React Flow chrome in the house style */
 .react-flow svg { max-width: none; } /* swiss.css caps svg at 100%, which hides edges */
@@ -176,6 +178,10 @@ details.f > summary { cursor: pointer; }
 .sym--run_python { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
 .sym--run_llm { clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
 .sym--final_report { clip-path: circle(50%); }
+/* Filter: a funnel. AND and OR: the set signs ∩ and ∪, drawn with the same bar weight. */
+.sym--filter_logs { clip-path: polygon(0 0, 100% 0, 62% 50%, 62% 100%, 38% 100%, 38% 50%); }
+.sym--and { clip-path: polygon(0 100%, 0 0, 100% 0, 100% 100%, 68% 100%, 68% 32%, 32% 32%, 32% 100%); }
+.sym--or { clip-path: polygon(0 0, 32% 0, 32% 68%, 68% 68%, 68% 0, 100% 0, 100% 100%, 0 100%); }
 .x:hover { color: var(--destructive); }
 .add-input { font-family: var(--font-mono); font-size: var(--text-xs); }
 .f .btn--sm { align-self: flex-start; height: 32px; padding: 0 14px; font-size: var(--text-sm); margin-top: 4px; }
@@ -221,3 +227,75 @@ details.f > summary { cursor: pointer; }
 .sess-chosen li { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 4px 8px; border-bottom: var(--border-hairline); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .sess-chosen li:last-child { border-bottom: none; }
 .sess-chosen button { border: none; background: none; cursor: pointer; font-size: var(--text-base); line-height: 1; color: var(--ink-2); padding: 0 2px; }
+
+/* ---- Filter, AND, OR ---- */
+/* Segmented control: the house tabs, small. One choice on; arrow keys move it. */
+.seg { display: inline-flex; align-self: flex-start; border: var(--border-strong); background: var(--paper-2); }
+.seg button { height: 30px; padding: 0 var(--space-4); font-family: var(--font-mono); font-size: 12px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--ink-3); border-right: var(--border-hairline); }
+.seg button:last-child { border-right: none; }
+.seg button:hover { color: var(--ink-1); }
+.seg button.on { background: var(--paper-1); color: var(--ink-1); box-shadow: inset 0 2px 0 0 var(--amber); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg--mode { display: flex; align-self: stretch; }
+.seg--mode button { flex: 1; height: 34px; }
+
+/* A dropdown whose list floats over what follows it, for dropdowns inside a row. */
+.sel--float .sel-list { position: absolute; left: 0; top: 100%; z-index: 20; min-width: 100%; width: max-content; max-width: 320px; border-top: var(--border-strong); }
+.sel--inline { width: auto; min-width: 76px; }
+/* The site's dropdown is at least 10rem wide; inside a rule row the grid decides. */
+.rule .sel, .chips .sel { min-width: 0; }
+
+.rules-f { gap: var(--space-2); container-type: inline-size; }
+.rules-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); font-size: 14px; font-weight: 600; color: var(--ink-1); }
+.rules-head .sel { font-weight: 400; }
+.rules-exclude { margin-left: auto; font-weight: 400; }
+.rules-empty { padding: var(--space-4); border: 1px dashed var(--rule-strong); color: var(--ink-3); font-size: var(--text-sm); text-align: center; }
+/* Every rule is the same grid, so field, operator and value line up down the list. */
+.rules { list-style: none; margin: 0; padding: 0; border: var(--border-strong); }
+.rule { display: grid; grid-template-columns: 8.5rem 9.5rem minmax(0, 1fr) 32px 24px; gap: var(--space-2); align-items: start; padding: var(--space-2); border-bottom: var(--border-hairline); }
+.rule:last-child { border-bottom: none; }
+.rule.is-bad { box-shadow: inset 3px 0 0 0 var(--destructive); }
+.rule-op { display: flex; align-items: center; height: 32px; padding: 0 6px; font-size: var(--text-sm); color: var(--ink-2); }
+.rule-value { min-width: 0; }
+.rule-value input[aria-invalid="true"] { border-color: var(--destructive); }
+.rule-case { height: 32px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); border: var(--border-hairline); }
+.rule-case:hover { color: var(--ink-1); }
+.rule-case[aria-pressed="true"] { color: var(--ink-1); border-color: var(--ink-1); background: var(--paper-2); font-weight: 600; }
+/* Remove shows on hover and on keyboard focus (opacity, so it stays reachable by Tab). */
+.rule-x { height: 32px; font-size: 18px; line-height: 1; color: var(--ink-3); opacity: 0; }
+.rule:hover .rule-x, .rule:focus-within .rule-x { opacity: 1; }
+.rule-x:hover { color: var(--destructive); }
+@media (hover: none) { .rule-x { opacity: 1; } }
+.rule-why { grid-column: 1 / -1; margin: 0; font-size: var(--text-xs); color: var(--destructive); overflow-wrap: anywhere; }
+.rule-case:focus-visible, .rule-x:focus-visible, .chip-t:focus-visible, .chip-on button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@container (max-width: 600px) {
+  .rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px 24px; }
+  .rule-value { grid-column: 1 / -1; grid-row: 2; }
+}
+
+/* Chips: toggles for a fixed few (record kinds); chosen values with a remove for longer lists. */
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-height: 32px; }
+.chip-t { height: 26px; padding: 0 var(--space-2); font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); background: var(--paper-1); border: var(--border-strong); }
+.chip-t:hover { color: var(--ink-1); border-color: var(--ink-2); }
+.chip-t.on { color: var(--paper-1); background: var(--ink-1); border-color: var(--ink-1); }
+.chip-on { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; height: 26px; padding: 0 2px 0 var(--space-2); font-family: var(--font-mono); font-size: 11.5px; color: var(--paper-1); background: var(--ink-1); }
+.chip-on.is-bad { background: var(--destructive); }
+.chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-on button { flex: none; width: 20px; height: 20px; font-size: 14px; line-height: 1; color: var(--paper-3); }
+.chip-on button:hover { color: var(--paper-1); }
+.sel--add { width: auto; min-width: 8rem; }
+.insp .sel--add .sel-btn { height: 26px; font-size: 12px; color: var(--ink-2); border-style: dashed; }
+
+.with-unit { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.with-unit input { flex: 1; min-width: 0; }
+.unit { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.times { display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* What the filter keeps, from the sample logs; or that the box decides. */
+.count { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin: 0; padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--ink-2); background: var(--paper-2); border: var(--border-hairline); }
+.count-n { font-weight: 600; color: var(--ink-1); }
+.count-src { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--ink-3); }
+
+/* AND and OR: one row per input port, its letter beside the block it reads. */
+.port-row { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: start; gap: var(--space-2); }
+.port-k { height: 32px; line-height: 30px; box-sizing: border-box; text-align: center; font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--ink-1); background: var(--paper-2); border: var(--border-strong); }

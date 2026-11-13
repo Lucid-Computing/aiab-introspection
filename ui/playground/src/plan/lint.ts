@@ -1,4 +1,5 @@
 /** Problems in a well-formed plan. Shown on nodes and in the issue list; never blocking edits. */
+import { ruleIssue, ruleUnfinished } from "./filter";
 import { LOG_SOURCES } from "./mockLogs";
 import { acceptedTypes, accepts, inputType } from "./ports";
 import { parseQuery, queryCode } from "./query";
@@ -50,7 +51,7 @@ export function lintPlan(plan: Plan): Issue[] {
 
   const reports = plan.nodes.filter((n) => n.type === "final_report");
   if (!plan.nodes.some((n) => n.type === "input_logs"))
-    issues.push({ severity: "error", message: "The plan has no Input Logs node" });
+    issues.push({ severity: "error", message: "The plan has no Log Source node" });
   if (reports.length === 0)
     issues.push({ severity: "error", message: "The plan has no Final Report: nothing would be disclosed" });
   if (reports.length > 1)
@@ -78,6 +79,24 @@ export function lintPlan(plan: Plan): Issue[] {
             `${n.id}: no record kinds selected, so no records are admitted`,
           );
         break;
+      case "filter_logs": {
+        if (!n.inputs.records) todo(n.id, at(i, "inputs"), `${n.id}: connect the records to filter`);
+        const c = n.config;
+        if (c.mode === "rules") {
+          if (!c.rules.length) todo(n.id, at(i, "config", "rules"), `${n.id}: add a rule`);
+          c.rules.forEach((rule, k) => {
+            const why = ruleIssue(rule);
+            if (why) (ruleUnfinished(why) ? todo : err)(n.id, at(i, "config", "rules", k), `${n.id}: rule ${k + 1}: ${why}`);
+          });
+        } else if (!c.llm.question.trim())
+          todo(n.id, at(i, "config", "llm", "question"), `${n.id}: write the yes/no question`);
+        break;
+      }
+      case "combine_logs": {
+        const missing = ["a", "b"].filter((p) => !n.inputs[p]).map((p) => p.toUpperCase());
+        if (missing.length) todo(n.id, at(i, "inputs"), `${n.id}: connect ${missing.join(" and ")}`);
+        break;
+      }
       case "classifier": {
         if (!n.inputs.items) todo(n.id, at(i, "inputs"), `${n.id}: connect logs or items to classify`);
         const names = n.config.labels.map((l) => l.name);

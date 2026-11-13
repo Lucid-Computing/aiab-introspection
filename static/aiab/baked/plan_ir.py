@@ -1,11 +1,14 @@
 """The audit plan as a graph (``aiab-plan-ir/v0``): schema, checks and derived settings.
 
 A plan is one JSON document: a list of nodes, each with typed inputs that read another
-node's output. Five node types: ``input_logs`` (the records of a run), ``classifier`` (one
-model call per item, a label and a score each), ``run_python`` (a ``run`` function over its
-inputs), ``run_llm`` (a model call per item, or one call in total) and ``final_report`` (the
-only thing that leaves the box). What travels between nodes is one of four port types:
-LogRecords, Items, Classifications or Value.
+node's output. Seven node types: ``input_logs`` (the records of a run), ``filter_logs`` (keeps
+the records that match rules, or that a model answers yes for), ``combine_logs`` (the records
+in both of two inputs, or in either), ``classifier`` (one model call per item, a label and a
+score each), ``run_python`` (a ``run`` function over its inputs), ``run_llm`` (a model call per
+item, or one call in total) and ``final_report`` (the only thing that leaves the box). What
+travels between nodes is one of four port types: LogRecords, Items, Classifications or Value.
+The two record nodes were added without a new format name: every plan that loaded before
+still loads and means the same, and a box without them refuses a plan that uses them.
 
 This module mirrors the builder's rules (ui/playground/src/plan: types, validate, lint,
 report), so a plan the builder calls valid is a plan the box accepts, and the other way
@@ -24,17 +27,27 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
 from aiab.audit.protocol import DATE, AuditError
+from aiab.baked.pattern import pattern_issue
 
 PLAN_VERSION = "aiab-plan-ir/v0"
 PORT_TYPES = ("LogRecords", "Items", "Classifications", "Value")
 FIELD_TYPES = ("boolean", "integer", "number", "string")
 KINDS = ("request", "response", "tool_call", "tool_result")
-NODE_TYPES = ("input_logs", "classifier", "run_python", "run_llm", "final_report")
+NODE_TYPES = (
+    "input_logs",
+    "filter_logs",
+    "combine_logs",
+    "classifier",
+    "run_python",
+    "run_llm",
+    "final_report",
+)
 REPORT_INPUT = "result"
 ABSTAIN = "abstain"
 
@@ -64,6 +77,31 @@ FORBIDDEN_NAMES = {
     "input",
     "__import__",
 }
+
+# A Filter's rules: what each field of a record can be tested with.
+FIELD_OPS = {
+    "content": ("contains", "not_contains", "equals", "starts_with", "ends_with", "regex"),
+    "kind": ("in",),
+    "agent": ("in", "not_in"),
+    "session": ("in", "not_in"),
+    "time": ("between", "before", "after"),
+    "length": ("at_least", "at_most"),
+}
+FIELD_NAMES = {
+    "content": "text",
+    "kind": "record kind",
+    "agent": "agent",
+    "session": "session",
+    "time": "time",
+    "length": "length",
+}
+AGENT_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
+# Times in rules are UTC, to the second: 2026-11-12T09:30:00Z.
+UTC_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+YES_NO = (
+    {"name": "yes", "description": "the answer to the question is yes", "flag": True},
+    {"name": "no", "description": "the answer to the question is no", "flag": False},
+)
 
 IDENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 IDENT = {"type": "string", "pattern": IDENT_RE.pattern, "maxLength": 64}
@@ -111,7 +149,52 @@ OUTPUT = _obj(
         },
     }
 )
+RULE = _obj(
+    {
+        "field": {"enum": list(FIELD_OPS)},
+        "op": {"enum": sorted({op for ops in FIELD_OPS.values() for op in ops})},
+        # Its shape depends on the field and the operator: checked in check_plan.
+        "value": {},
+        "case_sensitive": FLAG,
+    },
+    optional=("case_sensitive",),
+)
+# A Filter in each mode carries only that mode's settings, so a signed plan holds nothing
+# that does not run.
+FILTER_CONFIGS = {
+    "rules": _obj(
+        {
+            "mode": {"const": "rules"},
+            "match": {"enum": ["all", "any"]},
+            "exclude": FLAG,
+            "rules": _list(RULE),
+        }
+    ),
+    "llm": _obj(
+        {
+            "mode": {"const": "llm"},
+            "llm": _obj(
+                {
+                    "model": MODEL,
+                    "question": TEXT,
+                    "judge": {"enum": ["record", "session"]},
+                    "yes_examples": _list(TEXT),
+                    "no_examples": _list(TEXT),
+                    "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+                    "unsure": {"enum": ["drop", "keep"]},
+                },
+                optional=("threshold",),
+            ),
+        }
+    ),
+}
+FILTER_MODE = {
+    "type": "object",
+    "properties": {"mode": {"enum": list(FILTER_CONFIGS)}},
+    "required": ["mode"],
+}
 CONFIGS = {
+    "combine_logs": _obj({"op": {"enum": ["and", "or"]}}),
     "input_logs": _obj(
         {
             "source": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -214,6 +297,8 @@ PLAN = _obj(
 # What each node type accepts on its inputs, and how its inputs are named.
 ACCEPTS = {
     "input_logs": (),
+    "filter_logs": ("LogRecords",),
+    "combine_logs": ("LogRecords",),
     "classifier": ("LogRecords", "Items"),
     "run_python": PORT_TYPES,
     "run_llm": PORT_TYPES,
@@ -222,6 +307,8 @@ ACCEPTS = {
 }
 INPUT_RULES = {
     "input_logs": ("none", ()),
+    "filter_logs": ("fixed", ("records",)),
+    "combine_logs": ("fixed", ("a", "b")),
     "classifier": ("fixed", ("items",)),
     "run_python": ("dynamic", ()),
     "run_llm": ("dynamic", ()),
@@ -271,12 +358,94 @@ class Analysis:
 def output_port(node: dict) -> tuple[str, str] | None:
     """(name, type) of a node's single output; None for the Final Report."""
     t = node["type"]
-    if t == "input_logs":
+    if t in ("input_logs", "filter_logs", "combine_logs"):
         return "records", "LogRecords"
     if t == "classifier":
         return "results", "Classifications"
     if t in ("run_python", "run_llm"):
         return node["config"]["output"]["name"], node["config"]["output"]["type"]
+    return None
+
+
+def is_model_node(node: dict) -> bool:
+    """A node the parent broker asks the model for: a classifier, a model call, a Filter in
+    LLM mode."""
+    t = node["type"]
+    return t in ("classifier", "run_llm") or (
+        t == "filter_logs" and node["config"]["mode"] == "llm"
+    )
+
+
+def model_settings(node: dict) -> dict:
+    cfg = node["config"]
+    return cfg["llm"]["model"] if node["type"] == "filter_logs" else cfg["model"]
+
+
+def as_classifier(node: dict) -> dict:
+    """An LLM-mode Filter as the classifier it asks: its question, the labels yes (flagged)
+    and no, its examples and threshold. The prompt, the splitting of long items, the merging
+    of their answers and the abstain rule are then the classifier's own."""
+    llm = node["config"]["llm"]
+    config = {
+        "model": llm["model"],
+        "group_by": llm["judge"],
+        "window": None,
+        "instructions": llm["question"],
+        "labels": [dict(label) for label in YES_NO],
+        "positive_examples": list(llm["yes_examples"]),
+        "negative_examples": list(llm["no_examples"]),
+        "output_contract": {"score": True, "evidence_ids": True},
+    }
+    if llm.get("threshold") is not None:
+        config["threshold"] = llm["threshold"]
+    return {"id": node["id"], "type": "classifier", "inputs": node["inputs"], "config": config}
+
+
+def rule_issue(rule: dict) -> str | None:
+    """Why a Filter rule cannot run, or None. The builder's lint says the same (lint.ts)."""
+    field, op, value = rule["field"], rule["op"], rule["value"]
+    if op not in FIELD_OPS[field]:
+        return f'"{op}" does not apply to {FIELD_NAMES[field]}'
+    if field != "content" and "case_sensitive" in rule:
+        return "only a text rule is case sensitive"
+    if field == "content":
+        if not isinstance(value, str):
+            return "the text to match is a string"
+        if not value:
+            return "write the text to match"
+        if op == "regex":
+            why = pattern_issue(value)
+            return f"regex: {why}" if why else None
+        return None
+    if field == "length":
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return "a length is a whole number of characters, 0 or more"
+        return None
+    if field == "time":
+        times = value if op == "between" else [value]
+        if op == "between" and (not isinstance(value, list) or len(value) != 2):
+            return "between takes two times"
+        for t in times:
+            if not isinstance(t, str) or not UTC_RE.fullmatch(t):
+                return "write times in UTC as YYYY-MM-DDTHH:MM:SSZ"
+            try:
+                datetime.fromisoformat(t)
+            except ValueError:
+                return f"{t} is not a date"
+        if op == "between" and times[0] >= times[1]:
+            return "the start comes before the end"
+        return None
+    # kind, agent, session: one or more values, each once.
+    if not isinstance(value, list) or not value:
+        return f"pick at least one {FIELD_NAMES[field]}"
+    if len(set(map(str, value))) != len(value) or any(not isinstance(v, str) for v in value):
+        return f"each {FIELD_NAMES[field]} once"
+    if field == "kind" and any(v not in KINDS for v in value):
+        return f"record kinds are {', '.join(KINDS)}"
+    if field == "agent" and any(not AGENT_RE.fullmatch(v) for v in value):
+        return "an agent id is letters, digits, _ and -, up to 128"
+    if field == "session" and any(not 1 <= len(v) <= 256 for v in value):
+        return "a session id is 1 to 256 characters"
     return None
 
 
@@ -395,6 +564,13 @@ def check_code(code: str, inputs: tuple[str, ...]) -> str | None:
     return None
 
 
+def config_schema(node: dict) -> dict:
+    if node["type"] == "filter_logs":
+        mode = node["config"].get("mode")
+        return FILTER_CONFIGS.get(mode, FILTER_MODE) if isinstance(mode, str) else FILTER_MODE
+    return CONFIGS[node["type"]]
+
+
 def _schema_issues(schema: dict, value: Any, prefix: list) -> list[dict]:
     issues = []
     for error in sorted(Draft202012Validator(schema).iter_errors(value), key=lambda e: e.path):
@@ -426,8 +602,8 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
     for i, n in enumerate(nodes_raw):
         node_id = n.get("id") if isinstance(n.get("id"), str) else None
         found = _schema_issues(NODE, n, ["nodes", i])
-        if not found and n["type"] in CONFIGS:
-            found = _schema_issues(CONFIGS[n["type"]], n["config"], ["nodes", i, "config"])
+        if not found:
+            found = _schema_issues(config_schema(n), n["config"], ["nodes", i, "config"])
         issues += [{**f, "node": node_id} for f in found]
     if issues:
         raise PlanError(issues)
@@ -444,7 +620,7 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
         for name, ref in n["inputs"].items():
             path = ["nodes", i, "inputs", name]
             if kind == "none":
-                issue(f"{n['id']}: Input Logs takes no inputs", n["id"], path)
+                issue(f"{n['id']}: Log Source takes no inputs", n["id"], path)
                 continue
             if kind == "fixed" and name not in ports:
                 issue(
@@ -486,7 +662,7 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
     sources = [n for n in nodes_raw if n["type"] == "input_logs"]
     reports = [n for n in nodes_raw if n["type"] == "final_report"]
     if len(sources) != 1:
-        issue("A plan has exactly one Input Logs node")
+        issue("A plan has exactly one Log Source node")
     if len(reports) != 1:
         issue("A plan has exactly one Final Report")
 
@@ -514,20 +690,35 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
                     nid,
                     at + ["inputs", name],
                 )
-        if n["type"] in ("classifier", "run_llm") and trust_model is not None:
-            model = cfg["model"]
+        if is_model_node(n) and trust_model is not None:
+            model = model_settings(n)
+            where = at + ["config"] + (["llm"] if n["type"] == "filter_logs" else []) + ["model"]
             if model["id"] != trust_model["id"]:
                 issue(
                     f'{nid}: model "{model["id"]}" is not the pinned model ({trust_model["id"]})',
                     nid,
-                    at + ["config", "model", "id"],
+                    where + ["id"],
                 )
             if model["temperature"] != 0:
                 issue(
-                    f"{nid}: the box runs the model at temperature 0",
-                    nid,
-                    at + ["config", "model", "temperature"],
+                    f"{nid}: the box runs the model at temperature 0", nid, where + ["temperature"]
                 )
+        if n["type"] == "filter_logs":
+            if not n["inputs"].get("records"):
+                issue(f"{nid}: connect the records to filter", nid, at + ["inputs"])
+            if cfg["mode"] == "rules":
+                if not cfg["rules"]:
+                    issue(f"{nid}: add a rule", nid, at + ["config", "rules"])
+                for k, rule in enumerate(cfg["rules"]):
+                    why = rule_issue(rule)
+                    if why:
+                        issue(f"{nid}: rule {k + 1}: {why}", nid, at + ["config", "rules", k])
+            elif not cfg["llm"]["question"].strip():
+                issue(f"{nid}: write the yes/no question", nid, at + ["config", "llm", "question"])
+        if n["type"] == "combine_logs":
+            missing = [p.upper() for p in ("a", "b") if not n["inputs"].get(p)]
+            if missing:
+                issue(f"{nid}: connect {' and '.join(missing)}", nid, at + ["inputs"])
         if n["type"] == "classifier":
             if not n["inputs"].get("items"):
                 issue(f"{nid}: connect logs or items to classify", nid, at + ["inputs"])

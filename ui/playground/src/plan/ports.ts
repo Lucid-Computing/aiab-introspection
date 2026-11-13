@@ -10,6 +10,8 @@ export interface OutputPort {
 export function outputPort(node: PlanNode): OutputPort | null {
   switch (node.type) {
     case "input_logs":
+    case "filter_logs":
+    case "combine_logs":
       return { name: "records", type: "LogRecords" };
     case "classifier":
       return { name: "results", type: "Classifications" };
@@ -30,6 +32,8 @@ export const INPUT_RULES: Record<
   { kind: "none" } | { kind: "fixed"; ports: string[] } | { kind: "dynamic" }
 > = {
   input_logs: { kind: "none" },
+  filter_logs: { kind: "fixed", ports: ["records"] },
+  combine_logs: { kind: "fixed", ports: ["a", "b"] },
   classifier: { kind: "fixed", ports: ["items"] },
   run_python: { kind: "dynamic" },
   run_llm: { kind: "dynamic" },
@@ -38,6 +42,8 @@ export const INPUT_RULES: Record<
 
 const ACCEPTS: Record<NodeType, readonly PortType[]> = {
   input_logs: [],
+  filter_logs: ["LogRecords"],
+  combine_logs: ["LogRecords"],
   classifier: ["LogRecords", "Items"],
   run_python: ["LogRecords", "Items", "Classifications", "Value"],
   run_llm: ["LogRecords", "Items", "Classifications", "Value"],

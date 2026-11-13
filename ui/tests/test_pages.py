@@ -342,7 +342,7 @@ def test_a_new_agreement_can_copy_another_plan(client, tmp_path):
 
 
 def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, monkeypatch):
-    """When the agreement's Input filter names one of the server's log sources, the Runs page
+    """When the agreement's Log Source names one of the server's log sources, the Runs page
     offers no selector and a run reads that source, whatever the form says."""
     import server.app as ui
 
@@ -375,7 +375,7 @@ def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, mon
 
 
 def test_the_input_filter_can_name_sessions_and_the_runs_page_follows(client, tmp_path):
-    """Sessions named in the agreement's Input filter are the only ones a run takes; the
+    """Sessions named in the agreement's Log Source are the only ones a run takes; the
     builder reads the list of sessions from /logs/sessions.json."""
     logs = tmp_path / "logs" / "dev"
     logs.mkdir(parents=True, exist_ok=True)

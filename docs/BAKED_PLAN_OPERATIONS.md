@@ -6,7 +6,8 @@ The runtime runs jointly signed plan bundles, one sent with each run (see
 [Send the plan with the run](#send-the-plan-with-the-run)); the image holds no plan.
 `plan/` in this repository is the example folder the commands below use; the UI keeps its
 agreements under `agreements/`. The plan is a graph (`plan.json`, format `aiab-plan-ir/v0`):
-the logs of a run, Python steps, model steps, a classifier and the final report, run in
+the logs of a run, filters and AND/OR joins of those logs, Python steps, model steps, a
+classifier and the final report, run in
 dependency order by `static/aiab/baked/graph.py` inside the sandboxed worker, with every
 model call made by the parent broker. The plan is written in the agreement UI's builder,
 which applies the same checks (`plan_ir.py`). The native logger is a separate workstream. The broader mandatory requirements are tracked in
@@ -18,6 +19,17 @@ The code is the schema: `static/aiab/baked/plan_ir.py` defines the plan, and `re
 
 - Plan format: **`aiab-plan-ir/v0`** (`static/aiab/baked/plan_ir.py`). The earlier
   `aiab-baked-plan/v1` bundles (plan.py and prompts) no longer load; the UI archives them.
+- Record steps: a Filter (`filter_logs`) keeps the records that match its rules (text,
+  record kind, agent, session, time, length; all or any; `exclude` drops them instead), or
+  asks the model one yes/no question per record or per session, as a classifier with the
+  labels yes and no. AND / OR (`combine_logs`) keeps the records in both inputs or in either,
+  by record id, once each, in the order of the run's records. Each hands on only records it
+  was given. They were added to `v0` without a new name: every plan that loaded before still
+  loads and means the same, and an older box refuses a plan that uses them. A "matches
+  regex" rule accepts a small subset (`static/aiab/baked/pattern.py`, the same check in the
+  builder) that refuses back-references, look-around and nested repeats; matching runs on
+  Python's backtracking engine, so a slow pattern over long records is stopped only by the
+  worker's CPU limit (`execution_timeout`), as plan code is.
 - Report: **`aiab-report/v3`**, adding `aiab_id`, `image_digest`, `egress_max_bits`.
   Existing v1/v2 verifiers and archived evidence remain unchanged.
 - `plan_digest`: SHA-256 over `AIAB/folder/v1\0`, then each sorted UTF-8 path and raw

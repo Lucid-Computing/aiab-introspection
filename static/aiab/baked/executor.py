@@ -26,9 +26,9 @@ from pathlib import Path
 from aiab.audit.protocol import AuditError, canonical, decode, validate
 from aiab.baked import prompts
 from aiab.baked.output import check_result
+from aiab.baked.plan_ir import is_model_node, model_settings
 from aiab.baked.worker import STAGES
 
-MODEL_NODES = ("classifier", "run_llm")
 PLAN_CPU_SECONDS = 3600
 # Pipe lines carry every record at once; asyncio refuses a line longer than its stream limit.
 LINE_LIMIT = sys.maxsize
@@ -43,9 +43,9 @@ def budgets(nodes: dict, model) -> dict[str, int]:
         return {}
     out = {}
     for node in nodes.values():
-        if node["type"] in MODEL_NODES:
+        if is_model_node(node):
             system = prompts.request(node, "")[0][0]["content"]
-            out[node["id"]] = measure(system, node["config"]["model"]["max_output_tokens"])
+            out[node["id"]] = measure(system, model_settings(node)["max_output_tokens"])
     return out
 
 
@@ -122,7 +122,7 @@ async def execute(bundle, records, model):
             texts = message["texts"]
             if (
                 node is None
-                or node["type"] not in MODEL_NODES
+                or not is_model_node(node)
                 or node["id"] in served
                 or not isinstance(texts, list)
                 or any(not isinstance(t, str) for t in texts)
@@ -135,7 +135,7 @@ async def execute(bundle, records, model):
             ):
                 raise AuditError("execution_failed")
             served.add(node["id"])
-            budget = node["config"]["model"]["max_output_tokens"]
+            budget = model_settings(node)["max_output_tokens"]
             requests = [prompts.request(node, text) for text in texts]
             # Check every complete prompt of this node before any inference, never truncate.
             for content, _ in requests:

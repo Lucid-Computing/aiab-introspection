@@ -2,7 +2,7 @@ import { useReactFlow } from "@xyflow/react";
 import type { Dispatch } from "react";
 import { READONLY } from "../agreement";
 import { NODE_H, NODE_W } from "../plan/layout";
-import { addNode, cannotAdd } from "../plan/ops";
+import { addCombine, addNode, cannotAdd } from "../plan/ops";
 import { addQuery } from "../plan/query";
 import type { Plan } from "../plan/types";
 import type { Action, State } from "../state/store";
@@ -12,7 +12,17 @@ import { BLOCK_META, type BlockKind } from "./nodeMeta";
 export const BLOCK_DRAG = "application/x-aiab-block";
 
 /** The kinds a person adds by hand, in the order a plan usually runs them. */
-export const OFFERED: BlockKind[] = ["input_logs", "query", "classifier", "run_llm", "run_python", "final_report"];
+export const OFFERED: BlockKind[] = [
+  "input_logs",
+  "filter_logs",
+  "and",
+  "or",
+  "query",
+  "classifier",
+  "run_llm",
+  "run_python",
+  "final_report",
+];
 
 /** Add a block of `type` centred on `at` (flow coordinates), moved down until it overlaps no other block. */
 export function placeBlock(
@@ -22,7 +32,12 @@ export function placeBlock(
   type: BlockKind,
   at: { x: number; y: number },
 ) {
-  const { plan: next, id } = type === "query" ? addQuery(plan) : addNode(plan, type);
+  const { plan: next, id } =
+    type === "query"
+      ? addQuery(plan)
+      : type === "and" || type === "or"
+        ? addCombine(plan, type)
+        : addNode(plan, type);
   const p = { x: at.x - NODE_W / 2, y: at.y - NODE_H / 2 };
   const taken = Object.values(layout);
   while (taken.some((q) => Math.abs(q.x - p.x) < NODE_W && Math.abs(q.y - p.y) < NODE_H)) p.y += NODE_H + 30;

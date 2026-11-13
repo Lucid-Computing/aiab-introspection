@@ -25,6 +25,7 @@ import {
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
 import { CommitInput, Field, LinesInput, NumberInput, PythonEditor, Select } from "./fields";
+import { CombineForm, FilterForm } from "./FilterForms";
 import { BLOCK_META, kindOf, SOURCE_OPTIONS, sourceLabel } from "./nodeMeta";
 import { TypeBadge } from "./PlanNodeView";
 
@@ -80,6 +81,8 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
       <InputsEditor plan={plan} node={node} op={op} />
 
       {node.type === "input_logs" && <InputLogsForm node={node} set={set} />}
+      {node.type === "filter_logs" && <FilterForm key={node.id} plan={plan} node={node} set={set} op={op} />}
+      {node.type === "combine_logs" && <CombineForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "classifier" && (
         <ClassifierForm node={node} set={set} fromItems={inputType(plan, node, "items") === "Items"} />
       )}
@@ -128,6 +131,7 @@ function IoLine({ plan, node, side }: { plan: Plan; node: PlanNode; side: "in" |
           ) : (
             bound.map((i) => (
               <li key={i.name}>
+                {node.type === "combine_logs" && <span className="mono">{i.name.toUpperCase()} · </span>}
                 <span className="mono">{i.type ?? "?"}</span> from <span className="mono">{i.ref}</span>
                 {i.shape && <span className="mono insp-io-shape">{i.shape}</span>}
               </li>
