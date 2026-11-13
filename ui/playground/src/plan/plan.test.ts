@@ -118,7 +118,7 @@ describe("Plan IR validation", () => {
     }
   });
 
-  it("rejects inputs on Input Logs and unknown classifier inputs", () => {
+  it("rejects inputs on Log Source and unknown classifier inputs", () => {
     const p = clone(simple());
     p.nodes[0].inputs = { x: "physics.results" };
     expect(validatePlan(p).ok).toBe(false);

@@ -78,7 +78,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 ## The plan builder
 
 `playground/` is the plan builder: a React app that edits the plan as a graph of five block
-types (Input Logs, Classifier, Run Python, Run LLM, Final Report) or as `plan.json` text, with every
+types (Log Source, Classifier, Run Python, Run LLM, Final Report) or as `plan.json` text, with every
 step showing what it reads and what it produces. The plan page embeds it in an iframe at
 `/audit-plan-playground/?agreement=<id>`; it loads the agreement's `plan.json` from
 `GET /a/<id>/plan.json` and saves with `PUT`, which runs the box's loader

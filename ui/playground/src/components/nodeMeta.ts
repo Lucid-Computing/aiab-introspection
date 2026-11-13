@@ -6,7 +6,7 @@ import type { NodeType, PlanNode } from "../plan/types";
 /** Each kind has a name and one sentence on why the block exists; its symbol is `.sym--<type>` in styles.css. */
 export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
   input_logs: {
-    label: "Input filter",
+    label: "Log Source",
     blurb: "Fixes which logs the box may read before anything runs, so the audit cannot reach beyond what both parties agreed to.",
   },
   filter_logs: {
@@ -60,7 +60,7 @@ export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
 export const kindOf = (n: PlanNode): BlockKind =>
   n.type === "combine_logs" ? n.config.op : parseQuery(n) ? "query" : n.type;
 
-/** The log sources an Input filter can name: the ids the agreement UI reads (server/config.py). */
+/** The log sources a Log Source can name: the ids the agreement UI reads (server/config.py). */
 export const SOURCE_OPTIONS: { id: string; label: string }[] = [
   { id: "prod", label: "Prod Agent Logs" },
   { id: "dev", label: "Dev Agent Logs" },

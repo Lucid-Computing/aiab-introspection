@@ -91,7 +91,7 @@ def _plan(folder: Path) -> dict | None:
 
 
 def plan_source(folder: Path) -> str | None:
-    """The log source the agreement's Input filter names (``config.source``), or None when
+    """The log source the agreement's Log Source names (``config.source``), or None when
     the plan does not load. The caller decides whether the name is one of its sources."""
     plan = _plan(folder)
     try:
@@ -101,7 +101,7 @@ def plan_source(folder: Path) -> str | None:
 
 
 def plan_sessions(folder: Path) -> set[str]:
-    """The sessions the agreement's Input filter names (``filter.sessions``); empty when it
+    """The sessions the agreement's Log Source names (``filter.sessions``); empty when it
     names none, which means every session of the source."""
     plan = _plan(folder)
     try:
@@ -112,7 +112,7 @@ def plan_sessions(folder: Path) -> set[str]:
 
 
 def plan_scope(folder: Path) -> dict | None:
-    """What the agreement's Input Logs step pins (agents, a time window), or None when it
+    """What the agreement's Log Source step pins (agents, a time window), or None when it
     pins nothing or the plan does not load."""
     plan = _plan(folder)
     try:
@@ -564,7 +564,7 @@ def outcome(state: dict) -> dict:
             "runtime and the plan."
         ),
         "plan_query_failed": (
-            "The plan failed while selecting records: in its Input filter, a Filter's rules, or "
+            "The plan failed while selecting records: in its Log Source, a Filter's rules, or "
             "an AND or OR block."
         ),
         "plan_classify_failed": (
@@ -602,7 +602,7 @@ def outcome(state: dict) -> dict:
 
 def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list[dict]) -> dict:
     """What a run sends, by session: id, title, the records sent, and how many of them
-    the agreement's Input filter keeps. The filter is the box's own (``select_records``) run
+    the agreement's Log Source keeps. The filter is the box's own (``select_records``) run
     on the records' metadata only: kind, agent, session. When the filter also matches
     keywords, ``kept`` is None: that reads the text, and which records pass is the box's
     to know. Written into the run's state at start; the records themselves are deleted."""
@@ -637,7 +637,7 @@ def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list
 def run_counts(settings: Settings, state: dict) -> dict | None:
     """Sessions sent, dropped and classified for the run page. Sent and dropped come from
     what the UI sent (``sent_sessions``); what reaches the classifier is worked out from the
-    frozen plan when the classifier reads the Input filter directly. With a Filter, AND or OR
+    frozen plan when the classifier reads the Log Source directly. With a Filter, AND or OR
     between them the box decides which records go on, so it is not worked out here.
     Classified comes only from fields of the verified report that count the classifier's
     items. Those are items, not sessions: a session longer than the classifier's window is

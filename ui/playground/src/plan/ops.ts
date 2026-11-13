@@ -100,7 +100,7 @@ export function freshId(plan: Plan, base: string): string {
 }
 
 const LABEL: Record<NodeType, string> = {
-  input_logs: "Input Logs",
+  input_logs: "Log Source",
   filter_logs: "Filter",
   combine_logs: "Combine",
   classifier: "Classifier",
@@ -175,7 +175,7 @@ export function connect(
   const out = outputPort(src);
   if (!out) return { ok: false, message: "A Final Report has no output" };
   const rule = INPUT_RULES[tgt.type];
-  if (rule.kind === "none") return { ok: false, message: "Input Logs is a starting node and takes no inputs" };
+  if (rule.kind === "none") return { ok: false, message: "Log Source is a starting node and takes no inputs" };
   if (!accepts(tgt.type, out.type))
     return {
       ok: false,

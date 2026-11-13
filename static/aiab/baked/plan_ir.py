@@ -620,7 +620,7 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
         for name, ref in n["inputs"].items():
             path = ["nodes", i, "inputs", name]
             if kind == "none":
-                issue(f"{n['id']}: Input Logs takes no inputs", n["id"], path)
+                issue(f"{n['id']}: Log Source takes no inputs", n["id"], path)
                 continue
             if kind == "fixed" and name not in ports:
                 issue(
@@ -662,7 +662,7 @@ def check_plan(raw: Any, trust_model: dict | None = None) -> Analysis:
     sources = [n for n in nodes_raw if n["type"] == "input_logs"]
     reports = [n for n in nodes_raw if n["type"] == "final_report"]
     if len(sources) != 1:
-        issue("A plan has exactly one Input Logs node")
+        issue("A plan has exactly one Log Source node")
     if len(reports) != 1:
         issue("A plan has exactly one Final Report")
 

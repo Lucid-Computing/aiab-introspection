@@ -67,7 +67,7 @@ def with_ids(records: list[dict]) -> list[dict]:
 
 
 def select_records(node: dict, records: list[dict]) -> list[dict]:
-    """The Input Logs step: kinds, keywords (any, case-insensitive), agents and, when the
+    """The Log Source step: kinds, keywords (any, case-insensitive), agents and, when the
     plan names them, sessions, in order."""
     cfg = node["config"]
     kinds = set(cfg["filter"]["kinds"])

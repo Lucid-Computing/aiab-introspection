@@ -1,6 +1,6 @@
 # ui/playground: the plan builder
 
-The editor for audit plans: a graph of block types (Input Logs, Filter, AND / OR, Classifier,
+The editor for audit plans: a graph of block types (Log Source, Filter, AND / OR, Classifier,
 Run Python, Run LLM, Final Report) that can be edited as a graph or as YAML. Each card shows what the
 block reads and the type and shape of what it produces, so types can be checked across every
 connection. The same rules run in the box (`static/aiab/baked/plan_ir.py`): a plan that is

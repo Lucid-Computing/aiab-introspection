@@ -108,7 +108,7 @@ export function structuralIssues(plan: Plan): Issue[] {
     for (const [name, r] of Object.entries(n.inputs)) {
       const path = ["nodes", i, "inputs", name];
       if (rule.kind === "none") {
-        issues.push({ severity: "error", nodeId: n.id, path, message: `${n.id}: Input Logs takes no inputs` });
+        issues.push({ severity: "error", nodeId: n.id, path, message: `${n.id}: Log Source takes no inputs` });
         continue;
       }
       if (rule.kind === "fixed" && !rule.ports.includes(name)) {

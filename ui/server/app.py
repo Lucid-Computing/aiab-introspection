@@ -484,7 +484,7 @@ async def playground(request: Request, path: str = "") -> Response:
 
 
 def _run_source(request: Request, folder: Path | None, form: Any = None) -> tuple[LogSource, bool]:
-    """The log source a run reads: the one the agreement's Input filter names, when it is
+    """The log source a run reads: the one the agreement's Log Source names, when it is
     one of this server's sources; otherwise the page's ``logs`` choice (plans written before
     the filter named a source). The flag says whether the agreement decided."""
     named = runs.plan_source(folder) if folder else None
@@ -521,7 +521,7 @@ def _log_source(request: Request, form: Any = None) -> LogSource:
 
 @app.get("/logs/sessions.json")
 async def logs_sessions(request: Request) -> Response:
-    """The sessions of one log source, by metadata only, for the Input filter's picker."""
+    """The sessions of one log source, by metadata only, for the Log Source's picker."""
     if user_of(request) is None:
         return JSONResponse({"error": "sign in"}, status_code=401)
     source = _log_source(request)
@@ -947,7 +947,7 @@ async def runs_index(request: Request) -> Response:
         pre["ok"] = False
     source, source_fixed = _run_source(request, folder)
     all_sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
-    # The agreement's input filter decides what is sent: sessions it takes, sessions outside
+    # The agreement's Log Source decides what is sent: sessions it takes, sessions outside
     # its scope (the box would refuse them), and sessions with nothing to send.
     fits, outside, empty = [], [], []
     named = runs.plan_sessions(folder) if folder else set()

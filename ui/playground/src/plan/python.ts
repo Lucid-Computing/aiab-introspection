@@ -198,7 +198,7 @@ const NARROWED_BODY = `def run(records, settings):
         kept.append(r)
     return kept`;
 
-/** The filters an Input filter still carries from before the pane was simplified. */
+/** The filters a Log Source still carries from before the pane was simplified. */
 export function narrowing(node: PlanNode): string[] {
   if (node.type !== "input_logs") return [];
   const c = node.config;

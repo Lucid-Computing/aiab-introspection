@@ -42,12 +42,12 @@ ISSUE_WHERE = {
     "invalid_json": "plan.json is not valid JSON",
     "invalid_plan": "the plan graph (the builder lists the problems)",
     "invalid_trust_roots": "the trust file",
-    "invalid_scope": "the Input Logs scope: the window ends before it starts",
+    "invalid_scope": "the Log Source scope: the window ends before it starts",
     "invalid_output_schema": "the Final Report fields",
     "invalid_signature": "a signature file",
 }
 NODE_LABELS = {
-    "input_logs": "Input Logs",
+    "input_logs": "Log Source",
     "filter_logs": "Filter",
     "combine_logs": "AND / OR",
     "classifier": "Classifier",

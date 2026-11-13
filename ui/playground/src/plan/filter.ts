@@ -245,7 +245,7 @@ function uncountable(node: FilterLogs, sample: LogRecord[]): string | null {
 /**
  * The sample records that reach the output of `id`, in order, or null when the sample cannot
  * say (a model decides, a rule names agents or sessions the sample does not have, or a Code
- * block sits upstream). The Input filter's records come from `selectRecords`.
+ * block sits upstream). The Log Source's records come from `selectRecords`.
  */
 export function sampleRecords(plan: Plan, id: string): LogRecord[] | null {
   const byId = new Map(plan.nodes.map((n) => [n.id, n]));
