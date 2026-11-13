@@ -43,11 +43,16 @@ def workflow(repo, name, ref, output, *inputs):
     run_id = match[1]
     deadline = time.monotonic() + 1800
     while time.monotonic() < deadline:
-        state = json.loads(
-            command(
-                "gh", "run", "view", run_id, "--repo", repo, "--json", "status,conclusion,headSha"
+        try:
+            state = json.loads(
+                command(
+                    "gh", "run", "view", run_id, "--repo", repo, "--json", "status,conclusion,headSha"
+                )
             )
-        )
+        except RuntimeError:
+            # GitHub can answer "not found" for a run it dispatched seconds ago; ask again.
+            time.sleep(10)
+            continue
         if state["status"] == "completed":
             if state["conclusion"] != "success":
                 raise RuntimeError("Workflow failed: " + run_id)
