@@ -23,6 +23,10 @@ from server.config import Settings
 API = "https://api.github.com"
 RELEASE_WORKFLOW = "Release to the live box"
 TTL_SECONDS = 20
+# Without a token GitHub allows 60 requests an hour per address, shared with whoever else
+# leaves Render from it; refreshing each answer every 10 minutes keeps a page's handful of
+# answers well under that.
+TTL_SECONDS_ANONYMOUS = 600
 _cache: dict[tuple, tuple[float, Any]] = {}
 
 # Every GitHub answer is kept and served at once; when it is older than TTL_SECONDS it is
@@ -34,6 +38,22 @@ _refreshing: set[tuple] = set()
 # answer ("HTTP 401, token rejected") instead of only that it did not.
 _last_failure: dict[str, Any] | None = None
 _last_success_at: float | None = None
+# After a 403 or 429 that says the allowance is spent, no request is sent before this
+# time (time.time()), so a refused server does not keep spending the next hour's allowance.
+_paused_until: float = 0.0
+# What _fetch returns when GitHub refused or failed, as opposed to a real answer (None
+# for a 404: the file or branch is not there). A failure keeps the last good answer.
+_FAILED = object()
+
+
+_has_token: bool | None = None
+
+
+def _ttl() -> float:
+    global _has_token
+    if _has_token is None:  # asked once: _token() may start `gh`, and this runs per answer
+        _has_token = _token() is not None
+    return TTL_SECONDS if _has_token else TTL_SECONDS_ANONYMOUS
 
 
 def _token() -> str | None:
@@ -56,13 +76,21 @@ def _client() -> httpx.AsyncClient:
 
 
 async def _fetch(path: str, params: dict | None, raw: bool):
-    global _last_failure, _last_success_at
+    global _last_failure, _last_success_at, _paused_until
+    if time.time() < _paused_until:
+        return _FAILED
     headers = {"Accept": "application/vnd.github.raw+json"} if raw else None
     async with _client() as client:
         response = await client.get(API + path, params=params, headers=headers)
     if response.status_code != 200:
         _last_failure = {"path": path, "status": response.status_code, "at": time.time()}
-        return None
+        if response.status_code in (403, 429):
+            reset = response.headers.get("x-ratelimit-reset", "")
+            if response.headers.get("x-ratelimit-remaining") == "0" and reset.isdigit():
+                _paused_until = float(reset) + 1
+            elif response.status_code == 429:
+                _paused_until = time.time() + 60
+        return None if response.status_code == 404 else _FAILED
     _last_success_at = time.time()
     return response.text if raw else response.json()
 
@@ -72,7 +100,14 @@ async def _refresh(key: tuple, path: str, params: dict | None, raw: bool) -> Non
         return
     _refreshing.add(key)
     try:
-        _answers[key] = (time.monotonic(), await _fetch(path, params, raw))
+        answer = await _fetch(path, params, raw)
+        if answer is _FAILED:
+            # Keep the last good answer and try again after another TTL, so one refusal
+            # neither erases it nor sets off a retry every few seconds.
+            if key in _answers:
+                _answers[key] = (time.monotonic(), _answers[key][1])
+        else:
+            _answers[key] = (time.monotonic(), answer)
     except (httpx.HTTPError, ValueError) as exc:
         global _last_failure
         _last_failure = {
@@ -118,7 +153,7 @@ async def _get(client, path: str, params: dict | None = None, raw=False):
         await _refresh(key, path, params, raw)
         hit = _answers.get(key)
         return hit[1] if hit else None
-    if time.monotonic() - hit[0] > TTL_SECONDS:
+    if time.monotonic() - hit[0] > _ttl():
         asyncio.ensure_future(_refresh(key, path, params, raw))
     return hit[1]
 
@@ -144,7 +179,7 @@ async def refresh_loop(every: float = 15.0) -> None:
         await asyncio.sleep(every)
         now = time.monotonic()
         for key, (at, _) in list(_answers.items()):
-            if now - at > TTL_SECONDS:
+            if now - at > _ttl():
                 path, params, raw = key
                 await _refresh(key, path, dict(params), raw)
 
