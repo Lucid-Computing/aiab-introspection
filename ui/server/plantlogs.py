@@ -22,13 +22,20 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-LANES = ("Model calls", "Tool calls", "Slurm jobs", "GPU use", "Network")
-NETWORK_BIN_SECONDS = 60
+TABLE_AGENTS = {"plant-jobs": "Slurm jobs", "plant-network": "network", "plant-scores": "scores"}
+KIND_LINES = {  # the chart's lines for a transcript, in this order
+    "request": "Requests",
+    "tool_call": "Tool calls",
+    "tool_result": "Tool results",
+    "response": "Responses",
+}
+CHART_BINS = 40
 
 
 @dataclass
@@ -54,6 +61,13 @@ class PlantRecord:
     @property
     def title_text(self) -> str:
         return ""  # listed by metadata only
+
+    @property
+    def label(self) -> str:
+        """What the session is, for the lists: the export folder it came from and whether
+        it is the agent's transcript or one of the plant's tables."""
+        folder = re.sub(r"^\d+-", "", self.run.split("/")[0])
+        return f"{folder} · {TABLE_AGENTS.get(self.who, 'transcript')}"
 
     @property
     def parts(self) -> list[tuple[str, str]]:
@@ -229,156 +243,49 @@ def _clock(t: float) -> str:
 
 
 def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
-    """One lane chart per run of a session, each on its own UTC axis: the session's model
-    and tool calls, the run's Slurm jobs, the jobs that opened GPUs, and network traffic
-    per minute. Marks carry positions in percent of the axis; nothing of the text."""
+    """One chart per run of a session, a line per kind of record: how many were written in
+    each of CHART_BINS equal steps of time, on the run's own UTC axis. Points are in the chart's own
+    1000 x 200 drawing units. Counts and times only; nothing of the text."""
     by_run: dict[str, list[PlantRecord]] = defaultdict(list)
     for r in records:
         by_run[r.run].append(r)
     charts = []
     for run, recs in sorted(by_run.items(), key=lambda kv: kv[1][0].time):
-        folder = root / run
-        start, end = recs[0].time, recs[-1].time
-        job_rows = []
-        for j in jobs(folder):
-            a = _time(j.get("started_utc") or j.get("submitted_utc") or "")
-            b = _time(j.get("ended_utc") or "") or a
-            if a and b >= start and a <= end:
-                job_rows.append((j, a, b))
-        end = max([end] + [b for _, _, b in job_rows])
-        start = min([start] + [a for _, a, _ in job_rows])
+        start, end = recs[0].time, max(r.time for r in recs)
         span = max(end - start, 1.0)
-
-        def at(t: float, start: float = start, span: float = span) -> float:
-            return round(min(max((t - start) / span, 0.0), 1.0) * 100, 3)
-
-        def tick(t: float) -> dict:
-            return {"left": at(t), "width": 0}
-
-        def bar(a: float, b: float) -> dict:
-            return {"left": at(a), "width": max(round(at(b) - at(a), 3), 0.3)}
-
-        bins: dict[int, int] = defaultdict(int)
-        for n in network(folder):
-            t = _time(n.get("start_utc") or "")
-            if start <= t <= end:
-                size = 0
-                for k in ("bytes_sent", "bytes_received"):
-                    try:
-                        size += int(float(n.get(k) or 0))
-                    except ValueError:
-                        pass
-                bins[int((t - start) // NETWORK_BIN_SECONDS)] += size
-        peak = max(bins.values(), default=0) or 1
-        net = [
-            {
-                **bar(start + i * NETWORK_BIN_SECONDS, start + (i + 1) * NETWORK_BIN_SECONDS),
-                "level": max(round(v / peak, 2), 0.1),
-            }
-            for i, v in sorted(bins.items())
-            if v
-        ]
-        gpu = [
-            bar(a, b)
-            for j, a, b in job_rows
-            if (j.get("gpu_devices_opened") or "0") not in ("", "0")
-        ]
-        lanes = {
-            "Model calls": [tick(r.time) for r in recs if r.kind in ("request", "response")],
-            "Tool calls": [tick(r.time) for r in recs if r.kind == "tool_call"],
-            "Slurm jobs": [bar(a, b) for _, a, b in job_rows],
-            "GPU use": gpu,
-            "Network": net,
-        }
-        counts = {
-            "Model calls": len(lanes["Model calls"]),
-            "Tool calls": len(lanes["Tool calls"]),
-            "Slurm jobs": len(job_rows),
-            "GPU use": len(gpu),
-        }
-        counts = {n: str(c) for n, c in counts.items()}
-        counts["Network"] = f"{sum(bins.values()) / 1e6:.1f} MB"
+        step = span / CHART_BINS
+        table = TABLE_AGENTS.get(recs[0].who)  # a jobs, network or scores session: one line
+        series: dict[str, list[int]] = {}
+        for r in recs:
+            name = table or KIND_LINES.get(r.kind, r.kind)
+            bins = series.setdefault(name, [0] * CHART_BINS)
+            bins[min(max(int((r.time - start) // step), 0), CHART_BINS - 1)] += 1
+        order = [table] if table else [n for n in KIND_LINES.values() if n in series]
+        order += [n for n in series if n not in order]
+        peak = max(max(v) for v in series.values())
         charts.append(
             {
                 "run": run,
                 "start": datetime.fromtimestamp(start, UTC).strftime("%Y-%m-%d %H:%M:%S"),
                 "end": datetime.fromtimestamp(end, UTC).strftime("%Y-%m-%d %H:%M:%S"),
                 "axis": [
-                    {"left": at(start + span * k / 4), "label": _clock(start + span * k / 4)}
-                    for k in range(5)
+                    {"x": 40 + 950 * k / 4, "label": _clock(start + span * k / 4)} for k in range(5)
                 ],
-                "lanes": [{"name": n, "count": counts[n], "marks": lanes[n]} for n in LANES],
+                "lines": [
+                    {
+                        "name": name,
+                        "count": sum(series[name]),
+                        "points": " ".join(
+                            f"{40 + 950 * (i + 0.5) / CHART_BINS:.1f},{170 - 150 * v / peak:.1f}"
+                            for i, v in enumerate(series[name])
+                        ),
+                    }
+                    for name in order
+                ],
+                "peak": peak,
+                "step": f"{step / 60:.0f} min" if step >= 90 else f"{step:.0f} s",
                 "records": len(recs),
                 "batch": recs[0].box["batch"],
-                "facts": _facts(folder, recs, [j for j, _, _ in job_rows], start, end),
             }
         )
     return charts
-
-
-def _int(value: object) -> int:
-    try:
-        return int(float(str(value or 0)))
-    except ValueError:
-        return 0
-
-
-def _facts(folder: Path, recs: list[PlantRecord], job_rows: list[dict], start: float, end: float):
-    """What the plant's sensors recorded about one run, in numbers: the transcript by kind
-    and size, the Slurm jobs as a table, the network by destination, and the models the
-    plant scored. Counts, times and sizes only; nothing of the transcript's text."""
-    kinds: dict[str, int] = defaultdict(int)
-    for r in recs:
-        kinds[r.kind] += 1
-    job_table = []
-    for j in job_rows:
-        a = _time(j.get("started_utc") or j.get("submitted_utc") or "")
-        b = _time(j.get("ended_utc") or "") or a
-        job_table.append(
-            {
-                "job": j.get("job", ""),
-                "state": (j.get("state") or "").lower(),
-                "node": j.get("node", ""),
-                "gpus": j.get("gpus_given", ""),
-                "started": _clock(a) if a else "",
-                "seconds": int(b - a) if a else 0,
-                "processes": j.get("processes", ""),
-                "gpu_opened": j.get("gpu_devices_opened", ""),
-                "outlived": (j.get("outlived") or "0") not in ("", "0"),
-            }
-        )
-    dest: dict[tuple[str, str, str], list[int]] = defaultdict(lambda: [0, 0, 0])
-    for n in network(folder):
-        if not start <= _time(n.get("start_utc") or "") <= end:
-            continue
-        key = (n.get("to", ""), n.get("port", ""), n.get("service") or n.get("proto", ""))
-        dest[key][0] += 1
-        dest[key][1] += _int(n.get("bytes_sent"))
-        dest[key][2] += _int(n.get("bytes_received"))
-    top = sorted(dest.items(), key=lambda kv: -(kv[1][1] + kv[1][2]))[:8]
-    saved = []
-    for row in scores(folder):
-        t = _time(row.get("model_saved_utc") or "")
-        if t and start <= t <= end + 3600:
-            saved.append(row)
-    return {
-        "kinds": dict(kinds),
-        "chars": sum(len(str(r.box.get("content") or "")) for r in recs),
-        "jobs": job_table,
-        "gpu_seconds": sum(j["seconds"] for j in job_table if j["gpu_opened"] not in ("", "0")),
-        "flows": sum(v[0] for v in dest.values()),
-        "destinations": len(dest),
-        "top": [
-            {
-                "to": k[0],
-                "port": k[1],
-                "service": k[2],
-                "flows": v[0],
-                "sent": v[1],
-                "received": v[2],
-            }
-            for k, v in top
-        ],
-        "score_columns": list(saved[0].keys()) if saved else [],
-        "scores": saved,
-    }

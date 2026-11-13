@@ -16,6 +16,7 @@
 <body>
 <nav class="navbar">
   <a class="nav-brand" href="/how"><img class="nav-logo" src="/assets/lucid-logo.svg" alt="Lucid Computing" width="28" height="28"><span class="nav-wordmark">AIAB · Agreement</span></a>
+  {% if env_tag %}<span class="env-tag">{{ env_tag }}</span>{% endif %}
   <div class="nav-links">
     {% for href, label in [("/how", "How it works"), ("/logs", "Logs"), ("/agreements", "Agreements"), ("/runs", "Runs")] %}
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>

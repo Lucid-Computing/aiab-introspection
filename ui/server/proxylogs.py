@@ -337,7 +337,8 @@ class Session:
         if isinstance(self.records[0], Request):
             return f"{self.who} · {self.started_short} · {n} call{'s' if n != 1 else ''}"
         if isinstance(self.records[0], PlantRecord):
-            return f"{self.who} · {self.started_short} · {n} record{'s' if n != 1 else ''}"
+            what = self.records[0].label
+            return f"{what} · {self.started_short} · {n} record{'s' if n != 1 else ''}"
         if isinstance(self.records[0], SlackMessage):
             # Slack is shown by metadata only as well: the channel, when, how many messages.
             channel = self.records[0].channel
