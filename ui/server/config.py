@@ -113,6 +113,10 @@ class Settings:
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
     trust_follows_production: bool = False
+    # Feedback from the site: the form's entries and the post-it notes, one JSONL file each
+    # (server.feedback). AIAB_FEEDBACK_WEBHOOK, a Slack incoming webhook, also gets each one.
+    feedback_dir: Path = UI_ROOT / "feedback"
+    feedback_webhook: str | None = field(default=None, repr=False)
 
     @property
     def repo_url(self) -> str | None:
@@ -218,6 +222,8 @@ def load_settings() -> Settings:
         oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
         admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
+        feedback_dir=Path(env.get("AIAB_FEEDBACK_DIR", UI_ROOT / "feedback")).resolve(),
+        feedback_webhook=env.get("AIAB_FEEDBACK_WEBHOOK", "").strip() or None,
     )
 
 

@@ -22,6 +22,8 @@
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
     {% endfor %}
     {% if user %}
+    <button type="button" class="nav-link nav-button" data-opens="feedback">Feedback</button>
+    <span class="notes-bar" id="notes-bar" data-lab="{{ '1' if user.party == 'lab' else '' }}"><button type="button" class="nav-link nav-button" data-notes-add>Add note</button><button type="button" class="nav-link nav-button" data-notes-toggle hidden></button></span>
     <span class="chip" title="{{ user.party }}"><span class="party-icon" aria-label="{{ user.party }}">{{ party_icon(user.party) }}</span>{{ user.display_name }}</span>
     <form method="post" action="/logout" class="inline"><button class="btn btn--ghost btn--sm">Log out</button></form>
     {% endif %}
@@ -40,6 +42,18 @@
     <div class="row modal-actions"><button value="cancel" class="btn btn--ghost">Cancel</button><button value="ok" class="btn btn--primary">Continue</button></div>
   </form>
 </dialog>
+{% if user %}
+{% set here = request.url.path ~ ("?" ~ request.url.query if request.url.query else "") %}
+<dialog id="feedback" class="modal">
+  <form method="post" action="/feedback" class="feedback-form">
+    <input type="hidden" name="page" value="{{ here }}">
+    <textarea class="prose" name="text" aria-label="Feedback" maxlength="4000" required></textarea>
+    <div class="field feedback-name"><label for="feedback-name">Name <span class="text-muted">optional</span></label><input id="feedback-name" name="name" maxlength="80" autocomplete="name"></div>
+    <div class="row modal-actions">{% if user.party == "lab" %}<a class="link feedback-all" href="/feedback">All feedback</a>{% endif %}<button formmethod="dialog" formnovalidate class="btn btn--ghost">Cancel</button><button class="btn btn--primary">Send</button></div>
+  </form>
+</dialog>
+<script src="/assets/notes.js?v={{ asset_version }}" defer></script>
+{% endif %}
 <div id="busy" class="busy" hidden><div class="busy-box"><span class="spinner" aria-hidden="true"></span><p id="busy-text"></p></div></div>
 <script>
   // Forms with data-busy show the spinner above while the server works (a key submission takes a few
@@ -58,6 +72,11 @@
     });
     window.addEventListener("pageshow", function () { if (busy) busy.hidden = true; });
   })();
+  // Buttons with data-opens show the dialog of that id (Feedback in the nav).
+  document.querySelectorAll("[data-opens]").forEach(function (button) {
+    var dialog = document.getElementById(button.dataset.opens);
+    if (dialog && dialog.showModal) button.addEventListener("click", function () { dialog.showModal(); });
+  });
   // Forms with data-confirm open the dialog above instead of submitting straight away.
   (function () {
     var dialog = document.getElementById("confirm");

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% from "_icons.html" import party_icon %}
+{% block title %}Feedback · AIAB agreement{% endblock %}
+{% block content %}
+<h1>Feedback</h1>
+<div class="table-wrap feedback-list">
+<table class="table">
+  <thead><tr><th>Time</th><th>From</th><th>Page</th><th>Text</th><th></th></tr></thead>
+  <tbody>
+  {% for e in items %}
+  <tr>
+    <td class="mono">{{ e.time[:16].replace("T", " ") }}</td>
+    <td><span class="party-icon" title="{{ e.party }}" aria-label="{{ e.party }}">{{ party_icon(e.party) }}</span>{{ e.user }}{% if e.name %} <span class="text-muted">· {{ e.name }}</span>{% endif %}</td>
+    <td class="page"><a class="link mono" href="{{ e.page }}{% if e.kind == 'note' %}#note={{ e.id }}{% endif %}">{{ e.page }}</a></td>
+    <td class="text">{{ e.text }}</td>
+    <td class="text-muted">{% if e.kind == "note" %}Note{% if e.resolved %} · resolved{% endif %}{% else %}Form{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="text-muted">Nothing yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}
