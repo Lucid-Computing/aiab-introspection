@@ -22,6 +22,13 @@ classifier with the labels yes and no would be asked. AND and OR (``combine_logs
 records in both inputs, or in either, once each, in the order of the run's records. A record
 node can only hand on records it was given (``check_records`` against its own inputs).
 
+A records report (``records_report``) says what its records are: how many, of how many
+sessions and agents, of which kinds, from when to when and how much text, each fact only when
+the plan names it. With ``include_records`` it also carries the first records, in the order
+it got them, with the fields the plan names and their content cut to the plan's length,
+until the plan's count or its byte cap is reached; it says how many it included of how
+many, so no record is left out without saying so.
+
 Plan code (``run_python``) runs here too, so this module is loaded into the worker before
 the syscall filter is installed and nothing in it touches the operating system.
 """
@@ -39,6 +46,8 @@ from typing import Any
 from aiab.baked.pattern import compile_pattern
 from aiab.baked.plan_ir import (
     ABSTAIN,
+    KINDS,
+    MAX_AGENT_IDS,
     PLACEHOLDER,
     REPORT_INPUT,
     as_classifier,
@@ -392,6 +401,60 @@ def build_report(report: dict, source: dict, port_type: str, value: Any) -> dict
     return result
 
 
+def result_size(result: dict) -> int:
+    """The bytes of ``result`` as the parent measures it (RFC 8785, output.check_result).
+    For strings, integers, lists and objects with ASCII keys, compact sorted ``json.dumps``
+    without ASCII escaping writes the same bytes; the canonical encoder loads a codec the
+    sandbox no longer allows (see ``classifier_size``)."""
+    text = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return len(text.encode("utf-8"))
+
+
+def included_record(record: dict, settings: dict) -> dict:
+    """One record as a records report includes it: the chosen fields; content cut to the
+    plan's length, with the full length beside it so a cut shows."""
+    out = {k: record[k] for k in settings["fields"] if k != "content"}
+    if "content" in settings["fields"]:
+        out["content"] = record["content"][: settings["max_content_chars"]]
+        out["content_length"] = len(record["content"])
+    return out
+
+
+def build_records_report(node: dict, records: list[dict]) -> dict:
+    """The records report's result (see the module docstring). Counts between 0 and
+    ``min_count`` are reported as 0, as the old report does."""
+    cfg = node["config"]
+    want = set(cfg["metadata"])
+
+    def count(n: int) -> int:
+        return 0 if 0 < n < cfg["min_count"] else n
+
+    agents = sorted({r["agent_id"] for r in records})
+    times = sorted((datetime.fromisoformat(r["ts"]), r["ts"]) for r in records)
+    facts = {
+        "record_count": lambda: count(len(records)),
+        "session_count": lambda: count(len({r["session_id"] for r in records})),
+        "agent_count": lambda: count(len(agents)),
+        "agent_ids": lambda: agents[:MAX_AGENT_IDS],
+        "kind_counts": lambda: {k: count(sum(1 for r in records if r["kind"] == k)) for k in KINDS},
+        "first_ts": lambda: times[0][1] if times else "",
+        "last_ts": lambda: times[-1][1] if times else "",
+        "content_bytes": lambda: sum(len(r["content"].encode("utf-8")) for r in records),
+    }
+    result = {k: fact() for k, fact in facts.items() if k in want}
+    if cfg["include_records"]:
+        settings = cfg["records"]
+        result.update(records_total=len(records), records_included=0, records=[])
+        for r in records[: settings["max_records"]]:
+            result["records"].append(included_record(r, settings))
+            result["records_included"] += 1
+            if result_size(result) > cfg["max_result_bytes"]:
+                result["records"].pop()
+                result["records_included"] -= 1
+                break
+    return result
+
+
 def run_plan(
     plan: dict,
     order: list[str],
@@ -514,6 +577,9 @@ def run_plan(
             if port_type == "Classifications":
                 value = outputs[split_ref(node["inputs"][REPORT_INPUT])[0]][1]
             result = build_report(node, src, port_type, value)
+        elif kind == "records_report":
+            _, _, value, _ = inputs_of(node)[0]
+            result = build_records_report(node, value)
     if result is None:
         raise ValueError("no report")
     return result

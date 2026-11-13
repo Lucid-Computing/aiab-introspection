@@ -21,6 +21,7 @@ STAGES = {
     "classifier": "plan_classify_failed",
     "run_llm": "plan_classify_failed",
     "final_report": "plan_report_failed",
+    "records_report": "plan_report_failed",
 }
 
 
