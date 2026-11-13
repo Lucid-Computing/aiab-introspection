@@ -7,12 +7,9 @@
 
 <div class="stack">
   {% if choices %}
-  <form method="get" action="/runs" class="row" style="gap: var(--space-3); align-items: center">
-    <input type="hidden" name="logs" value="{{ log_source.id }}">
-    <label for="agreement">Agreement</label>
-    <select id="agreement" name="agreement">{% for c in choices %}<option value="{{ c.id }}" {% if c.id == chosen %}selected{% endif %}>{{ c.plan_id }} · {{ c.digest[7:19] }}…</option>{% endfor %}</select>
-    <button class="btn btn--ghost btn--sm">Choose</button>
-  </form>
+  <div class="row runs-pick">
+    {% for c in choices %}<a class="btn btn--sm{% if c.id != chosen %} btn--ghost{% endif %}" href="/runs?logs={{ log_source.id }}&agreement={{ c.id | urlencode }}" title="{{ c.digest }}"{% if c.id == chosen %} aria-current="true"{% endif %}>{{ c.plan_id }}</a>{% endfor %}
+  </div>
   {% else %}<p class="explain">No agreement is signed by both parties yet. Sign one under <a class="link" href="/agreements">Agreements</a>.</p>{% endif %}
 
   <p class="runs-box">
