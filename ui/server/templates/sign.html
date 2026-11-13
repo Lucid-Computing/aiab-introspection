@@ -26,8 +26,13 @@
 
       {# 1. Sign: one click when this server certifies the party's browser key; otherwise the
             key is set up in this browser once. #}
-      {% if user.party != party %}
-      {% if not demo and not s.auto %}<p class="text-muted">Only the {{ party }} signs here.</p>{% endif %}
+      {% if demo and user.party == party %}
+      <form method="post" action="{{ base }}/sign/lab" class="inline">
+        <input type="hidden" name="digest" value="{{ view.digest }}">
+        <button class="btn btn--primary"{% if view.issue %} disabled{% endif %}>Sign</button>
+      </form>
+      {% elif user.party != party %}
+      {% if not s.auto %}<p class="text-muted">Only the {{ party }} signs here.</p>{% endif %}
       {% elif s.status == 'ok' %}
       <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?">
         <input type="hidden" name="party" value="{{ party }}">
@@ -54,16 +59,6 @@
             <div class="field"><label for="make-again-{{ party }}">Again</label><input id="make-again-{{ party }}" name="again" type="password" autocomplete="new-password" required></div>
             <p style="margin-top: var(--space-4)"><button class="btn btn--primary">Set up signing</button></p>
           </form>
-          <details class="info" style="margin: var(--space-4) 0 0">
-            <summary>Use a key file from another browser</summary>
-            <div class="info-body">
-              <form class="browser-import">
-                <div class="field"><label for="import-file-{{ party }}">Key file</label><input id="import-file-{{ party }}" name="backup" type="file" accept="application/json,.json" required></div>
-                <div class="field"><label for="import-password-{{ party }}">Its password</label><input id="import-password-{{ party }}" name="password" type="password" autocomplete="current-password" required></div>
-                <p style="margin-top: var(--space-4)"><button class="btn btn--ghost">Use this key file</button></p>
-              </form>
-            </div>
-          </details>
         </div>
         <div data-state="ready" hidden>
           <p class="explain keyline"><span class="text-muted">Signing key in this browser</span> <span class="mono browser-public-key"></span> <span class="browser-key-verdict"></span></p>
@@ -77,16 +72,6 @@
       </div>
       {% endif %}
 
-      {# Lab Sign, for the demo (prototype): anyone logged in signs this version as the lab
-         with the server's lab key. #}
-      {% if demo %}
-      <form method="post" action="{{ base }}/sign/lab" class="demo-sign">
-        <input type="hidden" name="digest" value="{{ view.digest }}">
-        <span class="demo-tag">Demo only</span>
-        <button class="btn demo-btn"{% if view.issue %} disabled{% endif %}>Lab Sign</button>
-        <span class="demo-note">Signs this version as the lab with the server's lab key.</span>
-      </form>
-      {% endif %}
 
       {# 2. The root key the box trusts for this party, and a way to submit a new one. #}
       <p class="explain keyline"><span class="text-muted">Root key</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span>{% if k and k.busy %} <span class="text-muted">· a new key is on its way to the box</span> <span class="spinner spinner--sm"></span>{% elif k and k.tone == 'bad' %} <span class="selected-label bad">{{ k.label }}</span>{% endif %}</p>
