@@ -487,7 +487,7 @@ def test_plant_export_is_sent_as_written_with_a_batch_per_file(tmp_path):
     sessions = [s for s in every if not s.who.startswith("plant-")]
     assert [s.id for s in sessions] == ["s1", "s2"]  # the split session is one
     s1 = sessions[0]
-    assert s1.title.startswith("agt-1 · ") and s1.title.endswith("· 4 records")
+    assert s1.title.startswith("s · transcript · ") and s1.title.endswith("· 4 records")
     assert "secret" not in s1.title
 
     sent = P.box_records([r for s in sessions for r in s.records])

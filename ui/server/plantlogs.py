@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-TABLE_AGENTS = {"plant-jobs": "Slurm jobs", "plant-network": "Network", "plant-scores": "Scores"}
+TABLE_AGENTS = {"plant-jobs": "Slurm jobs", "plant-network": "network", "plant-scores": "scores"}
 KIND_LINES = {  # the chart's lines for a transcript, in this order
     "request": "Requests",
     "tool_call": "Tool calls",
@@ -60,6 +61,13 @@ class PlantRecord:
     @property
     def title_text(self) -> str:
         return ""  # listed by metadata only
+
+    @property
+    def label(self) -> str:
+        """What the session is, for the lists: the export folder it came from and whether
+        it is the agent's transcript or one of the plant's tables."""
+        folder = re.sub(r"^\d+-", "", self.run.split("/")[0])
+        return f"{folder} · {TABLE_AGENTS.get(self.who, 'transcript')}"
 
     @property
     def parts(self) -> list[tuple[str, str]]:

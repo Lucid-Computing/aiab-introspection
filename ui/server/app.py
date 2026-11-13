@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import secrets
 import time
@@ -263,6 +264,8 @@ def render(request: Request, template: str, **context: Any) -> Response:
     # Prototype: the server holds a working lab key, so the Sign screen offers Lab Sign to
     # anyone logged in and every page says DEV MODE.
     context.setdefault("lab_sign", pv.server_signs(settings, "lab"))
+    # A short word shown beside the name, so nobody mistakes dev for the demo (AIAB_ENV_TAG).
+    context.setdefault("env_tag", os.environ.get("AIAB_ENV_TAG", "").strip()[:12])
     context.update(
         user=user_of(request),
         settings=settings,
