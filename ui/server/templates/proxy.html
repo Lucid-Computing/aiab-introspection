@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Proxy key · AIAB agreement{% endblock %}
+{% block content %}
+<h1>Logging proxy key</h1>
+<p class="lead">Run Claude Code through the logging proxy and each session is recorded so it can be reviewed later. Your key labels your sessions with your name.</p>
+{% if key %}
+<div class="card">
+  <div class="card-header">Your key, {{ name }}</div>
+  <div class="card-body stack">
+    <p><strong>Copy it now.</strong> It is shown only this once; neither this page nor the proxy keeps it.</p>
+    <pre class="mono">{{ key }}</pre>
+    <p>Finish setup on the proxy's page, which fills in your key (it stays in your browser):</p>
+    <p><a class="btn btn--primary" href="{{ proxy_url }}/_start#key={{ key | urlencode }}" target="_blank" rel="noopener noreferrer">Set up Claude Code with this key</a></p>
+    <p>Or start a recorded session straight away:</p>
+    <pre class="mono">ANTHROPIC_BASE_URL={{ proxy_url }} \
+ANTHROPIC_CUSTOM_HEADERS="x-proxy-key: {{ key }}" \
+claude</pre>
+  </div>
+</div>
+{% elif state == "off" %}
+<p class="form-message">Proxy keys are not set up on this server.</p>
+{% elif state == "no_email" and not settings.oidc_enabled %}
+<p class="form-message">Proxy keys need a {{ settings.oidc_provider_name }} sign-in, which this server doesn't offer.</p>
+{% elif state == "no_email" %}
+<p class="form-message">Your login carries no email {{ settings.oidc_provider_name }} has verified. Log out and sign in with {{ settings.oidc_provider_name }} again; password accounts can't get a proxy key.</p>
+{% elif state == "not_listed" %}
+<p class="form-message">{{ email }} is not on the list of people who may get a proxy key. Ask whoever runs this server to add it.</p>
+{% else %}
+<form method="post" action="/proxy/key" class="card" data-busy="Asking the logging proxy for your key…">
+  <div class="card-body stack">
+    <div class="field"><label for="name">Your name on the proxy</label>
+      <input id="name" name="name" value="{{ name }}" maxlength="32" pattern="[A-Za-z0-9_\-]{1,32}" required autocomplete="off" spellcheck="false">
+      <p class="field-hint">Letters, digits, - and _, up to 32. Your sessions are labelled with it.</p>
+    </div>
+    <div class="row"><button class="btn btn--primary">Get my proxy key</button></div>
+  </div>
+</form>
+{% endif %}
+{% if names and not key %}
+<p>Names you already got here: {% for n in names %}<code>{{ n }}</code>{% if not loop.last %}, {% endif %}{% endfor %}. Lost the key? Pick a new name, or ask an admin to revoke the old one so you can use it again.</p>
+{% endif %}
+<script>
+  // One request per click: a second one would make the first key unreachable and answer "taken".
+  document.querySelectorAll('form[action="/proxy/key"]').forEach(function (form) {
+    form.addEventListener("submit", function () {
+      form.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+    });
+  });
+</script>
+{% endblock %}

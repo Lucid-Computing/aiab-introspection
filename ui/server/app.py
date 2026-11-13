@@ -25,6 +25,7 @@ from server import (
     githubexport,
     plan_chat,
     plantlogs,
+    proxykeys,
     proxylogs,
     publish,
     runs,
@@ -391,7 +392,7 @@ async def login_callback(request: Request) -> Response:
         return render(request, "login.html", next=pending["next"], err="No login code came back.")
     redirect_uri = public_origin(request) + "/login/callback"
     try:
-        account, id_token = await asyncio.to_thread(
+        account, id_token, email = await asyncio.to_thread(
             oidc.login, qp["code"], redirect_uri, pending["v"], pending["n"]
         )
     except LoginError as exc:
@@ -400,7 +401,7 @@ async def login_callback(request: Request) -> Response:
         return response
     response = RedirectResponse(pending["next"], status_code=303)
     response.delete_cookie(LOGIN_COOKIE)
-    response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
+    response.set_cookie(COOKIE, signer.issue(account, email), httponly=True, samesite="lax")
     response.set_cookie(ID_TOKEN_COOKIE, id_token, httponly=True, samesite="lax")
     return response
 
@@ -454,6 +455,74 @@ async def how(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     return render(request, "how.html")
+
+
+# --------------------------------------------------------------------------- proxy key
+
+proxy_transport: Any | None = None  # httpx transport for the proxy's /_signup; tests set it
+
+
+def _proxy_state(user: dict[str, str]) -> str:
+    """Whether this person may get a logging-proxy key, re-checked on every request."""
+    if not settings.proxy_keys_enabled:
+        return "off"
+    if not user.get("email"):
+        return "no_email"  # a password account, or a login from before the email was kept
+    return "ok" if user["email"] in settings.proxy_users else "not_listed"
+
+
+async def _proxy_page(request: Request, user: dict[str, str], **context: Any) -> Response:
+    email = user.get("email", "")
+    context.setdefault("name", proxykeys.suggest_name(email) if email else "")
+    names = await asyncio.to_thread(proxykeys.names_for, settings.proxy_record_file, email)
+    response = render(
+        request,
+        "proxy.html",
+        state=_proxy_state(user),
+        email=email,
+        names=names if email else [],
+        proxy_url=settings.signup_url,
+        **context,
+    )
+    response.headers["Cache-Control"] = "no-store"  # the key is on it once
+    return response
+
+
+@app.get("/proxy")
+async def proxy_page(request: Request) -> Response:
+    user = user_of(request)
+    if user is None:
+        return to_login(request)
+    return await _proxy_page(request, user)
+
+
+@app.post("/proxy/key")
+async def proxy_key(request: Request, name: Annotated[str, Form()] = "") -> Response:
+    """Ask the logging proxy's /_signup for a key under the name this person picked, with
+    this server's signup code, and show the key once."""
+    user = user_of(request)
+    if user is None:
+        return to_login(request)
+    name = name.strip()
+    if _proxy_state(user) != "ok":
+        return await _proxy_page(request, user)
+    if not proxykeys.NAME_RE.match(name):
+        err = "Names use letters, digits, - and _, up to 32 characters."
+        return await _proxy_page(request, user, name=name, err=err)
+    outcome = await asyncio.to_thread(
+        proxykeys.request_key,
+        settings.signup_url,  # type: ignore[arg-type]
+        settings.signup_code,  # type: ignore[arg-type]
+        name,
+        transport=proxy_transport,
+    )
+    if outcome.key is None:
+        return await _proxy_page(request, user, name=name, err=outcome.error)
+    try:
+        await asyncio.to_thread(proxykeys.record, settings.proxy_record_file, user["email"], name)
+    except OSError as exc:  # the key exists now: show it anyway, never lose it to a full disk
+        print(f"warning: could not record proxy name {name}: {exc}")
+    return await _proxy_page(request, user, name=name, key=outcome.key)
 
 
 # The audit plan playground (ui/playground): a standalone prototype, served from its build

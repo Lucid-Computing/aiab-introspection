@@ -9,6 +9,7 @@ import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 UI_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = UI_ROOT.parent
@@ -113,6 +114,15 @@ class Settings:
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
     trust_follows_production: bool = False
+    # The Proxy key page (MAC-478): a signed-in person whose verified email is in
+    # proxy_users gets a logging-proxy key from signup_url's /_signup, with signup_code.
+    # All three set, or the page is off. No default URL: TEST_PROXY_URL is another VM, and
+    # the code must only go to the proxy it belongs to. Who got which name is appended to
+    # proxy_record_file (never the key).
+    proxy_users: frozenset[str] = frozenset()
+    signup_url: str | None = None
+    signup_code: str | None = field(default=None, repr=False)
+    proxy_record_file: Path = UI_ROOT / "proxy-keys.jsonl"
 
     @property
     def repo_url(self) -> str | None:
@@ -127,6 +137,10 @@ class Settings:
     @property
     def oidc_enabled(self) -> bool:
         return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
+
+    @property
+    def proxy_keys_enabled(self) -> bool:
+        return bool(self.proxy_users and self.signup_url and self.signup_code)
 
 
 def _repo_from_git() -> str | None:
@@ -218,7 +232,33 @@ def load_settings() -> Settings:
         oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
         admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
+        proxy_users=proxy_users_from_env(env.get("AIAB_PROXY_USERS", "")),
+        signup_url=signup_url_from_env(env.get("AIAB_SIGNUP_URL", "")),
+        signup_code=env.get("AIAB_SIGNUP_CODE", "").strip() or None,
+        # Next to the accounts file: on Render, the persistent disk.
+        proxy_record_file=Path(
+            env.get("UI_PROXY_RECORD_FILE")
+            or Path(env.get("UI_ACCOUNTS_FILE", UI_ROOT / "accounts.json")).parent
+            / "proxy-keys.jsonl"
+        ).resolve(),
     )
+
+
+def signup_url_from_env(value: str) -> str | None:
+    """AIAB_SIGNUP_URL, only over HTTPS (http only to this machine): the signup code and the
+    key it returns must not cross the network in the clear. Anything else counts as unset."""
+    url = value.strip().rstrip("/")
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    local = parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1")
+    return url if (parts.scheme == "https" and parts.hostname) or local else None
+
+
+def proxy_users_from_env(value: str) -> frozenset[str]:
+    """AIAB_PROXY_USERS: emails separated by commas or spaces, compared lower-cased."""
+    return frozenset(e.strip().lower() for e in value.replace(",", " ").split() if e.strip())
 
 
 def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:

@@ -1,6 +1,8 @@
 # Local login accounts (hashed passwords). Never commit.
 accounts.json
 issued-certificates.jsonl
+# Who got which logging-proxy name from the Proxy key page.
+proxy-keys.jsonl
 runs/
 .env
 .env.*

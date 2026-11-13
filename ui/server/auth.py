@@ -114,13 +114,17 @@ class SessionSigner:
     def _mac(self, payload: str) -> str:
         return _b64(hmac.new(self._secret, payload.encode("ascii"), hashlib.sha256).digest())
 
-    def issue(self, account: Account) -> str:
+    def issue(self, account: Account, email: str | None = None) -> str:
+        """``email`` is the provider's verified email, for the Proxy key page; kept out of
+        ``Account`` so it never reaches accounts.json. Local accounts have none."""
         body = {
             "u": account.username,
             "p": account.party,
             "n": account.display_name,
             "exp": int(time.time()) + self._ttl,
         }
+        if email:
+            body["e"] = email
         payload = _b64(json.dumps(body, separators=(",", ":")).encode("utf-8"))
         return f"{payload}.{self._mac(payload)}"
 
@@ -136,7 +140,10 @@ class SessionSigner:
             return None
         if body.get("exp", 0) < time.time() or body.get("p") not in PARTIES:
             return None
-        return {"username": body["u"], "party": body["p"], "display_name": body.get("n", body["u"])}
+        user = {"username": body["u"], "party": body["p"], "display_name": body.get("n", body["u"])}
+        if isinstance(body.get("e"), str):
+            user["email"] = body["e"]
+        return user
 
 
 # ------------------------------------------------------------------------- OpenID Connect
@@ -371,13 +378,26 @@ class OidcLogin:
             username=username, party=party, display_name=name or username, password_hash=""
         )
 
-    def login(self, code: str, redirect_uri: str, verifier: str, nonce: str) -> tuple[Account, str]:
-        """Code to Account, plus the raw ID token (for the provider's logout)."""
+    @staticmethod
+    def verified_email(claims: dict[str, Any]) -> str | None:
+        """The ID token's email, lower-cased, only when the provider says it verified it.
+        No fallback to preferred_username or sub: the Proxy key allowlist trusts this."""
+        email = claims.get("email")
+        if claims.get("email_verified") is not True or not isinstance(email, str):
+            return None
+        return email.strip().lower() or None
+
+    def login(
+        self, code: str, redirect_uri: str, verifier: str, nonce: str
+    ) -> tuple[Account, str, str | None]:
+        """Code to Account, plus the raw ID token (for the provider's logout) and the
+        verified email (None if the provider did not verify one)."""
         tokens = self.exchange(code, redirect_uri, verifier)
         id_token = tokens.get("id_token")
         if not id_token:
             raise LoginError("The identity provider returned no ID token.")
-        return self.account(self.claims(id_token, nonce)), id_token
+        claims = self.claims(id_token, nonce)
+        return self.account(claims), id_token, self.verified_email(claims)
 
     def logout_url(self, id_token: str, post_logout_redirect_uri: str) -> str | None:
         """The provider's end-session address, so Log out ends the provider session too and
