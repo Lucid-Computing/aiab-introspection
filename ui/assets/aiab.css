@@ -538,8 +538,9 @@ code.hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var
 .table td.state { font-size: var(--text-sm); color: var(--ink-2); }
 .table td.state.ok { color: var(--ok); }
 .table td.state.bad { color: var(--destructive); }
-.sig { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; vertical-align: middle; }
-.sig + .sig { margin-left: var(--space-6); }
+/* Lab above Auditor, names right-aligned so the icons sit in one column. */
+.sigs { display: inline-grid; justify-items: end; row-gap: 2px; vertical-align: middle; }
+.sigs .sig { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; margin: 0; }
 .sig svg { flex: none; }
 .sig--ok svg { color: var(--ok); }
 .sig--missing svg { color: var(--ink-3); }
