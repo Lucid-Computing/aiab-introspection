@@ -57,3 +57,5 @@ services:
         sync: false
       - key: AIAB_GITHUB_EXPORT_KEY  # optional, for the Logs screen: opens the committed GitHub export bundle (github-export-bundle in 1Password); GitHub Logs
         sync: false
+      - key: AIAB_FEEDBACK_WEBHOOK  # optional: a Slack incoming webhook; each Feedback entry and post-it note is also posted there (aiab-feedback-webhook in 1Password)
+        sync: false

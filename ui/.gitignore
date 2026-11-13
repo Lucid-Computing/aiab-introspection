@@ -5,4 +5,6 @@ runs/
 .env
 .env.*
 logs/
+# Feedback form entries and post-it notes (AIAB_FEEDBACK_DIR).
+feedback/
 # Who is lab and who is auditor under the Okta login. Local; the server writes it.
