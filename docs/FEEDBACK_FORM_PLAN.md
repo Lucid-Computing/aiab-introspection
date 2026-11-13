@@ -1,6 +1,6 @@
 # Feedback in the agreement UI: a form and post-it notes
 
-First written 2026-11-04 as the plan for the form. Updated 2026-11-13 (MAC-487) to describe what was built: the form, now with an optional name, and post-it notes left on pages. Scope: the agreement UI in `ui/` (FastAPI and Jinja). The plan builder iframe in `ui/playground/` is out of scope. The form and the notes are part of the page around it, so they work on the plan page too, but a note cannot be placed inside the builder.
+First written 2026-11-04 as the plan for the form. Updated 2026-11-13 (MAC-487) to describe what was built: the form, now with an optional name, and post-it notes left on pages, both reached from a Feedback button at the bottom right of every page. Scope: the agreement UI in `ui/` (FastAPI and Jinja). The plan builder iframe in `ui/playground/` is out of scope. The form and the notes are part of the page around it, so they work on the plan page too, but a note cannot be placed inside the builder.
 
 ## Goal
 
@@ -13,18 +13,23 @@ Anyone logged in can send feedback from any screen in one step, either as a form
    - `notes.jsonl`: one line per note (`"kind": "note"`), plus one line each time the lab resolves or reopens a note (`"kind": "resolve"`, the note's id, `resolved`, who, when). Readers fold the resolve lines into the notes. Nothing is rewritten.
    Not GitHub issues: the repository is public and feedback is internal.
 2. **Slack is optional.** When `AIAB_FEEDBACK_WEBHOOK` is set, each form entry and each new note is also posted to a Slack channel through an incoming webhook. The file is written first. The post runs in a background thread with a 10 s timeout, and a failure is logged, never shown, so Slack being down cannot lose or block feedback. Resolving a note is not posted.
-3. **The form is a dialog in the base layout.** A `Feedback` button in the nav, for everyone logged in, opens a `<dialog>` defined once in `base.html` (the same `.modal` element and CSS as the confirm dialog). The page's path and query go in a hidden field, filled in by the server.
-4. **Every string on the form:**
-   - nav button: `Feedback`
+3. **One Feedback button, bottom right, on every page.** For everyone logged in, `base.html` puts a white circle (48px, a speech-bubble icon in the stroke style of `_icons.html`) with `Feedback` in small type under it, fixed at the bottom right of the window. Nothing about feedback is in the nav. The button is a `<button>` with `aria-label`, `aria-expanded` and a focus ring. It sits above the notes and below the busy overlay, and is made inert with the page while a key submission is waited on. `main.page` gets 136px of bottom padding when logged in, so the last content on a page can scroll clear of the button (checked on the Sign, plan and Agreements pages at 1440 and 900 px wide). At 900 px, before scrolling, the button can sit over the Sign page's Run button; scrolling to the bottom clears it. The circle is the one exception to `swiss.css`'s no-rounded-corners rule, by request.
+4. **The button opens a small menu above it** with two choices, each an icon, a bold label and one line:
+   - `Write feedback` / `Tell us anything.`: opens the form, a `<dialog>` defined once in `base.html` (the same `.modal` element and CSS as the confirm dialog). The page's path and query go in a hidden field, filled in by the server.
+   - `Stick a note on this page` / `Click anywhere to place a post-it.`: starts note mode (5).
+   Below them, in small muted text: `Hide notes on this page (n)` / `Show notes on this page (n)`, only when the page has notes, and for the lab only, a link `All feedback` to the list page. Escape or a click outside closes the menu.
+   Every string on the form:
    - textarea: no visible label; `aria-label="Feedback"`; no placeholder; `required`
    - `Name` with `optional` beside it, one line
    - buttons: `Cancel` and `Send` (Escape closes the dialog too)
-   - for the lab only, a link `All feedback` to the list page. The first plan had a lab-only nav link for this; it moved into the dialog so the nav does not show two feedback items.
-   - after sending: `Thanks` as the page's existing success message
-5. **Post-it notes.** Two more buttons in the nav, after `Feedback`, for everyone logged in. (A first version floated them at the bottom right of the window, where they covered the Sign page's Run button.)
-   - `Add note` turns on note mode (the button reads `Cancel note`, the cursor is a crosshair). The next click inside the page's main column opens a small yellow form at that spot: the text, `Name (optional)`, then `Cancel` and `Save`. While placing, that click follows no link and presses no button. Escape leaves note mode or closes the form.
-   - `Hide notes (n)` / `Show notes (n)` hides or shows the open notes on the page. It appears only when the page has notes, and the choice is remembered in the browser.
+   - after sending: `Thanks, sent to the team` as the page's existing success message
+5. **Post-it notes.**
+   - Note mode: the cursor over the page's main column is a crosshair, and a dark banner at the top of the window says `Click where you want the note · Esc to cancel`, with `Cancel`. Escape, `Cancel` or the Feedback button leave note mode.
+   - The next click inside the main column opens a small yellow form at that spot with the text field focused: the text, `Name (optional)`, then `Cancel` and `Save`. While placing, that click follows no link and presses no button. Escape closes the form.
+   - After saving, the banner says `Note saved · the team will see it` for a few seconds.
+   - The hide or show choice from the menu is remembered in the browser.
    Notes show for everyone logged in, each with its text, the name if given, the account, and the date. Resolved notes are hidden. The lab sees `Resolve` on each note and `Reopen` on a resolved one.
+   History: a first version floated note buttons at the bottom right without extra page padding, where they covered the Sign page's Run button; a second put `Feedback`, `Add note` and `Hide notes` in the nav. The current button replaces both.
 6. **Where a note sits.** Each note keeps two positions:
    - **Anchored:** the nearest ancestor of the clicked element that has an id, inside `<main>` (for example the builder iframe `#builder`, a run step `#step-2`, or a party's card on the Sign page, `#sign-lab` and `#sign-auditor`, ids added for this). The Sign page shows each party different buttons, so the cards differ in height between the lab and the auditor; anchoring keeps a note on the card it was left on. The note stores that id, x as a fraction of the element's width, and y in pixels below its top.
    - **Fallback:** relative to `<main>`, x as a fraction of its width and y in pixels below its top. It is used when the page has no anchor around the click, or when the anchor is missing or has no size (hidden, folded).
@@ -47,7 +52,7 @@ Anyone logged in can send feedback from any screen in one step, either as a form
 
 | Route | Who | What |
 | --- | --- | --- |
-| `POST /feedback` | logged in | Form fields `text`, `name`, `page`. Appends to `feedback.jsonl`, posts to Slack if set, redirects to the page with `msg=Thanks`. Empty text redirects back with nothing recorded. |
+| `POST /feedback` | logged in | Form fields `text`, `name`, `page`. Appends to `feedback.jsonl`, posts to Slack if set, redirects to the page with `msg=Thanks, sent to the team`. Empty text redirects back with nothing recorded. |
 | `GET /feedback` | lab | The list page. |
 | `GET /notes?page=` | logged in | JSON `{"notes": [...]}` for that page, resolved ones included (the script hides them). 401 when logged out. |
 | `POST /notes` | logged in | JSON `{page, text, name, anchor, ax, ay, x, y}`. Returns the saved note. 400 for empty text. |
@@ -62,11 +67,12 @@ The JSON routes rely on the session cookie being `SameSite=Lax`, as the forms do
 | `ui/server/config.py` | `feedback_dir` (`AIAB_FEEDBACK_DIR`) and `feedback_webhook` (`AIAB_FEEDBACK_WEBHOOK`) on `Settings`, with defaults, because tests build settings with `replace(load_settings(), ...)`. |
 | `ui/server/feedback.py` | Record and read both kinds, `clean_page`, the caps, folding resolve lines, the Slack message and post. |
 | `ui/server/app.py` | The five routes above. |
-| `ui/server/templates/base.html` | The `Feedback`, `Add note` and `Hide notes` nav buttons, the dialog, and the script tag, all inside `{% if user %}`, because `login.html` extends this layout. |
+| `ui/server/templates/base.html` | The Feedback button and its menu, the note-mode banner, the dialog, and the script tag, all inside `{% if user %}`, because `login.html` extends this layout. |
+| `ui/server/templates/_icons.html` | `feedback_icon`: the speech bubble, the pen (write) and the sticky note. |
 | `ui/server/templates/feedback.html` | The lab's list. |
 | `ui/server/templates/sign.html` | An id on each party's card (`sign-lab`, `sign-auditor`), so notes left on the Sign page anchor to the card. |
-| `ui/assets/notes.js` | The notes: placing, drawing, hiding, resolving, highlighting. Plain JS, no framework. |
-| `ui/assets/aiab.css` | The nav buttons, the dialog's name field, the notes. |
+| `ui/assets/notes.js` | The button's menu, note mode and its banner, and the notes: placing, drawing, hiding, resolving, highlighting. Plain JS, no framework. |
+| `ui/assets/aiab.css` | The button, the menu, the banner, the page's bottom padding, the dialog's name field, the notes. |
 | `ui/docker-entrypoint.sh` | `AIAB_FEEDBACK_DIR="$DATA/feedback"`. |
 | `ui/.gitignore`, `ui/Dockerfile.dockerignore` | `feedback/`, so local feedback is never committed or built into the image. |
 | `render.yaml` | `AIAB_FEEDBACK_WEBHOOK`, `sync: false`. |

@@ -1,7 +1,9 @@
-// Post-it notes on the page, for everyone logged in (server/feedback.py keeps them).
+// The Feedback button (bottom right, base.html) and post-it notes on the page, for everyone
+// logged in (server/feedback.py keeps them).
 //
-// "Add note", then a click inside the page's main column, opens a small form at that spot;
-// Save sends it. A note's spot is kept relative to the nearest element with an id around the
+// The button opens a menu: "Write feedback" opens the Feedback dialog; "Stick a note on this
+// page" starts note mode (crosshair cursor, a banner at the top, Esc cancels), and the next
+// click inside the page's main column opens a small form at that spot; Save sends it. A note's spot is kept relative to the nearest element with an id around the
 // click (a fraction of its width, pixels below its top), and relative to <main> for when that
 // element is gone or hidden, so notes stay put when the window changes width. Every text a
 // person typed is set with textContent, never as HTML. Resolved notes are hidden; the lab can
@@ -11,11 +13,20 @@
 (function () {
   "use strict";
   var main = document.querySelector("main");
-  var bar = document.getElementById("notes-bar");
-  if (!main || !bar || !window.fetch) return;
-  var lab = bar.dataset.lab === "1";
-  var addButton = bar.querySelector("[data-notes-add]");
-  var toggle = bar.querySelector("[data-notes-toggle]");
+  var fb = document.getElementById("fb");
+  var banner = document.getElementById("fb-banner");
+  if (!main || !fb || !banner || !window.fetch) return;
+  var lab = fb.dataset.lab === "1";
+  var trigger = fb.querySelector(".fb-button");
+  var menu = document.getElementById("fb-menu");
+  var writeButton = fb.querySelector("[data-fb-write]");
+  var addButton = fb.querySelector("[data-fb-note]");
+  var toggle = fb.querySelector("[data-fb-toggle]");
+  var more = fb.querySelector(".fb-more");
+  var dialog = document.getElementById("feedback");
+  var bannerText = banner.querySelector("span");
+  var bannerCancel = banner.querySelector("button");
+  var bannerTimer = null;
   var page = location.pathname + location.search;
   var focus = (location.hash.match(/^#note=([0-9a-f]{12})$/) || [])[1] || null;
   var layer = document.createElement("div");
@@ -88,7 +99,8 @@
     });
     var count = notes.filter(open).length;
     toggle.hidden = count === 0;
-    toggle.textContent = (hidden ? "Show notes" : "Hide notes") + " (" + count + ")";
+    toggle.textContent = (hidden ? "Show notes on this page" : "Hide notes on this page") + " (" + count + ")";
+    more.hidden = toggle.hidden && !more.querySelector("a");
   }
 
   function reposition() {
@@ -113,16 +125,34 @@
     }).catch(function () { /* left as it was */ });
   }
 
+  // The banner at the top of the window: the note-mode hint with Cancel, or a short message
+  // that goes away by itself.
+  function showBanner(message, cancel) {
+    clearTimeout(bannerTimer);
+    bannerText.textContent = message;
+    bannerCancel.hidden = !cancel;
+    banner.classList.toggle("fb-banner--done", !cancel);
+    banner.hidden = false;
+    if (!cancel) bannerTimer = setTimeout(function () { banner.hidden = true; }, 3500);
+  }
+
   function setPlacing(on) {
     placing = on;
     document.body.classList.toggle("notes-placing", on);
-    addButton.textContent = on ? "Cancel note" : "Add note";
+    if (on) showBanner("Click where you want the note · Esc to cancel", true);
+    else if (!bannerCancel.hidden) banner.hidden = true;
   }
 
   function closeDraft() {
     if (draft) draft.el.remove();
     draft = null;
     addButton.disabled = false;
+  }
+
+  function setMenu(on) {
+    menu.hidden = !on;
+    trigger.setAttribute("aria-expanded", on ? "true" : "false");
+    if (on) writeButton.focus();
   }
 
   function openDraft(event) {
@@ -154,7 +184,10 @@
       e.preventDefault();
       save.disabled = true;
       send("/notes", { page: page, text: area.value, name: name.value, anchor: pos.anchor, ax: pos.ax, ay: pos.ay, x: pos.x, y: pos.y })
-        .then(function (d) { notes.unshift(d.note); closeDraft(); hidden = false; draw(); })
+        .then(function (d) {
+          notes.unshift(d.note); closeDraft(); hidden = false; draw();
+          showBanner("Note saved · the team will see it", false);
+        })
         .catch(function () { save.disabled = false; save.textContent = "Not saved · retry"; });
     });
     closeDraft();
@@ -165,11 +198,33 @@
     area.focus();
   }
 
-  addButton.addEventListener("click", function () { setPlacing(!placing); });
+  // The button opens and closes the menu; while placing a note it cancels note mode.
+  trigger.addEventListener("click", function () {
+    if (placing) { setPlacing(false); return; }
+    setMenu(menu.hidden);
+  });
+  writeButton.addEventListener("click", function () {
+    setMenu(false);
+    trigger.focus(); // the dialog gives focus back here when it closes
+    if (dialog && dialog.showModal) {
+      dialog.showModal();
+      var area = dialog.querySelector("textarea");
+      if (area) area.focus();
+    }
+  });
+  addButton.addEventListener("click", function () {
+    setMenu(false);
+    setPlacing(true);
+  });
+  bannerCancel.addEventListener("click", function () { setPlacing(false); });
   toggle.addEventListener("click", function () {
     hidden = !hidden;
     try { localStorage.setItem("aiab-notes-hidden", hidden ? "1" : ""); } catch (e) { /* none */ }
     draw();
+  });
+  // A click outside the button and its menu closes the menu.
+  document.addEventListener("click", function (event) {
+    if (!menu.hidden && !fb.contains(event.target)) setMenu(false);
   });
   // While placing, a click in the page drops the note there and does nothing else (no link
   // is followed, no button pressed).
@@ -182,7 +237,8 @@
   }, true);
   document.addEventListener("keydown", function (event) {
     if (event.key !== "Escape") return;
-    if (placing) setPlacing(false);
+    if (!menu.hidden) { setMenu(false); trigger.focus(); }
+    else if (placing) setPlacing(false);
     else if (draft) closeDraft();
   });
   if (window.ResizeObserver) new ResizeObserver(reposition).observe(main);

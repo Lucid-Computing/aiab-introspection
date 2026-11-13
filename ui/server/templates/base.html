@@ -1,4 +1,4 @@
-{% from "_icons.html" import party_icon %}
+{% from "_icons.html" import party_icon, feedback_icon %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -13,7 +13,7 @@
 <script src="/assets/select.js?v={{ asset_version }}" defer></script>
 {% block head %}{% endblock %}
 </head>
-<body>
+<body{% if user %} class="has-feedback"{% endif %}>
 <nav class="navbar">
   <a class="nav-brand" href="/how"><img class="nav-logo" src="/assets/lucid-logo.svg" alt="Lucid Computing" width="28" height="28"><span class="nav-wordmark">AIAB</span></a>
   {% if env_tag %}<span class="env-tag">{{ env_tag }}</span>{% endif %}
@@ -22,8 +22,6 @@
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
     {% endfor %}
     {% if user %}
-    <button type="button" class="nav-link nav-button" data-opens="feedback">Feedback</button>
-    <span class="notes-bar" id="notes-bar" data-lab="{{ '1' if user.party == 'lab' else '' }}"><button type="button" class="nav-link nav-button" data-notes-add>Add note</button><button type="button" class="nav-link nav-button" data-notes-toggle hidden></button></span>
     <span class="chip" title="{{ user.party }}"><span class="party-icon" aria-label="{{ user.party }}">{{ party_icon(user.party) }}</span>{{ user.display_name }}</span>
     <form method="post" action="/logout" class="inline"><button class="btn btn--ghost btn--sm">Log out</button></form>
     {% endif %}
@@ -44,12 +42,23 @@
 </dialog>
 {% if user %}
 {% set here = request.url.path ~ ("?" ~ request.url.query if request.url.query else "") %}
+{# The Feedback button, bottom right on every page: a menu with the two ways to leave
+   feedback (notes.js opens it and runs note mode). #}
+<div class="fb" id="fb" data-lab="{{ '1' if user.party == 'lab' else '' }}">
+  <div class="fb-menu" id="fb-menu" hidden>
+    <button type="button" class="fb-choice" data-fb-write>{{ feedback_icon("write") }}<span><strong>Write feedback</strong><small>Tell us anything.</small></span></button>
+    <button type="button" class="fb-choice" data-fb-note>{{ feedback_icon("note") }}<span><strong>Stick a note on this page</strong><small>Click anywhere to place a post-it.</small></span></button>
+    <div class="fb-more"><button type="button" class="fb-link" data-fb-toggle hidden></button>{% if user.party == "lab" %}<a class="fb-link" href="/feedback">All feedback</a>{% endif %}</div>
+  </div>
+  <button type="button" class="fb-button" aria-label="Feedback" aria-expanded="false" aria-controls="fb-menu"><span class="fb-circle">{{ feedback_icon("bubble") }}</span><span class="fb-label" aria-hidden="true">Feedback</span></button>
+</div>
+<div class="fb-banner" id="fb-banner" role="status" hidden><span></span><button type="button" class="btn btn--ghost btn--sm">Cancel</button></div>
 <dialog id="feedback" class="modal">
   <form method="post" action="/feedback" class="feedback-form">
     <input type="hidden" name="page" value="{{ here }}">
     <textarea class="prose" name="text" aria-label="Feedback" maxlength="4000" required></textarea>
     <div class="field feedback-name"><label for="feedback-name">Name <span class="text-muted">optional</span></label><input id="feedback-name" name="name" maxlength="80" autocomplete="name"></div>
-    <div class="row modal-actions">{% if user.party == "lab" %}<a class="link feedback-all" href="/feedback">All feedback</a>{% endif %}<button type="button" class="btn btn--ghost" data-closes="feedback">Cancel</button><button class="btn btn--primary">Send</button></div>
+    <div class="row modal-actions"><button type="button" class="btn btn--ghost" data-closes="feedback">Cancel</button><button class="btn btn--primary">Send</button></div>
   </form>
 </dialog>
 <script src="/assets/notes.js?v={{ asset_version }}" defer></script>
@@ -72,12 +81,8 @@
     });
     window.addEventListener("pageshow", function () { if (busy) busy.hidden = true; });
   })();
-  // Buttons with data-opens show the dialog of that id (Feedback in the nav); data-closes
-  // closes it (a plain button, so Enter in the form still sends).
-  document.querySelectorAll("[data-opens]").forEach(function (button) {
-    var dialog = document.getElementById(button.dataset.opens);
-    if (dialog && dialog.showModal) button.addEventListener("click", function () { dialog.showModal(); });
-  });
+  // Buttons with data-closes close the dialog of that id (Cancel in the Feedback dialog; a
+  // plain button, so Enter in the form still sends).
   document.querySelectorAll("[data-closes]").forEach(function (button) {
     var dialog = document.getElementById(button.dataset.closes);
     if (dialog) button.addEventListener("click", function () { dialog.close(); });
@@ -114,7 +119,7 @@
     var note = " · this usually takes about 3 minutes";
     text.textContent = "Public key of the " + party + " · waiting for the pull request" + note;
     busy.hidden = false;
-    document.querySelectorAll("nav, main").forEach(function (el) { el.setAttribute("inert", ""); });
+    document.querySelectorAll("nav, main, .fb").forEach(function (el) { el.setAttribute("inert", ""); });
     window.addEventListener("pageshow", function () { if (waiting) busy.hidden = false; });
     function poll() {
       fetch("/keys/status.json", { cache: "no-store", credentials: "same-origin" })

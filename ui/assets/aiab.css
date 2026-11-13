@@ -652,12 +652,35 @@ select[hidden] { display: none !important; }
 .home-art .block { fill: var(--ink-1); }
 .runs-pick { gap: var(--space-2); flex-wrap: wrap; }
 
-/* ---- feedback: the form (base.html) and post-it notes (notes.js) ---- */
-.nav-button { background: none; border: 0; padding: 0; cursor: pointer; }
-.nav-button:hover { color: var(--ink-1); }
+/* ---- feedback: the button and menu, the form (base.html) and post-it notes (notes.js) ---- */
+/* The button sits over the bottom right of the window, about 80px tall with its label. The
+   extra padding lets the last content on a page scroll clear of it. Its circle is the one
+   exception to swiss.css's no-rounded-corners rule, by request. */
+body.has-feedback main.page { padding-bottom: 136px; }
+.fb { position: fixed; right: var(--space-6); bottom: var(--space-4); z-index: 40; }
+.fb-button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 0; background: none; border: 0; color: var(--ink-1); font: inherit; cursor: pointer; }
+.fb-circle { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; box-sizing: border-box; border-radius: 50% !important; background: #FFFFFF; border: 1px solid var(--rule-strong); box-shadow: 0 2px 8px rgba(22, 24, 27, 0.16); }
+.fb-button:hover .fb-circle, .fb-button[aria-expanded="true"] .fb-circle { border-color: var(--ink-1); }
+.fb-button:focus-visible { outline: none; }
+.fb-button:focus-visible .fb-circle { outline: 2px solid var(--ring); outline-offset: 2px; }
+.fb-label { font-size: var(--text-xs); line-height: 1; font-weight: 500; color: var(--ink-2); }
+.fb-menu { position: absolute; right: 0; bottom: calc(100% + var(--space-2)); width: 300px; padding: var(--space-2); box-sizing: border-box; background: var(--paper-1); border: var(--border-strong); box-shadow: 0 8px 24px rgba(22, 24, 27, 0.16); }
+.fb-choice { display: flex; align-items: flex-start; gap: var(--space-3); width: 100%; padding: var(--space-3); background: none; border: 0; color: var(--ink-1); font: inherit; text-align: left; cursor: pointer; }
+.fb-choice:hover, .fb-choice:focus-visible { background: var(--paper-2); outline: none; }
+.fb-choice:disabled { opacity: 0.5; cursor: default; background: none; }
+.fb-choice svg { flex: none; margin-top: 1px; }
+.fb-choice strong { display: block; font-size: var(--text-base); font-weight: 600; }
+.fb-choice small { display: block; margin-top: 2px; font-size: var(--text-sm); color: var(--ink-2); }
+.fb-more { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-1); padding: var(--space-3) var(--space-3) var(--space-2); border-top: var(--border-hairline); }
+.fb-link { padding: 0; background: none; border: 0; font: inherit; font-size: var(--text-sm); color: var(--ink-3); text-align: left; text-decoration: none; cursor: pointer; }
+.fb-link:hover, .fb-link:focus-visible { color: var(--ink-1); text-decoration: underline; }
+.fb-menu[hidden], .fb-more[hidden], .fb-link[hidden], .fb-banner[hidden], .fb-banner .btn[hidden] { display: none; }
+.fb-banner { position: fixed; top: calc(var(--nav-height) + var(--space-3)); left: 50%; transform: translateX(-50%); z-index: 110; display: flex; align-items: center; gap: var(--space-4); max-width: calc(100vw - 2 * var(--space-4)); box-sizing: border-box; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); background: var(--ink-1); color: var(--paper-1); font-size: var(--text-sm); box-shadow: 0 4px 16px rgba(22, 24, 27, 0.2); }
+.fb-banner--done { padding-right: var(--space-4); }
+.fb-banner .btn { color: var(--paper-1); border-color: var(--paper-1); padding: var(--space-1) var(--space-3); }
+.fb-banner .btn:hover { background: var(--paper-1); color: var(--ink-1); }
 .feedback-form textarea.prose { margin-bottom: var(--space-4); }
 .feedback-name { margin-bottom: var(--space-6); }
-.feedback-all { margin-right: auto; font-size: var(--text-sm); }
 main.page { position: relative; }
 .notes-layer { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
 .postit { position: absolute; width: 200px; box-sizing: border-box; padding: var(--space-2) var(--space-3); background: #FFF2A8; border: 1px solid #D9C55A; box-shadow: 2px 3px 0 0 rgba(22, 24, 27, 0.18); color: var(--ink-1); font-family: var(--font-sans); font-size: var(--text-xs); line-height: 1.4; pointer-events: auto; }
@@ -670,10 +693,6 @@ main.page { position: relative; }
 .postit--draft textarea { width: 100%; min-height: 80px; box-sizing: border-box; font: inherit; font-size: var(--text-sm); border: 1px solid #D9C55A; background: #FFFBE0; padding: var(--space-1) var(--space-2); resize: vertical; }
 .postit--draft input { width: 100%; box-sizing: border-box; margin-top: var(--space-1); font: inherit; border: 1px solid #D9C55A; background: #FFFBE0; padding: var(--space-1) var(--space-2); }
 .postit-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
-.notes-bar { display: contents; }
-.nav-button[hidden] { display: none; }
-.nav-button:disabled { color: var(--ink-3); cursor: default; }
-body.notes-placing .nav-button[data-notes-add] { color: var(--ink-1); box-shadow: inset 0 -2px 0 0 var(--accent); }
 body.notes-placing main, body.notes-placing main * { cursor: crosshair; }
 .feedback-list td.page { white-space: nowrap; }
 .feedback-list td.text { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 36rem; }

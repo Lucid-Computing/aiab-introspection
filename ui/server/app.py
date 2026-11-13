@@ -479,7 +479,7 @@ async def send_feedback(
         return back(target)
     entry = await asyncio.to_thread(feedback.record, settings, who, target, text, name)
     feedback.notify(settings, entry, "form")
-    return back(target, msg="Thanks")
+    return back(target, msg="Thanks, sent to the team")
 
 
 @app.get("/feedback")
