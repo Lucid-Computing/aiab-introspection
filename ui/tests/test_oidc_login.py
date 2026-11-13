@@ -350,3 +350,47 @@ def test_bootstrap_adds_new_accounts_and_keeps_existing_passwords(tmp_path, monk
     assert auth.authenticate(path, "lab@lab.com", "kept-1") is not None  # not overwritten
     assert auth.authenticate(path, "auditor@auditor.com", "auditor123").party == "auditor"
     assert "skipping x" in capsys.readouterr().err
+
+
+# The Proxy key page trusts the session's email, so it carries only one the provider verified.
+
+
+def _login_user(client, okta):
+    q = start(client, okta)
+    response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
+    assert response.status_code == 303
+    return web.signer.read(response.cookies[web.COOKIE])
+
+
+def test_a_verified_email_goes_into_the_session_lower_cased(okta, client):
+    okta.claims = {"email": "Teddy@Lucid.example", "email_verified": True}
+    assert _login_user(client, okta)["email"] == "teddy@lucid.example"
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"email_verified": False},
+        {"email_verified": "true"},  # only the JSON true counts
+        {"email_verified": None},  # the provider says nothing
+        {"email": None, "email_verified": True},  # verified, but no email to trust
+    ],
+)
+def test_no_verified_email_means_none_in_the_session(okta, client, claims):
+    okta.claims = claims
+    user = _login_user(client, okta)
+    assert "email" not in user
+    assert user["username"]  # the login itself still works
+
+
+def test_cookies_without_an_email_still_read():
+    cookie = web.signer.issue(auth.Account("old", "auditor", "Old", "unused"))
+    assert web.signer.read(cookie) == {"username": "old", "party": "auditor", "display_name": "Old"}
+
+
+def test_a_local_account_never_carries_an_email(okta, client):
+    response = client.post("/login", data={"username": "demo", "password": "demo-pass-1234"})
+    assert response.status_code == 303
+    assert "email" not in web.signer.read(response.cookies[web.COOKIE])
+    stored = json.loads(web.settings.accounts_file.read_text())["accounts"]
+    assert all("email" not in row for row in stored)

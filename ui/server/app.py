@@ -391,7 +391,7 @@ async def login_callback(request: Request) -> Response:
         return render(request, "login.html", next=pending["next"], err="No login code came back.")
     redirect_uri = public_origin(request) + "/login/callback"
     try:
-        account, id_token = await asyncio.to_thread(
+        account, id_token, email = await asyncio.to_thread(
             oidc.login, qp["code"], redirect_uri, pending["v"], pending["n"]
         )
     except LoginError as exc:
@@ -400,7 +400,7 @@ async def login_callback(request: Request) -> Response:
         return response
     response = RedirectResponse(pending["next"], status_code=303)
     response.delete_cookie(LOGIN_COOKIE)
-    response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
+    response.set_cookie(COOKIE, signer.issue(account, email), httponly=True, samesite="lax")
     response.set_cookie(ID_TOKEN_COOKIE, id_token, httponly=True, samesite="lax")
     return response
 
