@@ -12,6 +12,7 @@ person's names when taking their access away. Revoking a key is the proxy's
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -45,22 +46,27 @@ def names_for(record_file: Path, email: str) -> list[str]:
     """The names this email already got, oldest first."""
     if not record_file.is_file():
         return []
-    names = []
+    names: list[str] = []
     for line in record_file.read_text(encoding="utf-8").splitlines():
         try:
             row = json.loads(line)
         except ValueError:
             continue
-        if row.get("email") == email and row.get("name") not in names:
-            names.append(row["name"])
+        if not isinstance(row, dict) or row.get("email") != email:
+            continue  # a damaged line must not break the page for everyone
+        name = row.get("name")
+        if isinstance(name, str) and name not in names:
+            names.append(name)
     return names
 
 
 def record(record_file: Path, email: str, name: str) -> None:
-    """Note that this email got this name. Never the key."""
+    """Note that this email got this name. Never the key. Owner-only, like accounts.json:
+    it lists people's emails."""
     record_file.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps({"time": int(time.time()), "email": email, "name": name})
-    with record_file.open("a", encoding="utf-8") as handle:
+    fd = os.open(record_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
         handle.write(line + "\n")
 
 
@@ -80,9 +86,10 @@ def request_key(url: str, code: str, name: str, *, transport: Any | None = None)
         return Outcome(error="The logging proxy could not be reached. Try again in a minute.")
     if response.status_code == 200:
         try:
-            key = response.json().get("key")
+            body = response.json()
         except ValueError:
-            key = None
+            body = None
+        key = body.get("key") if isinstance(body, dict) else None
         if isinstance(key, str) and key:
             return Outcome(key=key)
         return Outcome(error="The logging proxy answered, but without a key. Ask an admin.")

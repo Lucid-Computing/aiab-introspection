@@ -206,3 +206,52 @@ def test_off_when_not_configured(proxy, monkeypatch):
 def test_suggested_names_follow_the_proxy_rule(email, name):
     assert proxykeys.suggest_name(email) == name
     assert proxykeys.NAME_RE.match(name)
+
+
+# --------------------------------------------------------------------------- hardening
+
+
+def test_the_signup_url_must_be_https_except_on_this_machine(env):
+    for url, kept in [
+        ("http://staging.example", None),
+        ("ftp://staging.example", None),
+        ("https://staging.example/", "https://staging.example"),
+        ("http://localhost:8080", "http://localhost:8080"),
+        ("http://127.0.0.1:8080/", "http://127.0.0.1:8080"),
+    ]:
+        env.setenv("AIAB_SIGNUP_URL", url)
+        assert load_settings().signup_url == kept
+
+
+@pytest.mark.parametrize("body", [["not", "an", "object"], "just a string", {"key": ""}, {}])
+def test_a_200_without_a_key_object_is_an_error_not_a_crash(proxy, monkeypatch, body):
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=body))
+    monkeypatch.setattr(web, "proxy_transport", transport)
+    response = client_as().post("/proxy/key", data={"name": "ann"})
+    assert response.status_code == 200 and "without a key" in response.text
+    assert records() == []
+
+
+def test_damaged_record_lines_do_not_break_the_page(proxy):
+    path = web.settings.proxy_record_file
+    good = {"email": ALLOWED, "name": "ann"}
+    lines = ["not json", "[1, 2]", '"text"', json.dumps({"email": ALLOWED, "name": 7})]
+    path.write_text("\n".join([*lines, json.dumps(good)]) + "\n")
+    html = client_as().get("/proxy").text
+    assert "<code>ann</code>" in html and "<code>7</code>" not in html
+
+
+def test_the_record_file_is_owner_only(proxy):
+    client_as().post("/proxy/key", data={"name": "ann"})
+    assert web.settings.proxy_record_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_failed_record_still_shows_the_key(proxy, monkeypatch, capsys):
+    def full_disk(*args):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(proxykeys, "record", full_disk)
+    response = client_as().post("/proxy/key", data={"name": "ann"})
+    assert response.status_code == 200 and "pk-secret-123" in response.text
+    out = capsys.readouterr().out
+    assert "could not record proxy name ann" in out and "pk-secret-123" not in out

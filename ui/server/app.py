@@ -517,7 +517,10 @@ async def proxy_key(request: Request, name: Annotated[str, Form()] = "") -> Resp
     )
     if outcome.key is None:
         return _proxy_page(request, user, name=name, err=outcome.error)
-    proxykeys.record(settings.proxy_record_file, user["email"], name)
+    try:
+        await asyncio.to_thread(proxykeys.record, settings.proxy_record_file, user["email"], name)
+    except OSError as exc:  # the key exists now: show it anyway, never lose it to a full disk
+        print(f"warning: could not record proxy name {name}: {exc}")
     return _proxy_page(request, user, name=name, key=outcome.key)
 
 

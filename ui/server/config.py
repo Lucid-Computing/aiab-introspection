@@ -232,7 +232,7 @@ def load_settings() -> Settings:
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
         admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
         proxy_users=proxy_users_from_env(env.get("AIAB_PROXY_USERS", "")),
-        signup_url=env.get("AIAB_SIGNUP_URL", "").strip().rstrip("/") or None,
+        signup_url=signup_url_from_env(env.get("AIAB_SIGNUP_URL", "")),
         signup_code=env.get("AIAB_SIGNUP_CODE", "").strip() or None,
         # Next to the accounts file: on Render, the persistent disk.
         proxy_record_file=Path(
@@ -241,6 +241,14 @@ def load_settings() -> Settings:
             / "proxy-keys.jsonl"
         ).resolve(),
     )
+
+
+def signup_url_from_env(value: str) -> str | None:
+    """AIAB_SIGNUP_URL, only over HTTPS (http only to this machine): the signup code and the
+    key it returns must not cross the network in the clear. Anything else counts as unset."""
+    url = value.strip().rstrip("/")
+    local = url.startswith(("http://localhost", "http://127.0.0.1"))
+    return url if url.startswith("https://") or local else None
 
 
 def proxy_users_from_env(value: str) -> frozenset[str]:
