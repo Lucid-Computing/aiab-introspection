@@ -901,7 +901,7 @@ def new_agreement(
     no history).
 
     The description is optional. From the template, a description given becomes the plan's
-    description and the classifier's instructions; without one the baseline plan is kept
+    description and the Filter's yes/no question; without one the baseline plan is kept
     as it is. A copy keeps the plan as it was, with the new name. Returns (errors, id).
     """
     errors: list[str] = []
@@ -935,8 +935,8 @@ def new_agreement(
     plan["title"] = problem.splitlines()[0][:120] if problem else plan_id
     if origin is None and problem:
         for node in plan["nodes"]:
-            if node["type"] == "classifier":
-                node["config"]["instructions"] = problem + "\n"
+            if node["type"] == "filter_logs" and node["config"].get("mode") == "llm":
+                node["config"]["llm"]["question"] = problem
     path.write_bytes(canonical(plan) + b"\n")
     history = target / HISTORY_FILE
     if history.is_file():

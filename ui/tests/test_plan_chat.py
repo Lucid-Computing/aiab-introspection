@@ -40,7 +40,7 @@ def node(plan, node_id):
 
 def changed(draft, threshold=0.85):
     plan = plan_of(draft)
-    node(plan, "classifier")["config"]["threshold"] = threshold
+    node(plan, "filter")["config"]["llm"]["threshold"] = threshold
     return [{"path": "plan.json", "content": json.dumps(plan)}]
 
 
@@ -52,8 +52,8 @@ def test_preview_is_read_only_and_apply_uses_validator_and_history(draft):
     before = bundle_files(draft.plan_dir)
     candidate = chat.proposal(draft, changed(draft), digest(draft))
     assert bundle_files(draft.plan_dir) == before
-    assert '-        "threshold": 0.7' in candidate["diff"]
-    assert '+        "threshold": 0.85' in candidate["diff"]
+    assert '-          "threshold": 0.7' in candidate["diff"]
+    assert '+          "threshold": 0.85' in candidate["diff"]
     assert candidate["files"][0]["path"] == "plan.json"
     updated = chat.apply(draft, candidate, ACTOR)
     assert updated != file_digest(before)
@@ -101,11 +101,11 @@ def test_box_rejects_invalid_candidates_without_writing(draft, change):
             },
         )
     elif change == "model":
-        node(plan, "classifier")["config"]["model"]["id"] = "claude-opus-5-5"
+        node(plan, "filter")["config"]["llm"]["model"]["id"] = "claude-opus-5-5"
     elif change == "schema":
-        node(plan, "classifier")["config"]["window"] = -1
+        node(plan, "filter")["config"]["llm"]["model"]["max_output_tokens"] = -1
     elif change == "types":
-        node(plan, "report")["inputs"]["result"] = "logs.records"
+        node(plan, "report")["inputs"] = {"result": "filter.records"}
     text = "{not json" if change == "json" else json.dumps(plan)
     with pytest.raises(chat.ChatError, match="reject|valid JSON"):
         chat.proposal(draft, [{"path": "plan.json", "content": text}], digest(draft))
@@ -174,7 +174,7 @@ def test_opus_request_and_proposal(draft, monkeypatch):
 
 def test_invalid_model_output_shows_validation_error(draft, monkeypatch):
     plan = plan_of(draft)
-    node(plan, "report")["inputs"]["result"] = "logs.records"
+    node(plan, "report")["inputs"]["records"] = "missing.records"
     mock_anthropic(
         monkeypatch,
         lambda _: httpx.Response(
@@ -196,7 +196,7 @@ def test_invalid_model_output_shows_validation_error(draft, monkeypatch):
     )
     result = asyncio.run(chat.reply(draft, [{"role": "user", "content": "Change wiring"}]))
     assert "validation_error" in result and "proposal" not in result
-    assert "receives LogRecords" in result["validation_error"]
+    assert 'no node "missing"' in result["validation_error"]
     assert result["candidate"]["state"] == "invalid"
 
 
@@ -295,7 +295,7 @@ def test_revision_carries_the_pending_candidate_without_applying(draft, monkeypa
         context = context_from(request)
         assert context["candidate"]["state"] == "pending"
         sent = json.loads(context["candidate"]["files"][0]["content"])
-        assert node(sent, "classifier")["config"]["threshold"] == 0.85
+        assert node(sent, "filter")["config"]["llm"]["threshold"] == 0.85
         return tool_response(changed(draft, 0.95))
 
     mock_anthropic(monkeypatch, handler)
@@ -303,7 +303,7 @@ def test_revision_carries_the_pending_candidate_without_applying(draft, monkeypa
         chat.reply(draft, [{"role": "user", "content": "Make that conservative"}], candidate)
     )
     saved = json.loads(result["proposal"]["files"][0]["content"])
-    assert node(saved, "classifier")["config"]["threshold"] == 0.95
+    assert node(saved, "filter")["config"]["llm"]["threshold"] == 0.95
     assert result["candidate"]["state"] == "pending"
     assert bundle_files(draft.plan_dir) == before
 
@@ -311,7 +311,7 @@ def test_revision_carries_the_pending_candidate_without_applying(draft, monkeypa
 def test_invalid_candidate_is_retained_and_repaired(draft, monkeypatch):
     before = bundle_files(draft.plan_dir)
     broken = plan_of(draft)
-    node(broken, "report")["inputs"]["result"] = "logs.records"
+    node(broken, "report")["inputs"]["records"] = "missing.records"
     turn = 0
 
     def handler(request):
@@ -321,7 +321,7 @@ def test_invalid_candidate_is_retained_and_repaired(draft, monkeypatch):
             return tool_response([{"path": "plan.json", "content": json.dumps(broken)}])
         context = context_from(request)["candidate"]
         assert context["state"] == "invalid"
-        assert "logs.records" in context["files"][0]["content"]
+        assert "missing.records" in context["files"][0]["content"]
         return tool_response(changed(draft))
 
     mock_anthropic(monkeypatch, handler)
@@ -357,7 +357,7 @@ def test_action_events_are_context_not_a_saved_candidate(draft, monkeypatch, sta
             system.split("\nCurrent draft files:\n")[1].split("\nRevision context", 1)[0]
         )
         plan = json.loads(authoritative["plan.json"])
-        assert node(plan, "classifier")["config"]["threshold"] == (
+        assert node(plan, "filter")["config"]["llm"]["threshold"] == (
             0.85 if state == "applied" else 0.7
         )
         return httpx.Response(200, json={"content": [{"type": "text", "text": "Understood"}]})
