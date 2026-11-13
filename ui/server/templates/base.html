@@ -49,7 +49,7 @@
     <input type="hidden" name="page" value="{{ here }}">
     <textarea class="prose" name="text" aria-label="Feedback" maxlength="4000" required></textarea>
     <div class="field feedback-name"><label for="feedback-name">Name <span class="text-muted">optional</span></label><input id="feedback-name" name="name" maxlength="80" autocomplete="name"></div>
-    <div class="row modal-actions">{% if user.party == "lab" %}<a class="link feedback-all" href="/feedback">All feedback</a>{% endif %}<button formmethod="dialog" formnovalidate class="btn btn--ghost">Cancel</button><button class="btn btn--primary">Send</button></div>
+    <div class="row modal-actions">{% if user.party == "lab" %}<a class="link feedback-all" href="/feedback">All feedback</a>{% endif %}<button type="button" class="btn btn--ghost" data-closes="feedback">Cancel</button><button class="btn btn--primary">Send</button></div>
   </form>
 </dialog>
 <script src="/assets/notes.js?v={{ asset_version }}" defer></script>
@@ -72,10 +72,15 @@
     });
     window.addEventListener("pageshow", function () { if (busy) busy.hidden = true; });
   })();
-  // Buttons with data-opens show the dialog of that id (Feedback in the nav).
+  // Buttons with data-opens show the dialog of that id (Feedback in the nav); data-closes
+  // closes it (a plain button, so Enter in the form still sends).
   document.querySelectorAll("[data-opens]").forEach(function (button) {
     var dialog = document.getElementById(button.dataset.opens);
     if (dialog && dialog.showModal) button.addEventListener("click", function () { dialog.showModal(); });
+  });
+  document.querySelectorAll("[data-closes]").forEach(function (button) {
+    var dialog = document.getElementById(button.dataset.closes);
+    if (dialog) button.addEventListener("click", function () { dialog.close(); });
   });
   // Forms with data-confirm open the dialog above instead of submitting straight away.
   (function () {
