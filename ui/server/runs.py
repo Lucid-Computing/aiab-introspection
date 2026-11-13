@@ -516,6 +516,7 @@ def result_view(settings: Settings, state: dict) -> dict:
     result = out.get("result") if out.get("verified") else None
     described: dict[str, str] = {}
     records_report = False
+    min_count = 1
     try:
         plan = json.loads(
             (settings.runs_dir / state["id"] / "plan" / "plan.json").read_text(encoding="utf-8")
@@ -527,6 +528,7 @@ def result_view(settings: Settings, state: dict) -> dict:
             elif node.get("type") == "records_report":
                 records_report = True
                 described.update(METADATA_MEANING)
+                min_count = node.get("config", {}).get("min_count") or 1
     except (OSError, ValueError, AttributeError):
         pass
     items = list(result.items()) if isinstance(result, dict) else []
@@ -563,6 +565,7 @@ def result_view(settings: Settings, state: dict) -> dict:
     return {
         "rows": rows,
         "disclosed": disclosed,
+        "min_count": min_count,
         "records": (steps.get("export", {}).get("output") or {}).get("records"),
         "seconds": seconds,
         "model": (manifest.get("model_binding") or {}).get("id"),

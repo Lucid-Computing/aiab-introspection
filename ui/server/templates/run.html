@@ -21,6 +21,7 @@
     {% endfor %}
     </tbody>
   </table>
+  {% if result.min_count and result.min_count > 1 %}<p class="result-facts text-muted">Counts below {{ result.min_count }} are reported as 0.</p>{% endif %}
   {% endif %}
   {% if result.disclosed %}{% set d = result.disclosed %}
   <p class="result-included">{{ d.included }} of {{ d.total }} records included{% if d.included < d.total %}; the plan's record or byte limit held back the rest{% endif %}.</p>
