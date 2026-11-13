@@ -5,8 +5,9 @@
     POST /v1/export     {"sessions": [ids]}: the records of those sessions, each content
                         sealed to the box's current key. Only the box can open them.
 
-Both take this server's key as ``x-log-key``. Also ``GET /v1/status`` (the last sync),
-``POST /v1/sync`` (ask the proxy for new segments now) and ``GET /healthz`` (no key).
+Both take this server's key as ``x-log-key``. Also ``GET /v1/status`` (the last read of the
+proxy's files, and any file that could not be read), ``POST /v1/sync`` (read them again now)
+and ``GET /healthz`` (no key). Every route answers from the last read; none reads a file.
 The export is not signed here: the agreement UI signs the sealed records as it does today.
 """
 
@@ -22,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from logserver import calls, config
 from logserver.box import Box, BoxError
 from logserver.config import Settings
-from logserver.store import ProxyError, Store
+from logserver.store import Store, StoreError
 
 
 class ExportRequest(BaseModel):
@@ -54,18 +55,18 @@ def create_app(
 
     @app.get("/v1/status", dependencies=[Depends(key)])
     def status():
-        return {**store.status, "calls": len(store.load()), "box": settings.box_host}
+        return {**store.status, "calls": len(store.calls()), "box": settings.box_host}
 
     @app.post("/v1/sync", dependencies=[Depends(key)])
     def sync():
         try:
-            return store.sync()
-        except ProxyError as error:
-            raise HTTPException(502, str(error)) from None
+            return store.refresh()
+        except StoreError as error:
+            raise HTTPException(503, str(error)) from None
 
     @app.get("/v1/sessions", dependencies=[Depends(key)])
     def sessions(who: str = ""):
-        found = calls.sessions(store.load())
+        found = calls.sessions(store.calls())
         whos = sorted({s.who for s in found})
         if who:
             found = [s for s in found if s.who == who]
@@ -73,7 +74,7 @@ def create_app(
 
     @app.post("/v1/export", dependencies=[Depends(key)])
     async def export(body: ExportRequest):
-        by_id = {s.id: s for s in calls.sessions(store.load())}
+        by_id = {s.id: s for s in calls.sessions(store.calls())}
         unknown = [i for i in body.sessions if i not in by_id]
         if unknown:
             raise HTTPException(404, {"error": "unknown_sessions", "sessions": unknown})
