@@ -19,6 +19,7 @@
   --ok-line: #7AA874;
   --ok-tint: #EEF4E6;
   --destructive: #B4321C;
+  --warn: #8A6E12;                /* muted ochre: needs attention, not an error */
   --bad-line: #E2B4B0;
   --bad-tint: #F8ECEA;
   --overlay: rgba(255, 255, 255, 0.88);
@@ -537,6 +538,12 @@ code.hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var
 .table td.state { font-size: var(--text-sm); color: var(--ink-2); }
 .table td.state.ok { color: var(--ok); }
 .table td.state.bad { color: var(--destructive); }
+.sig { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; vertical-align: middle; }
+.sig + .sig { margin-left: var(--space-6); }
+.sig svg { flex: none; }
+.sig--ok svg { color: var(--ok); }
+.sig--missing svg { color: var(--ink-3); }
+.sig--old svg { color: var(--warn); }
 
 /* Plan page: one line on where the agreement stands. */
 .plan-state{margin:0 0 var(--space-4);font-size:var(--text-sm);color:var(--ink-2)}

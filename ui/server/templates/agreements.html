@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import signature_mark %}
 {% block title %}Agreements · AIAB agreement{% endblock %}
 {% block head %}{% if keys and keys.busy %}<meta http-equiv="refresh" content="20">{% endif %}<script src="/assets/sign.js" defer></script>{% endblock %}
 {% block content %}
@@ -18,14 +19,14 @@
 </div>
 
 <table class="table">
-  <thead><tr><th>Agreement</th><th>State</th><th></th></tr></thead>
+  <thead><tr><th>Agreement</th><th>Signatures</th><th></th></tr></thead>
   <tbody>
   {% for r in rows %}
   <tr>
     <td><strong>{{ r.plan_id }}</strong>{% if r.digest %} <code class="hash" title="{{ r.digest }}">{{ r.digest[7:15] }}</code>{% endif %}
       {% if r.editor %}<br><span class="text-muted" style="font-size: var(--text-xs)">{{ r.editor.user }} ({{ r.editor.party }}) is editing since {{ r.editor.since | hhmm }}</span>{% endif %}</td>
     {% set why = "fix the plan first" if (r.error or r.issue) else ("needs both signatures" if not r.signed else ("the keys are not trusted on production yet" if not keys.ready else ("being edited" if r.editor else ""))) %}
-    <td class="state{% if r.error %} bad{% elif r.signed %} ok{% endif %}">{% if r.error %}{{ r.state }}: {{ r.error }}{% else %}{% for party in ("lab", "auditor") %}{% set st = r.signatures.get(party, "missing") %}{% if st == 'ok' %}Signed by the {{ party }}{% elif st == 'missing' %}Waiting for the {{ party }}{% else %}The {{ party }} signed an older version{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}</td>
+    <td class="state{% if r.error %} bad{% elif r.signed %} ok{% endif %}">{% if r.error %}{{ r.state }}: {{ r.error }}{% else %}{% for party in ("lab", "auditor") %}{{ signature_mark(party, r.signatures.get(party, "missing")) }}{% endfor %}{% endif %}</td>
     <td class="actions">
       <a class="btn btn--ghost btn--sm" href="/a/{{ r.id }}/plan">Open</a>
       <form method="post" action="/a/{{ r.id }}/plan/edit" class="inline" data-confirm="{{ edit_warning }}"><button class="btn btn--ghost btn--sm" {% if r.editor %}disabled title="{{ r.editor.user }} is editing it"{% endif %}>Edit</button></form>

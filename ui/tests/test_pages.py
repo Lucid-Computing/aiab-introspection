@@ -271,7 +271,8 @@ def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_
     assert '<script src="/assets/sign.js" defer></script>' in listing
     assert 'quick-sign" href="/a/bio/sign" data-party="lab"' in listing
     assert 'data-upload="/a/bio/sign/upload" data-next="/agreements"' in listing
-    assert "Waiting for the lab · Signed by the auditor" in listing
+    assert 'aria-label="Waiting for the lab"' in listing
+    assert 'aria-label="Signed by the auditor"' in listing
     assert 'disabled title="needs both signatures">Run' in listing
     assert '<code class="hash" title="sha256:' in listing
     fallback = client.get("/a/bio/sign?why=none").text
