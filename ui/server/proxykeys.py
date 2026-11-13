@@ -76,6 +76,8 @@ def request_key(url: str, code: str, name: str, *, transport: Any | None = None)
     try:
         with httpx.Client(timeout=TIMEOUT_SECONDS, transport=transport) as client:
             response = client.post(f"{url}/_signup", json={"name": name, "code": code})
+    except (httpx.ConnectError, httpx.ConnectTimeout):  # nothing reached the proxy
+        return Outcome(error="The logging proxy could not be reached. Try again in a minute.")
     except httpx.TimeoutException:
         return Outcome(
             error="The logging proxy took too long to answer. It may have made a key that never"

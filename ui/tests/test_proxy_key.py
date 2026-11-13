@@ -93,6 +93,9 @@ def proxy(monkeypatch, tmp_path):
             signup_url=PROXY,
             signup_code=CODE,
             proxy_record_file=tmp_path / "proxy-keys.jsonl",
+            oidc_issuer="https://idp.example",  # proxy keys come with a provider sign-in
+            oidc_client_id="client",
+            oidc_client_secret="secret",
         ),
     )
     return fake
@@ -158,6 +161,7 @@ def test_a_taken_name_keeps_the_typed_name_and_another_one_works(proxy):
     [
         (httpx.ReadTimeout("slow"), "took too long"),
         (httpx.ConnectError("down"), "could not be reached"),
+        (httpx.ConnectTimeout("no answer"), "could not be reached"),  # nothing was made
         (401, "AIAB_SIGNUP_CODE"),
         (404, "AIAB_SIGNUP_CODE"),
         (500, "answered 500"),
@@ -217,6 +221,9 @@ def test_the_signup_url_must_be_https_except_on_this_machine(env):
         ("ftp://staging.example", None),
         ("https://staging.example/", "https://staging.example"),
         ("http://localhost:8080", "http://localhost:8080"),
+        ("http://localhost.evil.example", None),
+        ("http://127.0.0.1.evil.example", None),
+        ("https://", None),
         ("http://127.0.0.1:8080/", "http://127.0.0.1:8080"),
     ]:
         env.setenv("AIAB_SIGNUP_URL", url)
@@ -255,3 +262,8 @@ def test_a_failed_record_still_shows_the_key(proxy, monkeypatch, capsys):
     assert response.status_code == 200 and "pk-secret-123" in response.text
     out = capsys.readouterr().out
     assert "could not record proxy name ann" in out and "pk-secret-123" not in out
+
+
+def test_without_a_provider_sign_in_the_page_says_so(proxy, monkeypatch):
+    monkeypatch.setattr(web, "settings", replace(web.settings, oidc_issuer=None))
+    assert "which this server doesn" in client_as(None).get("/proxy").text

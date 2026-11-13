@@ -471,15 +471,16 @@ def _proxy_state(user: dict[str, str]) -> str:
     return "ok" if user["email"] in settings.proxy_users else "not_listed"
 
 
-def _proxy_page(request: Request, user: dict[str, str], **context: Any) -> Response:
+async def _proxy_page(request: Request, user: dict[str, str], **context: Any) -> Response:
     email = user.get("email", "")
     context.setdefault("name", proxykeys.suggest_name(email) if email else "")
+    names = await asyncio.to_thread(proxykeys.names_for, settings.proxy_record_file, email)
     response = render(
         request,
         "proxy.html",
         state=_proxy_state(user),
         email=email,
-        names=proxykeys.names_for(settings.proxy_record_file, email) if email else [],
+        names=names if email else [],
         proxy_url=settings.signup_url,
         **context,
     )
@@ -492,7 +493,7 @@ async def proxy_page(request: Request) -> Response:
     user = user_of(request)
     if user is None:
         return to_login(request)
-    return _proxy_page(request, user)
+    return await _proxy_page(request, user)
 
 
 @app.post("/proxy/key")
@@ -504,10 +505,10 @@ async def proxy_key(request: Request, name: Annotated[str, Form()] = "") -> Resp
         return to_login(request)
     name = name.strip()
     if _proxy_state(user) != "ok":
-        return _proxy_page(request, user)
+        return await _proxy_page(request, user)
     if not proxykeys.NAME_RE.match(name):
         err = "Names use letters, digits, - and _, up to 32 characters."
-        return _proxy_page(request, user, name=name, err=err)
+        return await _proxy_page(request, user, name=name, err=err)
     outcome = await asyncio.to_thread(
         proxykeys.request_key,
         settings.signup_url,  # type: ignore[arg-type]
@@ -516,12 +517,12 @@ async def proxy_key(request: Request, name: Annotated[str, Form()] = "") -> Resp
         transport=proxy_transport,
     )
     if outcome.key is None:
-        return _proxy_page(request, user, name=name, err=outcome.error)
+        return await _proxy_page(request, user, name=name, err=outcome.error)
     try:
         await asyncio.to_thread(proxykeys.record, settings.proxy_record_file, user["email"], name)
     except OSError as exc:  # the key exists now: show it anyway, never lose it to a full disk
         print(f"warning: could not record proxy name {name}: {exc}")
-    return _proxy_page(request, user, name=name, key=outcome.key)
+    return await _proxy_page(request, user, name=name, key=outcome.key)
 
 
 # The audit plan playground (ui/playground): a standalone prototype, served from its build

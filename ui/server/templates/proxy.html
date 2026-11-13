@@ -19,6 +19,8 @@ claude</pre>
 </div>
 {% elif state == "off" %}
 <p class="form-message">Proxy keys are not set up on this server.</p>
+{% elif state == "no_email" and not settings.oidc_enabled %}
+<p class="form-message">Proxy keys need a {{ settings.oidc_provider_name }} sign-in, which this server doesn't offer.</p>
 {% elif state == "no_email" %}
 <p class="form-message">Your login carries no email {{ settings.oidc_provider_name }} has verified. Log out and sign in with {{ settings.oidc_provider_name }} again; password accounts can't get a proxy key.</p>
 {% elif state == "not_listed" %}

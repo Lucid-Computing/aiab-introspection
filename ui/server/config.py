@@ -9,6 +9,7 @@ import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 UI_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = UI_ROOT.parent
@@ -247,8 +248,12 @@ def signup_url_from_env(value: str) -> str | None:
     """AIAB_SIGNUP_URL, only over HTTPS (http only to this machine): the signup code and the
     key it returns must not cross the network in the clear. Anything else counts as unset."""
     url = value.strip().rstrip("/")
-    local = url.startswith(("http://localhost", "http://127.0.0.1"))
-    return url if url.startswith("https://") or local else None
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    local = parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1")
+    return url if (parts.scheme == "https" and parts.hostname) or local else None
 
 
 def proxy_users_from_env(value: str) -> frozenset[str]:
