@@ -25,6 +25,7 @@ from server import (
     githubexport,
     plan_chat,
     plantlogs,
+    proxykeys,
     proxylogs,
     publish,
     runs,
@@ -454,6 +455,70 @@ async def how(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     return render(request, "how.html")
+
+
+# --------------------------------------------------------------------------- proxy key
+
+proxy_transport: Any | None = None  # httpx transport for the proxy's /_signup; tests set it
+
+
+def _proxy_state(user: dict[str, str]) -> str:
+    """Whether this person may get a logging-proxy key, re-checked on every request."""
+    if not settings.proxy_keys_enabled:
+        return "off"
+    if not user.get("email"):
+        return "no_email"  # a password account, or a login from before the email was kept
+    return "ok" if user["email"] in settings.proxy_users else "not_listed"
+
+
+def _proxy_page(request: Request, user: dict[str, str], **context: Any) -> Response:
+    email = user.get("email", "")
+    context.setdefault("name", proxykeys.suggest_name(email) if email else "")
+    response = render(
+        request,
+        "proxy.html",
+        state=_proxy_state(user),
+        email=email,
+        names=proxykeys.names_for(settings.proxy_record_file, email) if email else [],
+        proxy_url=settings.signup_url,
+        **context,
+    )
+    response.headers["Cache-Control"] = "no-store"  # the key is on it once
+    return response
+
+
+@app.get("/proxy")
+async def proxy_page(request: Request) -> Response:
+    user = user_of(request)
+    if user is None:
+        return to_login(request)
+    return _proxy_page(request, user)
+
+
+@app.post("/proxy/key")
+async def proxy_key(request: Request, name: Annotated[str, Form()] = "") -> Response:
+    """Ask the logging proxy's /_signup for a key under the name this person picked, with
+    this server's signup code, and show the key once."""
+    user = user_of(request)
+    if user is None:
+        return to_login(request)
+    name = name.strip()
+    if _proxy_state(user) != "ok":
+        return _proxy_page(request, user)
+    if not proxykeys.NAME_RE.match(name):
+        err = "Names use letters, digits, - and _, up to 32 characters."
+        return _proxy_page(request, user, name=name, err=err)
+    outcome = await asyncio.to_thread(
+        proxykeys.request_key,
+        settings.signup_url,  # type: ignore[arg-type]
+        settings.signup_code,  # type: ignore[arg-type]
+        name,
+        transport=proxy_transport,
+    )
+    if outcome.key is None:
+        return _proxy_page(request, user, name=name, err=outcome.error)
+    proxykeys.record(settings.proxy_record_file, user["email"], name)
+    return _proxy_page(request, user, name=name, key=outcome.key)
 
 
 # The audit plan playground (ui/playground): a standalone prototype, served from its build

@@ -20,6 +20,7 @@
     {% for href, label in [("/how", "How it works"), ("/logs", "Logs"), ("/agreements", "Agreements"), ("/runs", "Runs")] %}
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
     {% endfor %}
+    {% if settings is defined and settings.proxy_keys_enabled %}<a class="nav-link {% if active == "proxy" %}active{% endif %}" href="/proxy">Proxy key</a>{% endif %}
     {% if user %}
     <span class="chip" title="{{ user.party }}"><span class="party-icon" aria-label="{{ user.party }}">{{ party_icon(user.party) }}</span>{{ user.display_name }}</span>
     <form method="post" action="/logout" class="inline"><button class="btn btn--ghost btn--sm">Log out</button></form>

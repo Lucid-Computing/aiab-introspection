@@ -1,10 +1,17 @@
 """The Proxy key page (MAC-478): a signed-in person whose verified email is on
 AIAB_PROXY_USERS gets a logging-proxy key from the proxy's /_signup."""
 
+import json
+from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from server import app as web
+from server import proxykeys
+from server.auth import Account
 from server.config import load_settings
 
 PROXY_ENV = ("AIAB_PROXY_USERS", "AIAB_SIGNUP_URL", "AIAB_SIGNUP_CODE", "UI_PROXY_RECORD_FILE")
@@ -46,3 +53,156 @@ def test_the_record_file_sits_next_to_the_accounts_file(env, tmp_path):
     assert load_settings().proxy_record_file == tmp_path / "proxy-keys.jsonl"
     env.setenv("UI_PROXY_RECORD_FILE", str(tmp_path / "elsewhere.jsonl"))
     assert load_settings().proxy_record_file == Path(tmp_path / "elsewhere.jsonl")
+
+
+# --------------------------------------------------------------------------- the page
+
+PROXY = "https://proxy.example"
+CODE = "signup-code-for-tests"
+ALLOWED = "ann.lee@example.com"
+
+
+class FakeProxy:
+    """The logging proxy's /_signup: ``answers`` are replayed in order (default: a key)."""
+
+    def __init__(self):
+        self.asked = []
+        self.answers = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        assert request.url == f"{PROXY}/_signup" and request.method == "POST"
+        self.asked.append(json.loads(request.content))
+        answer = self.answers.pop(0) if self.answers else None
+        if isinstance(answer, Exception):
+            raise answer
+        if isinstance(answer, int):
+            return httpx.Response(answer, json={"error": "nope"})
+        return httpx.Response(200, json={"name": self.asked[-1]["name"], "key": "pk-secret-123"})
+
+
+@pytest.fixture
+def proxy(monkeypatch, tmp_path):
+    fake = FakeProxy()
+    monkeypatch.setattr(web, "proxy_transport", httpx.MockTransport(fake))
+    monkeypatch.setattr(
+        web,
+        "settings",
+        replace(
+            load_settings(),
+            proxy_users=frozenset({ALLOWED}),
+            signup_url=PROXY,
+            signup_code=CODE,
+            proxy_record_file=tmp_path / "proxy-keys.jsonl",
+        ),
+    )
+    return fake
+
+
+def client_as(email=ALLOWED):
+    client = TestClient(web.app, follow_redirects=False)
+    account = Account("ann", "auditor", "Ann", "unused")
+    client.cookies.set(web.COOKIE, web.signer.issue(account, email))
+    return client
+
+
+def records():
+    path = web.settings.proxy_record_file
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_logged_out_goes_to_login(proxy):
+    client = TestClient(web.app, follow_redirects=False)
+    assert client.get("/proxy").headers["location"] == "/login?next=/proxy"
+
+
+def test_an_allowed_person_sees_the_form_with_a_suggested_name(proxy):
+    html = client_as().get("/proxy").text
+    assert 'method="post" action="/proxy/key"' in html and 'value="ann-lee"' in html
+    assert 'href="/proxy"' in html  # the nav link, shown because the page is on
+
+
+def test_get_a_key_shows_it_once_and_records_the_name_but_not_the_key(proxy, capsys):
+    client = client_as()
+    response = client.post("/proxy/key", data={"name": "ann"})
+    assert response.status_code == 200
+    assert proxy.asked == [{"name": "ann", "code": CODE}]
+    assert "pk-secret-123" in response.text and response.headers["cache-control"] == "no-store"
+    assert f"{PROXY}/_start#key=pk-secret-123" in response.text
+    [row] = records()
+    assert row["email"] == ALLOWED and row["name"] == "ann" and "pk-secret-123" not in str(row)
+    again = client.get("/proxy").text
+    assert "<code>ann</code>" in again and "pk-secret-123" not in again
+    out = capsys.readouterr()
+    assert "pk-secret-123" not in out.out + out.err and CODE not in out.out + out.err
+
+
+def test_a_bad_name_is_refused_before_the_proxy_is_asked(proxy):
+    for bad in ["", "has space", "dots.are.out", "x" * 33, "ann@example.com"]:
+        response = client_as().post("/proxy/key", data={"name": bad})
+        assert "letters, digits" in response.text
+    assert proxy.asked == [] and records() == []
+
+
+def test_a_taken_name_keeps_the_typed_name_and_another_one_works(proxy):
+    proxy.answers = [409]
+    client = client_as()
+    response = client.post("/proxy/key", data={"name": "cam"})
+    assert "name cam is taken" in response.text and 'value="cam"' in response.text
+    assert records() == []
+    assert "pk-secret-123" in client.post("/proxy/key", data={"name": "ann2"}).text
+    assert [r["name"] for r in records()] == ["ann2"]
+
+
+@pytest.mark.parametrize(
+    ("answer", "says"),
+    [
+        (httpx.ReadTimeout("slow"), "took too long"),
+        (httpx.ConnectError("down"), "could not be reached"),
+        (401, "AIAB_SIGNUP_CODE"),
+        (404, "AIAB_SIGNUP_CODE"),
+        (500, "answered 500"),
+    ],
+)
+def test_proxy_failures_are_explained_and_nothing_is_recorded(proxy, answer, says):
+    proxy.answers = [answer]
+    response = client_as().post("/proxy/key", data={"name": "ann"})
+    assert response.status_code == 200 and says in response.text
+    assert records() == []
+
+
+@pytest.mark.parametrize(
+    ("email", "says"),
+    [
+        ("someone@example.com", "not on the list"),
+        (None, "no email"),  # a password account, or a login from before emails were kept
+    ],
+)
+def test_only_allowed_verified_emails_get_a_key_even_posting_directly(proxy, email, says):
+    client = client_as(email)
+    assert says in client.get("/proxy").text
+    response = client.post("/proxy/key", data={"name": "ann"})
+    assert says in response.text and 'method="post" action="/proxy/key"' not in response.text
+    assert proxy.asked == []
+
+
+def test_off_when_not_configured(proxy, monkeypatch):
+    monkeypatch.setattr(web, "settings", replace(web.settings, signup_code=None))
+    client = client_as()
+    page = client.get("/proxy").text
+    assert "not set up" in page and 'href="/proxy"' not in page.split("<main")[0]
+    assert "not set up" in client.post("/proxy/key", data={"name": "ann"}).text
+    assert proxy.asked == []
+
+
+@pytest.mark.parametrize(
+    ("email", "name"),
+    [
+        ("ann.lee@example.com", "ann-lee"),
+        ("o'brien+aiab@example.com", "o-brien-aiab"),
+        ("..@example.com", "me"),
+        ("a" * 40 + "@example.com", "a" * 32),
+    ],
+)
+def test_suggested_names_follow_the_proxy_rule(email, name):
+    assert proxykeys.suggest_name(email) == name
+    assert proxykeys.NAME_RE.match(name)
