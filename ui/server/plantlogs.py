@@ -35,6 +35,16 @@ KIND_LINES = {  # the chart's lines for a transcript, in this order
     "tool_result": "Tool results",
     "response": "Responses",
 }
+NETWORK_ROWS_PER_RECORD = 100
+MEANING = {  # one plain line per chart line, shown in the legend
+    "Requests": "a prompt given to the agent",
+    "Tool calls": "a command or tool the agent chose to run",
+    "Tool results": "what came back from that command or tool",
+    "Responses": "an answer the agent wrote as text",
+    "Slurm jobs": "a job the agent ran on the GPU cluster, one record per job",
+    "network": f"the run's network connections, {NETWORK_ROWS_PER_RECORD} per record",
+    "scores": "a model the plant scored, one record per score",
+}
 CHART_BINS = 40
 
 
@@ -177,7 +187,6 @@ def load_index(root: Path, paths: list[Path]) -> list[PlantRecord]:
     return out
 
 
-NETWORK_ROWS_PER_RECORD = 100
 TABLES = (  # file, the name its session carries, the column that dates a row
     ("jobs.csv", "jobs", ("started_utc", "submitted_utc")),
     ("network.csv", "network", ("start_utc",)),
@@ -275,6 +284,7 @@ def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
                     {
                         "name": name,
                         "count": sum(series[name]),
+                        "meaning": MEANING.get(name, ""),
                         "points": " ".join(
                             f"{40 + 950 * (i + 0.5) / CHART_BINS:.1f},{170 - 150 * v / peak:.1f}"
                             for i, v in enumerate(series[name])

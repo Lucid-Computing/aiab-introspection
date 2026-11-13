@@ -5,15 +5,20 @@
 {% for c in plant %}
 <section class="plant-run">
   <p class="req-meta">{{ c.run }} · {{ c.start }} to {{ c.end }} UTC · {{ c.records }} records</p>
-  <svg class="plant-chart" viewBox="0 0 1000 200" role="img" aria-label="Records over time">
+  <svg class="plant-chart" viewBox="0 0 1000 215" role="img" aria-label="Records over time">
     <line class="plant-base" x1="40" y1="170" x2="990" y2="170"/>
     <line class="plant-grid" x1="40" y1="20" x2="990" y2="20"/>
     <text class="plant-tick" x="34" y="24" text-anchor="end">{{ c.peak }}</text>
     <text class="plant-tick" x="34" y="174" text-anchor="end">0</text>
+    <text class="plant-tick" transform="translate(12 95) rotate(-90)" text-anchor="middle">records per {{ c.step }}</text>
     {% for a in c.axis %}<text class="plant-tick" x="{{ a.x }}" y="190" text-anchor="{{ 'start' if loop.first else 'end' if loop.last else 'middle' }}">{{ a.label }}</text>{% endfor %}
+    <text class="plant-tick" x="515" y="210" text-anchor="middle">time of day, UTC</text>
     {% for l in c.lines %}<polyline class="plant-line plant-line-{{ loop.index }}" points="{{ l.points }}"/>{% endfor %}
   </svg>
-  <p class="plant-legend">{% for l in c.lines %}<span><i class="plant-key plant-key-{{ loop.index }}"></i>{{ l.name }} {{ l.count }}</span>{% endfor %}<span class="plant-unit">records per {{ c.step }} · UTC</span></p>
+  <table class="plant-legend">
+    {% for l in c.lines %}<tr><td><i class="plant-key plant-key-{{ loop.index }}"></i>{{ l.name }}</td><td>{{ l.count }}</td><td>{{ l.meaning }}</td></tr>{% endfor %}
+  </table>
+  <p class="plant-read">Across: the time the run was going. Up: how many records were written in each {{ c.step }}. The dotted line is the busiest {{ c.step }}, {{ c.peak }} record{{ "s" if c.peak != 1 }} of one kind.</p>
 </section>
 {% endfor %}
 <p class="text-muted">Record text is not shown here. A run sends it sealed to the box.</p>
