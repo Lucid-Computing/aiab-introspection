@@ -4,7 +4,7 @@
  * cards and the inspector both draw from this, so they cannot disagree. Pure: no React.
  */
 import { INPUT_RULES, inputType, nodeById, outputPort, splitRef } from "./ports";
-import type { Classifier, FinalReport, Output, Plan, PlanNode, PortType } from "./types";
+import type { Classifier, FinalReport, Output, Plan, PlanNode, PortType, RecordsReport } from "./types";
 
 export interface InputDesc {
   name: string;
@@ -18,7 +18,7 @@ export interface InputDesc {
 
 export interface OutputDesc {
   name: string;
-  /** A port type, or "Report" for the Final Report, which releases rather than emits. */
+  /** A port type, or "Report" for a report, which releases rather than emits. */
   type: PortType | "Report";
   /** One line: the shape of a value of this output. */
   shape: string;
@@ -78,6 +78,14 @@ export function reportShape(node: FinalReport): string {
     : "no fields yet";
 }
 
+/** What a Report releases: its metadata, then the included records with their fields. */
+export function recordsReportShape(node: RecordsReport): string {
+  const c = node.config;
+  const parts: string[] = [...c.metadata];
+  if (c.records) parts.push(`records_included, records_total, records: [{${c.records.fields.join(", ")}}]`);
+  return parts.length ? `{${parts.join(", ")}}` : "nothing yet";
+}
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** The output of a node as a description, independent of what it is connected to. */
@@ -111,6 +119,13 @@ export function describeOutput(node: PlanNode): OutputDesc | null {
         type: "Report",
         shape: reportShape(node),
         note: plural(node.config.fields.length, "field"),
+      };
+    case "records_report":
+      return {
+        name: "releases",
+        type: "Report",
+        shape: recordsReportShape(node),
+        note: node.config.records ? `up to ${plural(node.config.records.max_records, "record")}` : "no records",
       };
   }
 }

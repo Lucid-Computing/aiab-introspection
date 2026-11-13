@@ -26,6 +26,7 @@ import {
   type Plan,
   type PlanNode,
   RECORD_KINDS,
+  type RecordsReport,
   RULE_FIELDS,
   type Rule,
   type RuleField,
@@ -527,7 +528,7 @@ export function CombineForm({ plan, node, set, op }: { plan: Plan; node: Combine
  * Which block one fixed input reads, chosen from a list: the keyboard's way to wire it.
  * Only blocks whose records it accepts and that would not close a cycle are offered.
  */
-function PortPicker({
+export function PortPicker({
   plan,
   node,
   port,
@@ -535,7 +536,7 @@ function PortPicker({
   op,
 }: {
   plan: Plan;
-  node: FilterLogs | CombineLogs;
+  node: FilterLogs | CombineLogs | RecordsReport;
   port: string;
   label: string;
   op: Op;
@@ -567,7 +568,7 @@ function PortPicker({
       ))}
     </Select>
   );
-  if (node.type === "filter_logs")
+  if (node.type !== "combine_logs")
     return (
       <div className="f">
         <span className="f-label">{label}</span>

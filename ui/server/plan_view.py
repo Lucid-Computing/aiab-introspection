@@ -43,7 +43,7 @@ ISSUE_WHERE = {
     "invalid_plan": "the plan graph (the builder lists the problems)",
     "invalid_trust_roots": "the trust file",
     "invalid_scope": "the Log Source scope: the window ends before it starts",
-    "invalid_output_schema": "the Final Report fields",
+    "invalid_output_schema": "the report's fields",
     "invalid_signature": "a signature file",
 }
 NODE_LABELS = {
@@ -53,7 +53,16 @@ NODE_LABELS = {
     "classifier": "Classifier",
     "run_python": "Run Python",
     "run_llm": "Run LLM",
-    "final_report": "Final Report",
+    "final_report": "Report (old)",
+    "records_report": "Report",
+}
+RECORD_FIELD_NAMES = {
+    "id": "record id",
+    "session_id": "session id",
+    "agent_id": "agent id",
+    "kind": "kind",
+    "ts": "time",
+    "content": "text",
 }
 
 
@@ -92,6 +101,34 @@ class PlanView:
     @property
     def signed_by_both(self) -> bool:
         return all(s["status"] == "ok" for s in self.signatures.values())
+
+    @property
+    def discloses(self) -> str | None:
+        return discloses_records(self.plan)
+
+
+def discloses_records(plan: Any) -> str | None:
+    """One line for the plan and Sign pages when the plan's Report includes records, the
+    one setting that lets log content leave the box. None otherwise."""
+    nodes = plan.get("nodes") if isinstance(plan, dict) else None
+    for n in nodes if isinstance(nodes, list) else ():
+        cfg = n.get("config") if isinstance(n, dict) else None
+        if n.get("type") != "records_report" or not isinstance(cfg, dict):
+            continue
+        settings = cfg.get("records")
+        if not cfg.get("include_records") or not isinstance(settings, dict):
+            continue
+        fields = [
+            f"text (first {settings.get('max_content_chars')} characters)"
+            if f == "content"
+            else RECORD_FIELD_NAMES.get(f, str(f))
+            for f in settings.get("fields") or ()
+        ]
+        return (
+            f"This plan discloses records: up to {settings.get('max_records')} per run, "
+            f"with {', '.join(fields)}."
+        )
+    return None
 
 
 def load_trust(settings: Settings) -> dict[str, Any]:
@@ -142,6 +179,11 @@ def node_views(plan: Any) -> tuple[NodeView, ...]:
         if kind == "final_report":
             fields = (n.get("config") or {}).get("fields") or []
             output = f"releases {len(fields)} field{'s' if len(fields) != 1 else ''}"
+        elif kind == "records_report":
+            cfg = n.get("config") or {}
+            output = "releases metadata"
+            if cfg.get("include_records") and isinstance(cfg.get("records"), dict):
+                output += f" and up to {cfg['records'].get('max_records')} records"
         else:
             output = f"{port[0]} · {port[1]}" if port else "?"
         label = NODE_LABELS.get(kind, kind)

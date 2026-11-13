@@ -67,5 +67,25 @@ export function outputSpec(node: PlanNode): OutputSpec {
         kind: "the report, the only thing that leaves the box",
         fields: node.config.fields.map((f) => ({ name: f.name, type: f.type })),
       };
+    case "records_report": {
+      const c = node.config;
+      const types: Record<string, string> = {
+        agent_ids: "list of string",
+        kind_counts: "{request, response, tool_call, tool_result: integer}",
+        first_ts: "string, a time",
+        last_ts: "string, a time",
+      };
+      const fields: OutputSpec["fields"] = c.metadata.map((name) => ({ name, type: types[name] ?? "integer" }));
+      if (c.records)
+        fields.push(
+          { name: "records_total", type: "integer" },
+          { name: "records_included", type: "integer" },
+          {
+            name: "records",
+            type: `list of {${[...c.records.fields, ...(c.records.fields.includes("content") ? ["content_length"] : [])].join(", ")}}`,
+          },
+        );
+      return { kind: "the report, the only thing that leaves the box", fields };
+    }
   }
 }

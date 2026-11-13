@@ -27,6 +27,7 @@ const nodeTypes = {
   run_python: PlanNodeView,
   run_llm: PlanNodeView,
   final_report: PlanNodeView,
+  records_report: PlanNodeView,
 };
 
 
