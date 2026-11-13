@@ -120,15 +120,14 @@ export default function App() {
     }
   };
 
-  // Auto save: a valid change is written a moment after the last edit. A plan with errors
-  // is not saved; the bar says so. A refused save waits for the next edit.
-  const autoSave = Boolean(AGREEMENT) && server.editable && dirty && nErr === 0 && !server.saving && !server.refused.length;
+  // Saving is the Save button's job. Leaving with unsaved changes asks first.
+  const canSave = Boolean(AGREEMENT) && server.editable && dirty && nErr === 0 && !server.saving;
   useEffect(() => {
-    if (!autoSave) return;
-    const t = setTimeout(save, 900);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSave, currentCode]);
+    if (!dirty || !server.editable) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty, server.editable]);
 
   const modified = (key: string) => planToJson(plan) !== planToJson(samplePlan(key));
   const loadSample = (key: string) => {
@@ -180,7 +179,7 @@ export default function App() {
             : dirty
               ? nErr
                 ? "not saved · fix the errors"
-                : "saving…"
+                : "not saved"
               : `saved · ${server.digest.slice(7, 19)}…`;
 
   return (
@@ -230,6 +229,11 @@ export default function App() {
             <span className={`bar-note${server.error ? " bad" : dirty ? "" : " ok"}`} role="status">
               {saveNote}
             </span>
+          )}
+          {AGREEMENT && server.editable && (
+            <button className="btn btn--sm" onClick={save} disabled={!canSave}>
+              Save
+            </button>
           )}
           <div className="bar-spacer" />
           <button className="bar-link" onClick={() => fileInput.current?.click()}>

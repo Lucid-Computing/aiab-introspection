@@ -509,8 +509,7 @@ def result_view(settings: Settings, state: dict) -> dict:
         fmt = "%Y-%m-%dT%H:%M:%SZ"
         seconds = int(
             (
-                datetime.strptime(state["finished"], fmt)
-                - datetime.strptime(state["started"], fmt)
+                datetime.strptime(state["finished"], fmt) - datetime.strptime(state["started"], fmt)
             ).total_seconds()
         )
     except (KeyError, ValueError, TypeError):
