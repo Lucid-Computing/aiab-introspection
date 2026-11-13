@@ -533,7 +533,8 @@
     }
 
     box.querySelector(".browser-make").addEventListener("submit", setUpHere);
-    box.querySelector(".browser-import").addEventListener("submit", useKeyFile);
+    var importForm = box.querySelector(".browser-import");
+    if (importForm) importForm.addEventListener("submit", useKeyFile);
     submitButton.addEventListener("click", submitStoredRoot);
     continueButton.addEventListener("click", continueWithStoredKey);
     signButton.addEventListener("click", signNow);

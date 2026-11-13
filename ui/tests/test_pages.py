@@ -181,7 +181,7 @@ def test_sign_page_is_two_things_per_party_sign_and_the_root_key(client, tmp_pat
     html = client.get("/a/bio/sign").text
     assert '<script src="/assets/sign.js" defer></script>' in html
     assert 'class="browser-key" data-party="lab" data-digest="sha256:' in html
-    assert "Set up signing" in html and "Use this key file" in html  # no terminal needed
+    assert "Set up signing" in html and "Use this key file" not in html  # no terminal needed
     assert 'id="key-form-lab"' in html and "Submit root key" in html
     # The card hides buttons with the hidden attribute, which .btn's display would override.
     css = (REPO_ROOT / "ui/assets/aiab.css").read_text()
