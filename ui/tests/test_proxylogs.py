@@ -510,14 +510,11 @@ def test_plant_export_is_sent_as_written_with_a_batch_per_file(tmp_path):
 
     first, resumed = plantlogs.timeline(plant.path(settings), s1.records)
     assert (first["run"], first["batch"], resumed["batch"]) == ("s/1-first", 0, 2)
-    lanes = {lane["name"]: lane for lane in resumed["lanes"]}
-    assert [lane["name"] for lane in resumed["lanes"]] == list(plantlogs.LANES)
-    assert lanes["Slurm jobs"]["count"] == "1" and lanes["GPU use"]["count"] == "1"
-    assert lanes["Model calls"]["count"] == "1" and lanes["Network"]["count"] == "0.0 MB"
-    assert len(lanes["Network"]["marks"]) == 1  # the row after the run is left out
-    job = lanes["Slurm jobs"]["marks"][0]
-    assert job == {"left": 16.667, "width": 50.0}
-    assert {lane["name"]: lane["count"] for lane in first["lanes"]}["Tool calls"] == "1"
+    lines = {line["name"]: line for line in resumed["lines"]}
+    assert list(lines) == list(plantlogs.LINES)
+    assert lines["Jobs running"]["count"] == 1 and lines["Model calls"]["count"] == 1
+    assert len(lines["Jobs running"]["points"].split()) == plantlogs.CHART_BINS
+    assert {line["name"]: line["count"] for line in first["lines"]}["Tool calls"] == 1
 
 
 def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):

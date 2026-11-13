@@ -27,8 +27,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-LANES = ("Model calls", "Tool calls", "Slurm jobs", "GPU use", "Network")
-NETWORK_BIN_SECONDS = 60
+LINES = ("Model calls", "Tool calls", "Jobs running")
+CHART_BINS = 40
 
 
 @dataclass
@@ -229,9 +229,9 @@ def _clock(t: float) -> str:
 
 
 def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
-    """One lane chart per run of a session, each on its own UTC axis: the session's model
-    and tool calls, the run's Slurm jobs, the jobs that opened GPUs, and network traffic
-    per minute. Marks carry positions in percent of the axis; nothing of the text."""
+    """One line chart per run of a session, on its own UTC axis: model calls, tool calls
+    and Slurm jobs running, counted in CHART_BINS equal steps of time. Points are in the
+    chart's own 1000 x 200 drawing units; nothing of the text."""
     by_run: dict[str, list[PlantRecord]] = defaultdict(list)
     for r in records:
         by_run[r.run].append(r)
@@ -248,66 +248,48 @@ def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
         end = max([end] + [b for _, _, b in job_rows])
         start = min([start] + [a for _, a, _ in job_rows])
         span = max(end - start, 1.0)
+        step = span / CHART_BINS
 
-        def at(t: float, start: float = start, span: float = span) -> float:
-            return round(min(max((t - start) / span, 0.0), 1.0) * 100, 3)
+        def which(t: float, start: float = start, step: float = step) -> int:
+            return min(max(int((t - start) // step), 0), CHART_BINS - 1)
 
-        def tick(t: float) -> dict:
-            return {"left": at(t), "width": 0}
-
-        def bar(a: float, b: float) -> dict:
-            return {"left": at(a), "width": max(round(at(b) - at(a), 3), 0.3)}
-
-        bins: dict[int, int] = defaultdict(int)
-        for n in network(folder):
-            t = _time(n.get("start_utc") or "")
-            if start <= t <= end:
-                size = 0
-                for k in ("bytes_sent", "bytes_received"):
-                    try:
-                        size += int(float(n.get(k) or 0))
-                    except ValueError:
-                        pass
-                bins[int((t - start) // NETWORK_BIN_SECONDS)] += size
-        peak = max(bins.values(), default=0) or 1
-        net = [
+        series = {name: [0] * CHART_BINS for name in LINES}
+        for r in recs:
+            if r.kind in ("request", "response"):
+                series["Model calls"][which(r.time)] += 1
+            elif r.kind == "tool_call":
+                series["Tool calls"][which(r.time)] += 1
+        for _, a, b in job_rows:
+            for i in range(which(a), which(b) + 1):
+                series["Jobs running"][i] += 1
+        totals = {
+            "Model calls": sum(series["Model calls"]),
+            "Tool calls": sum(series["Tool calls"]),
+            "Jobs running": len(job_rows),
+        }
+        peak = max(max(v) for v in series.values()) or 1
+        lines = [
             {
-                **bar(start + i * NETWORK_BIN_SECONDS, start + (i + 1) * NETWORK_BIN_SECONDS),
-                "level": max(round(v / peak, 2), 0.1),
+                "name": name,
+                "count": totals[name],
+                "points": " ".join(
+                    f"{40 + 950 * (i + 0.5) / CHART_BINS:.1f},{170 - 150 * v / peak:.1f}"
+                    for i, v in enumerate(series[name])
+                ),
             }
-            for i, v in sorted(bins.items())
-            if v
+            for name in LINES
         ]
-        gpu = [
-            bar(a, b)
-            for j, a, b in job_rows
-            if (j.get("gpu_devices_opened") or "0") not in ("", "0")
-        ]
-        lanes = {
-            "Model calls": [tick(r.time) for r in recs if r.kind in ("request", "response")],
-            "Tool calls": [tick(r.time) for r in recs if r.kind == "tool_call"],
-            "Slurm jobs": [bar(a, b) for _, a, b in job_rows],
-            "GPU use": gpu,
-            "Network": net,
-        }
-        counts = {
-            "Model calls": len(lanes["Model calls"]),
-            "Tool calls": len(lanes["Tool calls"]),
-            "Slurm jobs": len(job_rows),
-            "GPU use": len(gpu),
-        }
-        counts = {n: str(c) for n, c in counts.items()}
-        counts["Network"] = f"{sum(bins.values()) / 1e6:.1f} MB"
         charts.append(
             {
                 "run": run,
                 "start": datetime.fromtimestamp(start, UTC).strftime("%Y-%m-%d %H:%M:%S"),
                 "end": datetime.fromtimestamp(end, UTC).strftime("%Y-%m-%d %H:%M:%S"),
                 "axis": [
-                    {"left": at(start + span * k / 4), "label": _clock(start + span * k / 4)}
-                    for k in range(5)
+                    {"x": 40 + 950 * k / 4, "label": _clock(start + span * k / 4)} for k in range(5)
                 ],
-                "lanes": [{"name": n, "count": counts[n], "marks": lanes[n]} for n in LANES],
+                "lines": lines,
+                "peak": peak,
+                "step": f"{step / 60:.0f} min" if step >= 90 else f"{step:.0f} s",
                 "records": len(recs),
                 "batch": recs[0].box["batch"],
                 "facts": _facts(folder, recs, [j for j, _, _ in job_rows], start, end),

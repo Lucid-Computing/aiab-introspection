@@ -1,22 +1,19 @@
-{# One plant session, read-only: a lane chart per plant run on a UTC axis
+{# One plant session, read-only: a line chart per plant run on a UTC axis
    (plantlogs.timeline). Metadata only: times, counts and sizes, never the records' text. #}
 <h2 class="logs-h">{{ current.title }}</h2>
 <p class="logs-sub">session {{ current.id }}</p>
 {% for c in plant %}
 <section class="plant-run">
   <p class="req-meta">{{ c.run }} · {{ c.start }} to {{ c.end }} UTC · {{ c.records }} records · batch {{ c.batch }}</p>
-  <div class="plant-chart">
-    {% for lane in c.lanes %}
-    <div class="plant-lane">
-      <span class="plant-name">{{ lane.name }} <span class="text-muted">{{ lane.count }}</span></span>
-      <div class="plant-track">{% for m in lane.marks %}<i style="--l: {{ m.left }}%; --w: {{ m.width }}%{% if m.level is defined %}; --o: {{ m.level }}{% endif %}"></i>{% endfor %}</div>
-    </div>
-    {% endfor %}
-    <div class="plant-lane plant-axis">
-      <span class="plant-name">UTC</span>
-      <div class="plant-track">{% for a in c.axis %}<span style="--l: {{ a.left }}%">{{ a.label }}</span>{% endfor %}</div>
-    </div>
-  </div>
+  <svg class="plant-chart" viewBox="0 0 1000 200" role="img" aria-label="Activity over time">
+    <line class="plant-base" x1="40" y1="170" x2="990" y2="170"/>
+    <line class="plant-grid" x1="40" y1="20" x2="990" y2="20"/>
+    <text class="plant-tick" x="34" y="24" text-anchor="end">{{ c.peak }}</text>
+    <text class="plant-tick" x="34" y="174" text-anchor="end">0</text>
+    {% for a in c.axis %}<text class="plant-tick" x="{{ a.x }}" y="190" text-anchor="{{ 'start' if loop.first else 'end' if loop.last else 'middle' }}">{{ a.label }}</text>{% endfor %}
+    {% for l in c.lines %}<polyline class="plant-line plant-line-{{ loop.index }}" points="{{ l.points }}"/>{% endfor %}
+  </svg>
+  <p class="plant-legend">{% for l in c.lines %}<span><i class="plant-key plant-key-{{ loop.index }}"></i>{{ l.name }} {{ l.count }}</span>{% endfor %}<span class="text-muted">per {{ c.step }} · UTC</span></p>
   {% set f = c.facts %}
   <table class="kv plant-facts">
     <tr><th>Transcript</th><td>{% for k, n in f.kinds.items() %}{{ n }} {{ k.replace("_", " ") }}{{ "s" if n != 1 }}{% if not loop.last %} · {% endif %}{% endfor %} · {{ "{:,}".format(f.chars) }} characters</td></tr>

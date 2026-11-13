@@ -350,15 +350,18 @@ button[disabled], .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .logs-sub, .req-meta { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); margin: 0 0 var(--space-4); overflow-wrap: anywhere; }
 /* Plant Logs: one lane chart per plant run (_logplant.html). Marks are placed by --l and --w. */
 .plant-run { margin-bottom: var(--space-5); }
-.plant-chart { display: grid; gap: var(--space-1); }
-.plant-lane { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr); gap: var(--space-3); align-items: center; }
-.plant-name { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
-.plant-track { position: relative; height: var(--space-4); background: var(--paper-2); border-bottom: var(--border-hairline); }
-.plant-track i { position: absolute; top: 0; bottom: 0; left: var(--l); width: var(--w); min-width: 1px; background: var(--accent); opacity: var(--o, 1); }
-.plant-axis .plant-track { background: none; border: 0; }
-.plant-axis .plant-track span { position: absolute; left: var(--l); transform: translateX(-50%); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); white-space: nowrap; }
-.plant-axis .plant-track span:first-child { transform: none; }
-.plant-axis .plant-track span:last-child { transform: translateX(-100%); }
+.plant-chart { display: block; width: 100%; height: auto; }
+.plant-base { stroke: var(--ink-1); stroke-width: 1; }
+.plant-grid { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 4; }
+.plant-tick { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); }
+.plant-line { fill: none; stroke-width: 1.5; stroke-linejoin: round; }
+.plant-line-1 { stroke: var(--ink-1); }
+.plant-line-2 { stroke: var(--amber-ink); }
+.plant-line-3 { stroke: var(--ink-3); stroke-dasharray: 5 3; }
+.plant-legend { display: flex; flex-wrap: wrap; gap: var(--space-4); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-2); margin: var(--space-1) 0 0; }
+.plant-key { display: inline-block; width: 14px; border-top: 2px solid var(--ink-1); vertical-align: middle; margin-right: var(--space-1); }
+.plant-key-2 { border-color: var(--amber-ink); }
+.plant-key-3 { border-color: var(--ink-3); border-top-style: dashed; }
 .req-meta { margin: var(--space-4) 0; }
 .ok { color: var(--accent-ink); } .bad { color: var(--destructive); }
 details.fold { border: var(--border-strong); margin: 0 0 var(--space-3); }
