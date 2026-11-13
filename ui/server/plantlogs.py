@@ -27,7 +27,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-TABLE_AGENTS = ("plant-jobs", "plant-network", "plant-scores")
+TABLE_AGENTS = {"plant-jobs": "Slurm jobs", "plant-network": "Network", "plant-scores": "Scores"}
+KIND_LINES = {  # the chart's lines for a transcript, in this order
+    "request": "Requests",
+    "tool_call": "Tool calls",
+    "tool_result": "Tool results",
+    "response": "Responses",
+}
 CHART_BINS = 40
 
 
@@ -229,8 +235,8 @@ def _clock(t: float) -> str:
 
 
 def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
-    """One line per run of a session: how many records were written in each of CHART_BINS
-    equal steps of time, on the run's own UTC axis. Points are in the chart's own
+    """One chart per run of a session, a line per kind of record: how many were written in
+    each of CHART_BINS equal steps of time, on the run's own UTC axis. Points are in the chart's own
     1000 x 200 drawing units. Counts and times only; nothing of the text."""
     by_run: dict[str, list[PlantRecord]] = defaultdict(list)
     for r in records:
@@ -240,13 +246,15 @@ def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
         start, end = recs[0].time, max(r.time for r in recs)
         span = max(end - start, 1.0)
         step = span / CHART_BINS
-        bins = [0] * CHART_BINS
-        kinds: dict[str, int] = defaultdict(int)
+        table = TABLE_AGENTS.get(recs[0].who)  # a jobs, network or scores session: one line
+        series: dict[str, list[int]] = {}
         for r in recs:
+            name = table or KIND_LINES.get(r.kind, r.kind)
+            bins = series.setdefault(name, [0] * CHART_BINS)
             bins[min(max(int((r.time - start) // step), 0), CHART_BINS - 1)] += 1
-            kinds[r.kind] += 1
-        peak = max(bins)
-        table = recs[0].who in TABLE_AGENTS  # a jobs, network or scores session: rows, no kinds
+        order = [table] if table else [n for n in KIND_LINES.values() if n in series]
+        order += [n for n in series if n not in order]
+        peak = max(max(v) for v in series.values())
         charts.append(
             {
                 "run": run,
@@ -255,15 +263,21 @@ def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
                 "axis": [
                     {"x": 40 + 950 * k / 4, "label": _clock(start + span * k / 4)} for k in range(5)
                 ],
-                "points": " ".join(
-                    f"{40 + 950 * (i + 0.5) / CHART_BINS:.1f},{170 - 150 * v / peak:.1f}"
-                    for i, v in enumerate(bins)
-                ),
+                "lines": [
+                    {
+                        "name": name,
+                        "count": sum(series[name]),
+                        "points": " ".join(
+                            f"{40 + 950 * (i + 0.5) / CHART_BINS:.1f},{170 - 150 * v / peak:.1f}"
+                            for i, v in enumerate(series[name])
+                        ),
+                    }
+                    for name in order
+                ],
                 "peak": peak,
                 "step": f"{step / 60:.0f} min" if step >= 90 else f"{step:.0f} s",
                 "records": len(recs),
                 "batch": recs[0].box["batch"],
-                "kinds": {} if table else dict(kinds),
             }
         )
     return charts

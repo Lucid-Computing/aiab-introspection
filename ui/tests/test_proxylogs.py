@@ -510,8 +510,8 @@ def test_plant_export_is_sent_as_written_with_a_batch_per_file(tmp_path):
 
     first, resumed = plantlogs.timeline(plant.path(settings), s1.records)
     assert (first["run"], first["batch"], resumed["batch"]) == ("s/1-first", 0, 2)
-    assert len(resumed["points"].split()) == plantlogs.CHART_BINS
-    assert first["kinds"]["tool_call"] == 1
+    assert len(resumed["lines"][0]["points"].split()) == plantlogs.CHART_BINS
+    assert {line["name"]: line["count"] for line in first["lines"]}["Tool calls"] == 1
 
 
 def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):

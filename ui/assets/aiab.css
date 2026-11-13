@@ -355,7 +355,15 @@ button[disabled], .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .plant-grid { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 4; }
 .plant-tick { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); }
 .plant-line { fill: none; stroke: var(--ink-1); stroke-width: 1.5; stroke-linejoin: round; }
-.plant-legend { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); margin: var(--space-1) 0 0; }
+.plant-line-2 { stroke: var(--amber-ink); }
+.plant-line-3 { stroke: var(--ink-3); stroke-dasharray: 5 3; }
+.plant-line-4 { stroke: var(--ink-2); stroke-dasharray: 1 3; }
+.plant-legend { display: flex; flex-wrap: wrap; gap: var(--space-4); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-2); margin: var(--space-1) 0 0; }
+.plant-key { display: inline-block; width: 16px; border-top: 2px solid var(--ink-1); vertical-align: middle; margin-right: var(--space-1); }
+.plant-key-2 { border-color: var(--amber-ink); }
+.plant-key-3 { border-color: var(--ink-3); border-top-style: dashed; }
+.plant-key-4 { border-color: var(--ink-2); border-top-style: dotted; }
+.plant-unit { color: var(--ink-3); margin-left: auto; }
 .req-meta { margin: var(--space-4) 0; }
 .ok { color: var(--accent-ink); } .bad { color: var(--destructive); }
 details.fold { border: var(--border-strong); margin: 0 0 var(--space-3); }
