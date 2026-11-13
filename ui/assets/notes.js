@@ -222,10 +222,12 @@
     try { localStorage.setItem("aiab-notes-hidden", hidden ? "1" : ""); } catch (e) { /* none */ }
     draw();
   });
-  // A click outside the button and its menu closes the menu.
+  // A click outside the button and its menu closes the menu. A click inside the builder
+  // iframe never reaches this document, but it takes the focus from this window.
   document.addEventListener("click", function (event) {
     if (!menu.hidden && !fb.contains(event.target)) setMenu(false);
   });
+  window.addEventListener("blur", function () { if (!menu.hidden) setMenu(false); });
   // While placing, a click in the page drops the note there and does nothing else (no link
   // is followed, no button pressed).
   main.addEventListener("click", function (event) {
