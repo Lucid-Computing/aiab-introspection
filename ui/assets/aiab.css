@@ -354,14 +354,8 @@ button[disabled], .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .plant-base { stroke: var(--ink-1); stroke-width: 1; }
 .plant-grid { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 4; }
 .plant-tick { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); }
-.plant-line { fill: none; stroke-width: 1.5; stroke-linejoin: round; }
-.plant-line-1 { stroke: var(--ink-1); }
-.plant-line-2 { stroke: var(--amber-ink); }
-.plant-line-3 { stroke: var(--ink-3); stroke-dasharray: 5 3; }
-.plant-legend { display: flex; flex-wrap: wrap; gap: var(--space-4); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-2); margin: var(--space-1) 0 0; }
-.plant-key { display: inline-block; width: 14px; border-top: 2px solid var(--ink-1); vertical-align: middle; margin-right: var(--space-1); }
-.plant-key-2 { border-color: var(--amber-ink); }
-.plant-key-3 { border-color: var(--ink-3); border-top-style: dashed; }
+.plant-line { fill: none; stroke: var(--ink-1); stroke-width: 1.5; stroke-linejoin: round; }
+.plant-legend { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); margin: var(--space-1) 0 0; }
 .req-meta { margin: var(--space-4) 0; }
 .ok { color: var(--accent-ink); } .bad { color: var(--destructive); }
 details.fold { border: var(--border-strong); margin: 0 0 var(--space-3); }
@@ -573,9 +567,6 @@ select[hidden] { display: none !important; }
 .sel-list button.on { background: var(--paper-2); font-weight: 600; }
 
 /* Plant session: the run's numbers, and wide tables that scroll inside their fold. */
-.plant-facts { margin: var(--space-3) 0; }
-.plant-scroll { overflow-x: auto; max-height: 24rem; overflow-y: auto; }
-.plant-scroll .table { white-space: nowrap; }
 .plant-run + .plant-run { margin-top: var(--space-8); }
 
 /* Sign page: per party, the state, the Sign action, and the root key with its form. */

@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-LINES = ("Model calls", "Tool calls", "Jobs running")
+TABLE_AGENTS = ("plant-jobs", "plant-network", "plant-scores")
 CHART_BINS = 40
 
 
@@ -229,56 +229,24 @@ def _clock(t: float) -> str:
 
 
 def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
-    """One line chart per run of a session, on its own UTC axis: model calls, tool calls
-    and Slurm jobs running, counted in CHART_BINS equal steps of time. Points are in the
-    chart's own 1000 x 200 drawing units; nothing of the text."""
+    """One line per run of a session: how many records were written in each of CHART_BINS
+    equal steps of time, on the run's own UTC axis. Points are in the chart's own
+    1000 x 200 drawing units. Counts and times only; nothing of the text."""
     by_run: dict[str, list[PlantRecord]] = defaultdict(list)
     for r in records:
         by_run[r.run].append(r)
     charts = []
     for run, recs in sorted(by_run.items(), key=lambda kv: kv[1][0].time):
-        folder = root / run
-        start, end = recs[0].time, recs[-1].time
-        job_rows = []
-        for j in jobs(folder):
-            a = _time(j.get("started_utc") or j.get("submitted_utc") or "")
-            b = _time(j.get("ended_utc") or "") or a
-            if a and b >= start and a <= end:
-                job_rows.append((j, a, b))
-        end = max([end] + [b for _, _, b in job_rows])
-        start = min([start] + [a for _, a, _ in job_rows])
+        start, end = recs[0].time, max(r.time for r in recs)
         span = max(end - start, 1.0)
         step = span / CHART_BINS
-
-        def which(t: float, start: float = start, step: float = step) -> int:
-            return min(max(int((t - start) // step), 0), CHART_BINS - 1)
-
-        series = {name: [0] * CHART_BINS for name in LINES}
+        bins = [0] * CHART_BINS
+        kinds: dict[str, int] = defaultdict(int)
         for r in recs:
-            if r.kind in ("request", "response"):
-                series["Model calls"][which(r.time)] += 1
-            elif r.kind == "tool_call":
-                series["Tool calls"][which(r.time)] += 1
-        for _, a, b in job_rows:
-            for i in range(which(a), which(b) + 1):
-                series["Jobs running"][i] += 1
-        totals = {
-            "Model calls": sum(series["Model calls"]),
-            "Tool calls": sum(series["Tool calls"]),
-            "Jobs running": len(job_rows),
-        }
-        peak = max(max(v) for v in series.values()) or 1
-        lines = [
-            {
-                "name": name,
-                "count": totals[name],
-                "points": " ".join(
-                    f"{40 + 950 * (i + 0.5) / CHART_BINS:.1f},{170 - 150 * v / peak:.1f}"
-                    for i, v in enumerate(series[name])
-                ),
-            }
-            for name in LINES
-        ]
+            bins[min(max(int((r.time - start) // step), 0), CHART_BINS - 1)] += 1
+            kinds[r.kind] += 1
+        peak = max(bins)
+        table = recs[0].who in TABLE_AGENTS  # a jobs, network or scores session: rows, no kinds
         charts.append(
             {
                 "run": run,
@@ -287,80 +255,15 @@ def timeline(root: Path, records: list[PlantRecord]) -> list[dict]:
                 "axis": [
                     {"x": 40 + 950 * k / 4, "label": _clock(start + span * k / 4)} for k in range(5)
                 ],
-                "lines": lines,
+                "points": " ".join(
+                    f"{40 + 950 * (i + 0.5) / CHART_BINS:.1f},{170 - 150 * v / peak:.1f}"
+                    for i, v in enumerate(bins)
+                ),
                 "peak": peak,
                 "step": f"{step / 60:.0f} min" if step >= 90 else f"{step:.0f} s",
                 "records": len(recs),
                 "batch": recs[0].box["batch"],
-                "facts": _facts(folder, recs, [j for j, _, _ in job_rows], start, end),
+                "kinds": {} if table else dict(kinds),
             }
         )
     return charts
-
-
-def _int(value: object) -> int:
-    try:
-        return int(float(str(value or 0)))
-    except ValueError:
-        return 0
-
-
-def _facts(folder: Path, recs: list[PlantRecord], job_rows: list[dict], start: float, end: float):
-    """What the plant's sensors recorded about one run, in numbers: the transcript by kind
-    and size, the Slurm jobs as a table, the network by destination, and the models the
-    plant scored. Counts, times and sizes only; nothing of the transcript's text."""
-    kinds: dict[str, int] = defaultdict(int)
-    for r in recs:
-        kinds[r.kind] += 1
-    job_table = []
-    for j in job_rows:
-        a = _time(j.get("started_utc") or j.get("submitted_utc") or "")
-        b = _time(j.get("ended_utc") or "") or a
-        job_table.append(
-            {
-                "job": j.get("job", ""),
-                "state": (j.get("state") or "").lower(),
-                "node": j.get("node", ""),
-                "gpus": j.get("gpus_given", ""),
-                "started": _clock(a) if a else "",
-                "seconds": int(b - a) if a else 0,
-                "processes": j.get("processes", ""),
-                "gpu_opened": j.get("gpu_devices_opened", ""),
-                "outlived": (j.get("outlived") or "0") not in ("", "0"),
-            }
-        )
-    dest: dict[tuple[str, str, str], list[int]] = defaultdict(lambda: [0, 0, 0])
-    for n in network(folder):
-        if not start <= _time(n.get("start_utc") or "") <= end:
-            continue
-        key = (n.get("to", ""), n.get("port", ""), n.get("service") or n.get("proto", ""))
-        dest[key][0] += 1
-        dest[key][1] += _int(n.get("bytes_sent"))
-        dest[key][2] += _int(n.get("bytes_received"))
-    top = sorted(dest.items(), key=lambda kv: -(kv[1][1] + kv[1][2]))[:8]
-    saved = []
-    for row in scores(folder):
-        t = _time(row.get("model_saved_utc") or "")
-        if t and start <= t <= end + 3600:
-            saved.append(row)
-    return {
-        "kinds": dict(kinds),
-        "chars": sum(len(str(r.box.get("content") or "")) for r in recs),
-        "jobs": job_table,
-        "gpu_seconds": sum(j["seconds"] for j in job_table if j["gpu_opened"] not in ("", "0")),
-        "flows": sum(v[0] for v in dest.values()),
-        "destinations": len(dest),
-        "top": [
-            {
-                "to": k[0],
-                "port": k[1],
-                "service": k[2],
-                "flows": v[0],
-                "sent": v[1],
-                "received": v[2],
-            }
-            for k, v in top
-        ],
-        "score_columns": list(saved[0].keys()) if saved else [],
-        "scores": saved,
-    }

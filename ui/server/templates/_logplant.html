@@ -4,56 +4,16 @@
 <p class="logs-sub">session {{ current.id }}</p>
 {% for c in plant %}
 <section class="plant-run">
-  <p class="req-meta">{{ c.run }} · {{ c.start }} to {{ c.end }} UTC · {{ c.records }} records · batch {{ c.batch }}</p>
-  <svg class="plant-chart" viewBox="0 0 1000 200" role="img" aria-label="Activity over time">
+  <p class="req-meta">{{ c.run }} · {{ c.start }} to {{ c.end }} UTC · {{ c.records }} records{% for k, n in c.kinds.items() %}{{ ": " if loop.first else ", " }}{{ n }} {{ k.replace("_", " ") }}{{ "s" if n != 1 }}{% endfor %}</p>
+  <svg class="plant-chart" viewBox="0 0 1000 200" role="img" aria-label="Records over time">
     <line class="plant-base" x1="40" y1="170" x2="990" y2="170"/>
     <line class="plant-grid" x1="40" y1="20" x2="990" y2="20"/>
     <text class="plant-tick" x="34" y="24" text-anchor="end">{{ c.peak }}</text>
     <text class="plant-tick" x="34" y="174" text-anchor="end">0</text>
     {% for a in c.axis %}<text class="plant-tick" x="{{ a.x }}" y="190" text-anchor="{{ 'start' if loop.first else 'end' if loop.last else 'middle' }}">{{ a.label }}</text>{% endfor %}
-    {% for l in c.lines %}<polyline class="plant-line plant-line-{{ loop.index }}" points="{{ l.points }}"/>{% endfor %}
+    <polyline class="plant-line" points="{{ c.points }}"/>
   </svg>
-  <p class="plant-legend">{% for l in c.lines %}<span><i class="plant-key plant-key-{{ loop.index }}"></i>{{ l.name }} {{ l.count }}</span>{% endfor %}<span class="text-muted">per {{ c.step }} · UTC</span></p>
-  {% set f = c.facts %}
-  <table class="kv plant-facts">
-    <tr><th>Transcript</th><td>{% for k, n in f.kinds.items() %}{{ n }} {{ k.replace("_", " ") }}{{ "s" if n != 1 }}{% if not loop.last %} · {% endif %}{% endfor %} · {{ "{:,}".format(f.chars) }} characters</td></tr>
-    <tr><th>Slurm jobs</th><td>{{ f.jobs | length }}{% if f.jobs %} · {% for st, group in f.jobs | groupby("state") %}{{ group | length }} {{ st }}{% if not loop.last %}, {% endif %}{% endfor %} · {{ (f.gpu_seconds / 60) | round(1) }} GPU minutes{% endif %}</td></tr>
-    <tr><th>Network</th><td>{{ f.flows }} connections to {{ f.destinations }} destinations</td></tr>
-    <tr><th>Models scored</th><td>{{ f.scores | length }}</td></tr>
-  </table>
-  {% if f.jobs %}
-  <details class="info">
-    <summary>Slurm jobs ({{ f.jobs | length }})</summary>
-    <div class="info-body plant-scroll">
-      <table class="table">
-        <thead><tr><th>Job</th><th>State</th><th>Node</th><th>GPUs</th><th>Started</th><th>Seconds</th><th>Processes</th><th>GPU devices opened</th><th>Outlived its job</th></tr></thead>
-        <tbody>{% for j in f.jobs %}<tr><td class="mono">{{ j.job }}</td><td>{{ j.state }}</td><td class="mono">{{ j.node }}</td><td class="mono">{{ j.gpus }}</td><td class="mono">{{ j.started }}</td><td class="mono">{{ j.seconds }}</td><td class="mono">{{ j.processes }}</td><td class="mono">{{ j.gpu_opened }}</td><td>{{ "yes" if j.outlived else "" }}</td></tr>{% endfor %}</tbody>
-      </table>
-    </div>
-  </details>
-  {% endif %}
-  {% if f.top %}
-  <details class="info">
-    <summary>Network, the {{ f.top | length }} largest destinations</summary>
-    <div class="info-body plant-scroll">
-      <table class="table">
-        <thead><tr><th>To</th><th>Port</th><th>Service</th><th>Connections</th><th>Sent</th><th>Received</th></tr></thead>
-        <tbody>{% for n in f.top %}<tr><td class="mono">{{ n.to }}</td><td class="mono">{{ n.port }}</td><td class="mono">{{ n.service }}</td><td class="mono">{{ n.flows }}</td><td class="mono">{{ (n.sent / 1024) | round(1) }} KB</td><td class="mono">{{ (n.received / 1024) | round(1) }} KB</td></tr>{% endfor %}</tbody>
-      </table>
-    </div>
-  </details>
-  {% endif %}
-  {% if f.scores %}
-  <details class="info">
-    <summary>Models the plant scored ({{ f.scores | length }})</summary>
-    <div class="info-body plant-scroll">
-      <table class="table">
-        <thead><tr>{% for col in f.score_columns %}<th>{{ col.replace("_", " ") }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for row in f.scores %}<tr>{% for col in f.score_columns %}<td class="mono">{{ (row[col] or "")[:19] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
-      </table>
-    </div>
-  </details>
-  {% endif %}
+  <p class="plant-legend">Records per {{ c.step }} · UTC</p>
 </section>
 {% endfor %}
 <p class="text-muted">Record text is not shown here. A run sends it sealed to the box.</p>

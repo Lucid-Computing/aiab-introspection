@@ -510,11 +510,8 @@ def test_plant_export_is_sent_as_written_with_a_batch_per_file(tmp_path):
 
     first, resumed = plantlogs.timeline(plant.path(settings), s1.records)
     assert (first["run"], first["batch"], resumed["batch"]) == ("s/1-first", 0, 2)
-    lines = {line["name"]: line for line in resumed["lines"]}
-    assert list(lines) == list(plantlogs.LINES)
-    assert lines["Jobs running"]["count"] == 1 and lines["Model calls"]["count"] == 1
-    assert len(lines["Jobs running"]["points"].split()) == plantlogs.CHART_BINS
-    assert {line["name"]: line["count"] for line in first["lines"]}["Tool calls"] == 1
+    assert len(resumed["points"].split()) == plantlogs.CHART_BINS
+    assert first["kinds"]["tool_call"] == 1
 
 
 def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):
@@ -531,7 +528,7 @@ def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):
     page = client.get("/logs?logs=plant&session=s1").text
     detail = page.split('class="logs-detail"')[1]
     assert "s/1-first · 2026-01-01 10:00:00 to 2026-01-01 10:10:00 UTC" in detail
-    assert detail.count('class="plant-run"') == 2 and "Slurm jobs" in detail
+    assert detail.count('class="plant-run"') == 2 and "plant-line" in detail
     assert "secret" not in page
     page = client.get("/runs?logs=plant").text
     assert 'name="logs" value="plant"' in page and "secret" not in page
