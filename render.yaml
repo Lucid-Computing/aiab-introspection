@@ -57,3 +57,9 @@ services:
         sync: false
       - key: AIAB_GITHUB_EXPORT_KEY  # optional, for the Logs screen: opens the committed GitHub export bundle (github-export-bundle in 1Password); GitHub Logs
         sync: false
+      - key: AIAB_PROXY_USERS   # optional, for the Proxy key page: verified WorkOS emails that may get a logging-proxy key, comma-separated
+        sync: false
+      - key: AIAB_SIGNUP_URL    # optional, for the Proxy key page: the logging proxy whose /_signup hands out keys (staging's address; no default)
+        sync: false
+      - key: AIAB_SIGNUP_CODE   # optional, for the Proxy key page: that proxy's SIGNUP_CODE (logging-proxy-staging item in 1Password)
+        sync: false
