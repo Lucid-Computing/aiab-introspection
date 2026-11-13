@@ -11,18 +11,14 @@ import { BLOCK_META, type BlockKind } from "./nodeMeta";
 /** dataTransfer type for a block kind dragged from the rail onto the diagram. */
 export const BLOCK_DRAG = "application/x-aiab-block";
 
-/** The kinds a person adds by hand, in the order a plan usually runs them. */
-export const OFFERED: BlockKind[] = [
-  "input_logs",
-  "filter_logs",
-  "and",
-  "or",
-  "query",
-  "classifier",
-  "run_llm",
-  "run_python",
-  "final_report",
-];
+/** The kinds shown at the top of the rail, in the order a plan usually runs them. */
+export const MAIN: BlockKind[] = ["input_logs", "filter_logs", "and", "or", "final_report"];
+
+/** The kinds kept under the collapsed "Deprecated" section at the bottom of the rail. */
+export const DEPRECATED: BlockKind[] = ["query", "classifier", "run_llm", "run_python"];
+
+/** Every kind a person adds by hand: the diagram accepts a drop of any of these. */
+export const OFFERED: BlockKind[] = [...MAIN, ...DEPRECATED];
 
 /** Add a block of `type` centred on `at` (flow coordinates), moved down until it overlaps no other block. */
 export function placeBlock(
@@ -63,28 +59,34 @@ export default function NewBlock({
     placeBlock(plan, layout, dispatch, type, c);
   };
 
+  const item = (t: BlockKind) => {
+    const blocked = cannotAdd(plan, t);
+    return (
+      <button
+        key={t}
+        className="newblock-item"
+        title={blocked ?? "Click to add, or drag onto the diagram"}
+        aria-label={`Add ${BLOCK_META[t].label}`}
+        aria-disabled={blocked !== null}
+        draggable={blocked === null}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(BLOCK_DRAG, t);
+          e.dataTransfer.effectAllowed = "copy";
+        }}
+        onClick={(e) => blocked === null && addAtCentre(t, e.currentTarget)}
+      >
+        <span className={`sym sym--${t}`} /> {BLOCK_META[t].label}
+      </button>
+    );
+  };
+
   return (
     <div className="newblock" role="toolbar" aria-label="Add a block">
-      {OFFERED.map((t) => {
-        const blocked = cannotAdd(plan, t);
-        return (
-          <button
-            key={t}
-            className="newblock-item"
-            title={blocked ?? "Click to add, or drag onto the diagram"}
-            aria-label={`Add ${BLOCK_META[t].label}`}
-            aria-disabled={blocked !== null}
-            draggable={blocked === null}
-            onDragStart={(e) => {
-              e.dataTransfer.setData(BLOCK_DRAG, t);
-              e.dataTransfer.effectAllowed = "copy";
-            }}
-            onClick={(e) => blocked === null && addAtCentre(t, e.currentTarget)}
-          >
-            <span className={`sym sym--${t}`} /> {BLOCK_META[t].label}
-          </button>
-        );
-      })}
+      {MAIN.map(item)}
+      <details className="newblock-more">
+        <summary>Deprecated</summary>
+        <div className="newblock-more-items">{DEPRECATED.map(item)}</div>
+      </details>
     </div>
   );
 }
