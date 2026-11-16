@@ -1,8 +1,9 @@
 """Plant Logs: the RSI plant's exports, read from a folder (MAC-467).
 
-The plant will later answer HTTP GETs (a pull API). Until then this module stands in for
-it, reading the plant's export files from the folder AIAB_PLANT_EXPORT names, on a laptop
-or on the Render disk. The exports are confidential and never go into git.
+The folder is kept up to date from the plant's hub when AIAB_PLANT_HUB_URL and
+AIAB_PLANT_HUB_KEY are set (``planthub`` fetches the runs and writes this layout), and is
+otherwise an export someone put where AIAB_PLANT_EXPORT names, on a laptop or on the Render
+disk. The exports are confidential and never go into git.
 
 A run is any folder holding ``records/*.jsonl``; next to it may sit ``jobs.csv`` and
 ``network.csv``, and ``scores.csv`` in it or its parent. The functions mirror the API:
@@ -192,6 +193,14 @@ TABLES = (  # file, the name its session carries, the column that dates a row
     ("network.csv", "network", ("start_utc",)),
     ("scores.csv", "scores", ("model_saved_utc",)),
 )
+
+
+def table_files(paths: list[Path]) -> list[Path]:
+    """The jobs, network and scores files of the runs these transcripts belong to: what
+    else the index is made from, so it is made again when one of them changes."""
+    runs = {p.parent.parent for p in paths}
+    places = {d / name for run in runs for d in (run, run.parent) for name, _, _ in TABLES}
+    return sorted(p for p in places if p.is_file())
 
 
 def _tables(root: Path, paths: list[Path], batch: int) -> list[PlantRecord]:

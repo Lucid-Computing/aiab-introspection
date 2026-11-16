@@ -168,6 +168,7 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
    - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Both keys can be set: the Logs screen then offers both sources.
    - `AIAB_SLACK_EXPORT_KEY`: optional, only for the Logs screen; the key that opens the committed Slack export bundle (`slack-export-bundle` in 1Password). Slack Logs is then read from the bundle, opened at every start.
    - `AIAB_SLACK_EXPORT`: optional; a folder of the Slack export read in place instead of the bundle (a laptop setting).
+   - `AIAB_PLANT_HUB_URL` and `AIAB_PLANT_HUB_KEY`: optional, only for the Logs screen; the address of the RSI plant's hub (its read API) and a reader's token for it. Plant Logs is then fetched from the hub into `AIAB_LOGS_DIR/plant` at start and every five minutes, like a proxy's logs ([`server/planthub.py`](server/planthub.py)). `AIAB_PLANT_EXPORT` names a folder of plant exports to read in place instead, when no hub is set.
    - `AIAB_GITHUB_EXPORT_KEY`: optional, only for the Logs screen; the key that opens the committed GitHub export bundle (`github-export-bundle` in 1Password). `AIAB_GITHUB_EXPORT` names a folder to read in place instead.
 3. Apply. Render builds the image and starts it; the first start clones the repository onto the disk at `/data/repo` (and adds the local accounts from `UI_BOOTSTRAP_ACCOUNTS`, if set).
 4. Open the service URL, log in, and submit each party's public key on a Sign screen, as locally.
