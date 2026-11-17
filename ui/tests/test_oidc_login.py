@@ -148,10 +148,13 @@ def start(client, okta, next_path="/a/bio/plan"):
     return q
 
 
-def test_login_page_offers_the_provider_and_the_password_form(okta, client):
+def test_login_page_offers_the_provider_and_links_the_password_form(okta, client):
     html = client.get("/login?next=/runs").text
-    assert 'href="/login/start?next=/runs"' in html and 'name="password"' in html
-    assert "Sign in with WorkOS" in html
+    assert 'href="/login/start?next=/runs"' in html and "Sign in with WorkOS" in html
+    assert 'name="password"' not in html  # local accounts have their own screen
+    assert 'href="/login/local?next=/runs"' in html
+    local = client.get("/login/local?next=/runs").text
+    assert 'name="password"' in local and 'href="/login?next=/runs"' in local
 
 
 def test_the_whole_flow_issues_the_ui_cookie_with_the_party_from_the_group(okta, client):
@@ -272,6 +275,7 @@ def test_id_token_for_another_client_issuer_nonce_or_expired_is_refused(okta, cl
 def test_local_accounts_work_next_to_okta(okta, client):
     bad = client.post("/login", data={"username": "demo", "password": "whatever-1234"})
     assert bad.status_code == 200 and web.COOKIE not in bad.cookies
+    assert 'name="password"' in bad.text  # the error stays on the local-account screen
     good = client.post("/login", data={"username": "demo", "password": "demo-pass-1234"})
     assert good.status_code == 303
     assert web.signer.read(good.cookies[web.COOKIE])["party"] == "auditor"
@@ -335,6 +339,7 @@ def test_without_okta_the_local_accounts_still_work(tmp_path, monkeypatch, clien
     assert client.get("/login/start").status_code == 303  # back to /login with an error
     bad = client.post("/login", data={"username": "caleb", "password": "wrong-pass-1"})
     assert bad.status_code == 200 and web.COOKIE not in bad.cookies
+    assert 'name="password"' in bad.text  # the error stays on the local-account screen
     good = client.post("/login", data={"username": "caleb", "password": "auditor-pass-1"})
     assert good.status_code == 303
     assert web.signer.read(good.cookies[web.COOKIE])["party"] == "auditor"
