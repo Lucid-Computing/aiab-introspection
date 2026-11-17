@@ -6,7 +6,7 @@ from conftest import ANSWER, API_KEY, LIVE, SECRET, ProxyDir, entry, lines
 
 from logserver import calls, config
 from logserver import store as store_module
-from logserver.config import Settings
+from logserver.config import Settings, Target
 from logserver.store import Store, StoreError
 
 
@@ -270,7 +270,7 @@ def test_no_segments_yet(tmp_path):
     proxy = ProxyDir(tmp_path / "fresh")
     proxy.append(LIVE)
     store = Store(
-        Settings(proxy_dir=proxy.root, api_key=API_KEY, box_host="b", box_repo="r", sync_seconds=1)
+        Settings(proxy_dir=proxy.root, boxes=(Target("dev", API_KEY, "b", "r"),), sync_seconds=1)
     )
     assert store.refresh() == {"new": 0, "segments": 0, "live": 1, "calls": 1}
     assert store.status["problems"] == []
@@ -280,7 +280,7 @@ def test_a_new_empty_live_file_with_no_segments_drops_the_old_calls(tmp_path):
     proxy = ProxyDir(tmp_path / "fresh")
     proxy.append(LIVE)
     store = Store(
-        Settings(proxy_dir=proxy.root, api_key=API_KEY, box_host="b", box_repo="r", sync_seconds=1)
+        Settings(proxy_dir=proxy.root, boxes=(Target("dev", API_KEY, "b", "r"),), sync_seconds=1)
     )
     store.refresh()
     held = proxy.live.with_name("held")  # renamed, not deleted: its inode is not reused
@@ -388,3 +388,38 @@ def test_settings_stop_at_a_missing_key():
     assert config.load({**env, "API_KEY": "a", "PROXY_DIR": "/elsewhere"}).proxy_dir.name == (
         "elsewhere"
     )
+
+
+def test_one_box_from_the_plain_names():
+    loaded = config.load({"API_KEY": "s3cret", "BOX_HOST": "h", "BOX_REPO": "r"})
+    assert [(b.name, b.api_key, b.box_host, b.box_repo) for b in loaded.boxes] == [
+        ("default", "s3cret", "h", "r")
+    ]
+    assert "s3cret" not in repr(loaded)  # a key is never printed
+
+
+def test_several_boxes_each_with_its_own_key():
+    env = {
+        "BOXES": "dev, Prod",
+        "DEV_API_KEY": "d",
+        "DEV_BOX_HOST": "dev.example",
+        "DEV_BOX_REPO": "org/dev",
+        "PROD_API_KEY": "p",
+        "PROD_BOX_HOST": "prod.example",
+        "PROD_BOX_REPO": "org/prod",
+    }
+    loaded = config.load(env)
+    assert [(b.name, b.api_key, b.box_host) for b in loaded.boxes] == [
+        ("dev", "d", "dev.example"),
+        ("prod", "p", "prod.example"),
+    ]
+    with pytest.raises(config.ConfigError, match="PROD_BOX_REPO"):
+        config.load({k: v for k, v in env.items() if k != "PROD_BOX_REPO"})
+    with pytest.raises(config.ConfigError, match="share an API key"):
+        config.load({**env, "PROD_API_KEY": "d"})
+    with pytest.raises(config.ConfigError, match="twice"):
+        config.load({**env, "BOXES": "dev,dev"})
+    with pytest.raises(config.ConfigError, match="not a name"):
+        config.load({**env, "BOXES": "dev,pr-od"})
+    with pytest.raises(config.ConfigError, match="not both"):
+        config.load({**env, "API_KEY": "a"})

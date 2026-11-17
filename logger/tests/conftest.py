@@ -15,10 +15,11 @@ from fastapi.testclient import TestClient
 
 from logserver.app import create_app
 from logserver.box import Box
-from logserver.config import Settings
+from logserver.config import Settings, Target
 from logserver.store import Store
 
-API_KEY = "ui-key"
+API_KEY = "ui-key"  # the dev UI's
+PROD_KEY = "prod-ui-key"
 SECRET = "the launch code is 0451"  # what was said; must never leave unsealed
 ANSWER = "I will not repeat the launch code"
 
@@ -152,15 +153,21 @@ def proxy(tmp_path):
 def settings(proxy):
     return Settings(
         proxy_dir=proxy.root,
-        api_key=API_KEY,
-        box_host="box.example",
-        box_repo="org/config",
+        boxes=(
+            Target("dev", API_KEY, "box.example", "org/config"),
+            Target("prod", PROD_KEY, "prod.example", "org/prod-config"),
+        ),
         sync_seconds=300,
     )
 
 
 @pytest.fixture
 def fakebox():
+    return FakeBox()
+
+
+@pytest.fixture
+def prodbox():
     return FakeBox()
 
 
@@ -172,7 +179,11 @@ def store(settings):
 
 
 @pytest.fixture
-def client(settings, store, fakebox):
-    box = Box(settings.box_host, settings.box_repo, connect=fakebox.connect)
-    app = create_app(settings, store=store, box=box, background=False)
+def client(settings, store, fakebox, prodbox):
+    """Calls as the dev UI. ``PROD_KEY`` in the header calls as the production UI."""
+    fakes = {"dev": fakebox, "prod": prodbox}
+    boxes = {
+        t.name: Box(t.box_host, t.box_repo, connect=fakes[t.name].connect) for t in settings.boxes
+    }
+    app = create_app(settings, store=store, boxes=boxes, background=False)
     return TestClient(app, headers={"x-log-key": API_KEY})

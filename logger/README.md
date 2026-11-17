@@ -28,13 +28,14 @@ read (gone, corrupt, truncated) is skipped and named in `/v1/status`; the rest i
 
 ## The API
 
-Every route but `/healthz` takes this server's key in the `x-log-key` header.
+Every route but `/healthz` takes the caller's key in the `x-log-key` header. Each box has
+its own key, and the key decides which box an export is sealed to.
 
 | Route | What it returns |
 |---|---|
 | `GET /v1/sessions` | `{"whos": [...], "sessions": [...]}`, newest session first. `?who=alice` keeps one person's. |
 | `POST /v1/export` | Body `{"sessions": ["<id>", ...]}`. The records of those sessions, sealed. |
-| `GET /v1/status` | The last read of the proxy's files (`at`, `error`, `result`), the files it could not read (`problems`), the number of calls held, the box sealed to. |
+| `GET /v1/status` | The last read of the proxy's files (`at`, `error`, `result`), the files it could not read (`problems`), the number of calls held, the box this key seals to. |
 | `POST /v1/sync` | Reads the proxy's files again now (it also happens every `SYNC_SECONDS`). Returns `{"new", "segments", "live", "calls"}`: files parsed this time, sealed and pending files listed, lines in the live file, calls held. |
 | `GET /healthz` | `{"ok": true}`. No key. |
 
@@ -81,9 +82,10 @@ its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot b
 
 ## What it guarantees, and what it does not
 
-- **The caller cannot choose the key.** The box is this server's own setting (`BOX_HOST`,
-  `BOX_REPO`). A body that names a key or another box is refused. Otherwise a caller could
-  have the logs sealed to a key of its own.
+- **The caller cannot choose the key.** The boxes are this server's own setting, and each
+  has its own API key. A caller gets the box its key belongs to and no other, so a leaked
+  dev key cannot get logs sealed for the production box. A body that names a key or another
+  box is refused. Otherwise a caller could have the logs sealed to a key of its own.
 - **The key is the attested box's.** The Tinfoil SDK checks the chip's report against the
   config repo and pins the connection; `GET /aiab/pubkey` over it gives the key. The box
   makes a new key at every start, so the key is asked for at every export. Nothing sealed
@@ -102,12 +104,26 @@ The image holds no secret; everything comes from the environment.
 | Variable | Meaning |
 |---|---|
 | `PROXY_DIR` | The proxy's data directory (the one holding `requests.jsonl` and `segments/`), mounted read-only. Default `/proxy-data`. |
-| `API_KEY` | The key callers of this server send as `x-log-key`. Pick a long random one. |
+| `API_KEY` | The key the caller sends as `x-log-key`. Pick a long random one. |
 | `BOX_HOST` | The box to seal to, e.g. `aiab-dev.lucid-computing.containers.tinfoil.dev`. |
 | `BOX_REPO` | Its Tinfoil config repo, e.g. `Lucid-Computing/aiab-tinfoil-staging-config`. |
+| `BOXES` | Only for more than one box: their names, e.g. `dev,prod`. See below. |
 | `SYNC_SECONDS` | How often to read the proxy's files again. Default `300`. |
 
-A missing `API_KEY`, `BOX_HOST` or `BOX_REPO` stops the server at start. The image runs as
+A missing `API_KEY`, `BOX_HOST` or `BOX_REPO` stops the server at start.
+
+**More than one box.** Set `BOXES` to a list of names and give each name its own three
+variables, the name in capitals as the prefix. `API_KEY`, `BOX_HOST` and `BOX_REPO` are then
+not used, and setting `API_KEY` as well stops the server.
+
+```
+BOXES=dev,prod
+DEV_API_KEY=…    DEV_BOX_HOST=aiab-dev.lucid-computing.containers.tinfoil.dev    DEV_BOX_REPO=Lucid-Computing/aiab-tinfoil-staging-config
+PROD_API_KEY=…   PROD_BOX_HOST=…                                                 PROD_BOX_REPO=…
+```
+
+The dev UI is given `DEV_API_KEY` and the production UI `PROD_API_KEY`. Two boxes may not
+share a key. All callers see the same sessions; only the box an export is sealed to differs. The image runs as
 uid 10001, which must be able to read the proxy's files.
 
 The container can run with a read-only root if it has a tmpfs at `/tmp`. Checking the box's

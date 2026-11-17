@@ -1,9 +1,10 @@
 import json
 import os
 
+import pytest
 from aiab.baked import records as box_records
 from aiab.baked.sealing import SCHEME
-from conftest import ANSWER, SECRET
+from conftest import ANSWER, PROD_KEY, SECRET
 
 from logserver import calls
 
@@ -147,3 +148,27 @@ def test_an_unreadable_proxy_directory_is_a_503_and_keeps_the_index(client, sett
     status = client.get("/v1/status").json()
     assert status["error"] and status["calls"] == 3
     assert len(client.get("/v1/sessions").json()["sessions"]) == 2
+
+
+def test_each_key_gets_its_own_box_and_no_other(client, fakebox, prodbox):
+    """Two UIs, two boxes: the key decides the box, and only that box opens the export."""
+    dev = client.post("/v1/export", json={"sessions": ["s-alice"]}).json()
+    prod = client.post(
+        "/v1/export", json={"sessions": ["s-alice"]}, headers={"x-log-key": PROD_KEY}
+    ).json()
+    assert dev["box"] == "box.example" and dev["boot_id"] == fakebox.boot_id
+    assert prod["box"] == "prod.example" and prod["boot_id"] == prodbox.boot_id
+    assert prodbox.decryptor.unseal(prod["records"], prodbox.boot_id)[0]["content"] == SECRET
+    with pytest.raises(Exception):  # noqa: B017, PT011 - the dev box cannot open it
+        fakebox.decryptor.unseal(prod["records"], prodbox.boot_id)
+    status = client.get("/v1/status", headers={"x-log-key": PROD_KEY}).json()
+    assert status["box"] == "prod.example"
+
+
+def test_one_box_down_does_not_stop_the_other(client, prodbox):
+    prodbox.down = True
+    assert client.post("/v1/export", json={"sessions": ["s-alice"]}).status_code == 200
+    response = client.post(
+        "/v1/export", json={"sessions": ["s-alice"]}, headers={"x-log-key": PROD_KEY}
+    )
+    assert response.status_code == 502
