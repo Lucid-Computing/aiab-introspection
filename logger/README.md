@@ -100,7 +100,8 @@ its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot b
   the records came from. Moving that key to this server is a later step and changes no format.
 - **This server reads plaintext**, from the proxy's files, and holds the parts a run needs in
   memory. It keeps no copy on disk and writes nothing to the proxy's volume. It must run where
-  the proxy runs.
+  the proxy runs. With the RSI plant as the source it does keep a copy, of the hub's files,
+  under `DATA_DIR`, and can run anywhere that reaches the hub.
 
 ## Running it
 
@@ -115,7 +116,33 @@ The image holds no secret; everything comes from the environment.
 | `BOXES` | Only for more than one box: their names, e.g. `dev,prod`. See below. |
 | `SYNC_SECONDS` | How often to read the proxy's files again. Default `300`. |
 
+| `PLANT_HUB_URL` | Only for the RSI plant: the address of the plant hub's read API. See below. |
+| `PLANT_HUB_KEY` | Only for the RSI plant: a reader's token for that hub. |
+| `DATA_DIR` | Only for the RSI plant: where the hub's files are kept between starts. Default `/data`. |
+
 A missing `API_KEY`, `BOX_HOST` or `BOX_REPO` stops the server at start.
+
+**The RSI plant as the source.** Set `PLANT_HUB_URL` and `PLANT_HUB_KEY` together and this
+server reads the plant's hub instead of a proxy's directory (`logserver/plant.py`); `PROXY_DIR`
+is then not used. It is one source per server, so plant logs are a second instance of the
+same image, with its own `API_KEY`. The API is the same. A run gives its agents' transcripts
+as sessions, and three more of its own: `<run>-jobs` (its Slurm jobs), `<run>-network` (every
+connection on the lab's network) and `<run>-scores` (the models the plant scored), sent by
+`plant-jobs`, `plant-network` and `plant-scores`. A plant session's metadata also names its
+`run`. The hub's files are copied under `DATA_DIR`, which needs a volume uid 10001 can write:
+a restart then fetches only what is new. A run whose records hold something shaped like a
+provider key is held back whole and named in `/v1/status`; so is a run the hub could not
+send. `/v1/sync` answers `503` when the hub does not answer or refuses the token.
+
+```bash
+docker run -d -p 8081:8080 --read-only --tmpfs /tmp \
+  -v plant-logger-data:/data \
+  -e PLANT_HUB_URL=https://… -e PLANT_HUB_KEY=… \
+  -e API_KEY=… \
+  -e BOX_HOST=aiab-dev.lucid-computing.containers.tinfoil.dev \
+  -e BOX_REPO=Lucid-Computing/aiab-tinfoil-staging-config \
+  ghcr.io/lucid-computing/aiab-logger:dev
+```
 
 **More than one box.** Set `BOXES` to a list of names and give each name its own three
 variables, the name in capitals as the prefix. `API_KEY`, `BOX_HOST` and `BOX_REPO` are then

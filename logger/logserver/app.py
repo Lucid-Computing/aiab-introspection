@@ -10,6 +10,8 @@ which box an export is sealed to (``logserver.config``). Also ``GET /v1/status``
 read of the proxy's files, and any file that could not be read), ``POST /v1/sync`` (read
 them again now) and ``GET /healthz`` (no key). Every route answers from the last read; none
 reads a file.
+With ``PLANT_HUB_URL`` and ``PLANT_HUB_KEY`` set, the source is the RSI plant's hub instead
+of a proxy's directory (``logserver.plant``); the routes are the same.
 The export is not signed here: the agreement UI signs the sealed records as it does today.
 """
 
@@ -25,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from logserver import calls, config
 from logserver.box import Box, BoxError
 from logserver.config import Settings, Target
+from logserver.plant import PlantStore
 from logserver.store import Store, StoreError
 
 
@@ -38,11 +41,12 @@ class ExportRequest(BaseModel):
 
 def create_app(
     settings: Settings,
-    store: Store | None = None,
+    store: Store | PlantStore | None = None,
     boxes: dict[str, Box] | None = None,
     background: bool = True,
 ) -> FastAPI:
-    store = store or Store(settings)
+    # One source per server: the plant's hub when it is set, otherwise the proxy's directory.
+    store = store or (PlantStore(settings) if settings.hub_url else Store(settings))
     boxes = boxes or {t.name: Box(t.box_host, t.box_repo) for t in settings.boxes}
 
     @asynccontextmanager

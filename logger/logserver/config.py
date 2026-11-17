@@ -30,7 +30,12 @@ class Target:
 class Settings:
     proxy_dir: Path  # the logging proxy's data directory, mounted read-only
     boxes: tuple[Target, ...]  # at least one; no two share a key
-    sync_seconds: int  # how often the proxy's files are read again
+    sync_seconds: int  # how often the proxy's files, or the hub, are read again
+    # The RSI plant's hub, read instead of a proxy's directory when both are set
+    # (logserver.plant): its read API's address, and a reader's token for it.
+    hub_url: str = ""
+    hub_key: str = field(default="", repr=False)
+    data_dir: Path = Path("/data")  # where the hub's files are kept between starts
 
 
 def load(env: dict[str, str] | None = None) -> Settings:
@@ -42,10 +47,19 @@ def load(env: dict[str, str] | None = None) -> Settings:
             raise ConfigError(f"{name} is not set")
         return value
 
+    hub_url = env.get("PLANT_HUB_URL", "").strip().rstrip("/")
+    hub_key = env.get("PLANT_HUB_KEY", "").strip()
+    if bool(hub_url) != bool(hub_key):
+        raise ConfigError("set PLANT_HUB_URL and PLANT_HUB_KEY together, or neither")
+    if hub_url and not hub_url.startswith(("https://", "http://")):
+        raise ConfigError("PLANT_HUB_URL is not an http(s) address")
     return Settings(
         proxy_dir=Path(env.get("PROXY_DIR", "").strip() or "/proxy-data"),
         boxes=_boxes(env, need),
         sync_seconds=int(env.get("SYNC_SECONDS", "").strip() or 300),
+        hub_url=hub_url,
+        hub_key=hub_key,
+        data_dir=Path(env.get("DATA_DIR", "").strip() or "/data"),
     )
 
 
