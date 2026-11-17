@@ -83,7 +83,9 @@ start has finished, `/v1/sessions` is empty and `/v1/status` says `"at": null`.
 
 Errors: `401` without the key, `404` for a session id it does not hold, `422` for a body
 with any other field or sessions that hold no text, `502` when the box does not answer or
-its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot be read.
+its attestation fails, `503` from `/v1/sync` when a source cannot be read, and from
+`/v1/export` when a chosen call's text is no longer where the last read found it (the
+proxy's log started again, say): sync, then ask again.
 
 ## What it guarantees, and what it does not
 
@@ -98,10 +100,11 @@ its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot b
 - **The export is not signed here.** The agreement UI signs the sealed records, as it does
   today, with the logger key the box trusts. Sealing hides the text; it does not prove where
   the records came from. Moving that key to this server is a later step and changes no format.
-- **This server reads plaintext**, from the proxy's files, and holds the parts a run needs in
-  memory. It keeps no copy on disk and writes nothing to the proxy's volume. It must run where
-  the proxy runs. With the RSI plant as the source it does keep a copy, of the hub's files,
-  under `DATA_DIR`, and can run anywhere that reaches the hub.
+- **This server reads plaintext**, from the proxy's files. It holds none of the text in
+  memory: the index keeps each call's metadata and where its line is, and an export reads
+  the chosen calls' text from the files again. It keeps no copy of the proxy's log on disk
+  and writes nothing to the proxy's volume, so it must run where the proxy runs. Of the RSI
+  plant it does keep a copy, the hub's files, under `DATA_DIR`.
 
 ## Running it
 
@@ -109,34 +112,41 @@ The image holds no secret; everything comes from the environment.
 
 | Variable | Meaning |
 |---|---|
-| `PROXY_DIR` | The proxy's data directory (the one holding `requests.jsonl` and `segments/`), mounted read-only. Default `/proxy-data`. |
+| `PROXY_DIR` | The proxy's data directory (the one holding `requests.jsonl` and `segments/`), mounted read-only. Default `/proxy-data`. With the plant's hub set, the proxy is read only if this is set. |
 | `API_KEY` | The key the caller sends as `x-log-key`. Pick a long random one. |
 | `BOX_HOST` | The box to seal to, e.g. `aiab-dev.lucid-computing.containers.tinfoil.dev`. |
 | `BOX_REPO` | Its Tinfoil config repo, e.g. `Lucid-Computing/aiab-tinfoil-staging-config`. |
 | `BOXES` | Only for more than one box: their names, e.g. `dev,prod`. See below. |
 | `SYNC_SECONDS` | How often to read the proxy's files again. Default `300`. |
 
+| `SOURCES` | Only to keep the box to some sources, e.g. `proxy`. With `BOXES`, `<NAME>_SOURCES`. See below. |
 | `PLANT_HUB_URL` | Only for the RSI plant: the address of the plant hub's read API. See below. |
 | `PLANT_HUB_KEY` | Only for the RSI plant: a reader's token for that hub. |
 | `DATA_DIR` | Only for the RSI plant: where the hub's files are kept between starts. Default `/data`. |
 
 A missing `API_KEY`, `BOX_HOST` or `BOX_REPO` stops the server at start.
 
-**The RSI plant as the source.** Set `PLANT_HUB_URL` and `PLANT_HUB_KEY` together and this
-server reads the plant's hub instead of a proxy's directory (`logserver/plant.py`); `PROXY_DIR`
-is then not used. It is one source per server, so plant logs are a second instance of the
-same image, with its own `API_KEY`. The API is the same. A run gives its agents' transcripts
-as sessions, and three more of its own: `<run>-jobs` (its Slurm jobs), `<run>-network` (every
-connection on the lab's network) and `<run>-scores` (the models the plant scored), sent by
-`plant-jobs`, `plant-network` and `plant-scores`. A plant session's metadata also names its
-`run`. The hub's files are copied under `DATA_DIR`, which needs a volume uid 10001 can write:
-a restart then fetches only what is new. A run whose records hold something shaped like a
-provider key is held back whole and named in `/v1/status`; so is a run the hub could not
-send. `/v1/sync` answers `503` when the hub does not answer or refuses the token.
+**The RSI plant as a source.** Set `PLANT_HUB_URL` and `PLANT_HUB_KEY` together and this
+server also reads the plant's hub (`logserver/plant.py`). With `PROXY_DIR` set as well it
+reads both, and the UI sees the proxy's sessions and the plant's in one list. Without
+`PROXY_DIR` it reads the plant alone. The API is the same. A run gives its agents'
+transcripts as sessions, and three more of its own: `<run>-jobs` (its Slurm jobs),
+`<run>-network` (every connection on the lab's network) and `<run>-scores` (the models the
+plant scored), sent by `plant-jobs`, `plant-network` and `plant-scores`. A plant session's
+metadata also names its `run`. The hub's files are copied under `DATA_DIR`, which needs a
+volume uid 10001 can write: a restart then fetches only what is new. A run whose records hold
+something shaped like a provider key is held back whole and named in `/v1/status`; so is a
+run the hub could not send. `/v1/sync` answers `503` when a source cannot be read, after
+reading the others.
+
+**Which box sees which source.** A box sees every source this server reads, unless
+`<NAME>_SOURCES` (or `SOURCES`, for the one box) names fewer, e.g. `PROD_SOURCES=proxy`. A
+caller neither lists nor exports a session of a source its box is not given.
 
 ```bash
-docker run -d -p 8081:8080 --read-only --tmpfs /tmp \
-  -v plant-logger-data:/data \
+docker run -d -p 8080:8080 --read-only --tmpfs /tmp \
+  -v proxy-data:/proxy-data:ro -e PROXY_DIR=/proxy-data \
+  -v logger-data:/data \
   -e PLANT_HUB_URL=https://… -e PLANT_HUB_KEY=… \
   -e API_KEY=… \
   -e BOX_HOST=aiab-dev.lucid-computing.containers.tinfoil.dev \

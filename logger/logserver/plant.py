@@ -27,6 +27,11 @@ The plant overwrote the run's keys before sending, and a provider key is never i
 run whose records hold something shaped like one anyway is held back whole, and the status
 says which.
 
+The index holds each call light, as the proxy's does: its metadata, the kind and size of
+each part, and where it is in the copy on disk. For a model call that is the stretch of the
+wall's record from its request to the end of its reply; for a table's record, the table and
+its place in it. ``with_text`` reads them again when a run exports them.
+
 The fetch and the tables follow the agreement UI's ``server/planthub.py`` (pull request 73).
 """
 
@@ -100,6 +105,24 @@ class PlantStore:
         """Every call and table record of every run, oldest first. Never asks the hub: this
         is the index the last refresh built."""
         return self._calls
+
+    def with_text(self, wanted: list[Call]) -> list[Call]:
+        """The same calls with their text, read again from the copy of their run's files."""
+        by_run: dict[str, list[Call]] = {}
+        for call in wanted:
+            by_run.setdefault(call.run, []).append(call)
+        found: dict[str, Call] = {}
+        try:
+            for run, asked in by_run.items():
+                found.update(_texts(run, self.dir / run, asked))
+        except OSError as error:
+            raise StoreError(f"a plant call's text cannot be read again: {error}") from None
+        missing = [c.id for c in wanted if c.id not in found]
+        if missing:
+            raise StoreError(
+                f"{len(missing)} plant records are not where they were; sync and retry"
+            )
+        return [replace(c, parts=found[c.id].parts, sizes=found[c.id].sizes) for c in wanted]
 
     def refresh(self) -> dict:
         """Fetch what changed on the hub and rebuild the index.
@@ -289,50 +312,106 @@ def _write(path: Path, data: bytes) -> None:
 # ---- a run's sessions, made from its files ---------------------------------------------
 
 
-def _run_calls(run: str, raw: Path) -> tuple[Call, ...] | None:
-    """One run's transcript calls and table records. None if a provider key is in them."""
+TABLES = {  # a table's name, and the columns that date a row
+    "jobs": ("started_utc", "submitted_utc"),
+    "network": ("start_utc",),
+    "scores": ("model_saved_utc",),
+}
+
+
+def _report(raw: Path) -> dict:
     try:
         report = json.loads((raw / "report.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         report = {}
-    if not isinstance(report, dict):
-        report = {}
-    found = _transcript(run, raw, report)
-    found += _table(run, "jobs", _jobs(report), ("started_utc", "submitted_utc"), found)
-    found += _table(run, "network", _network(raw), ("start_utc",), found)
-    found += _table(run, "scores", _scores(raw), ("model_saved_utc",), found)
-    for call in found:
-        if any(PROVIDER_KEY.search(content) for _, content in call.parts):
+    return report if isinstance(report, dict) else {}
+
+
+def _rows(label: str, raw: Path, report: dict) -> tuple[list[str], list[list]]:
+    if label == "jobs":
+        return _jobs(report)
+    return _network(raw) if label == "network" else _scores(raw)
+
+
+def _run_calls(run: str, raw: Path) -> tuple[Call, ...] | None:
+    """One run's transcript calls and table records, each light. None if a provider key is
+    in them. A call's text is looked at once, here, and not kept."""
+    report = _report(raw)
+    found: list[Call] = []
+
+    def keep(made) -> bool:
+        for call in made:
+            if any(PROVIDER_KEY.search(content) for _, content in call.parts):
+                return False
+            found.append(call.light())
+        return True
+
+    if not keep(_transcript(run, raw, report)):
+        return None
+    for label in TABLES:  # each after what came before it: a row with no time takes the last
+        if not keep(_table(run, label, _rows(label, raw, report), found)):
             return None
     return tuple(found)
 
 
-def _jsonl(path: Path) -> Iterator[dict]:
+def _texts(run: str, raw: Path, wanted: list[Call]) -> dict[str, Call]:
+    """The wanted calls of one run with their text, by id, read again from the copy."""
+    report = _report(raw)
+    found: dict[str, Call] = {}
+    asked = [c for c in wanted if c.at[0] == "record"]
+    if asked:
+        seqs = {c.at[3] for c in asked}
+        span = (min(c.at[1] for c in asked), max(c.at[2] for c in asked))
+        for call in _transcript(run, raw, report, seqs, span):
+            found[call.id] = call
+    for label in {c.at[1] for c in wanted if c.at[0] == "table"}:
+        for call in _table(run, label, _rows(label, raw, report), []):
+            found[call.id] = call
+    return found
+
+
+def _jsonl(path: Path, span: tuple[int, int] | None = None) -> Iterator[tuple[int, int, dict]]:
+    """(where the line starts, where it ends, the line) for each line that is a JSON
+    object; with a span, only the lines that start inside it."""
     if not path.is_file():
         return
     with path.open("rb") as f:
+        start = span[0] if span else 0
+        f.seek(start)
         for line in f:
+            end = start + len(line)
+            if span and start >= span[1]:
+                return
             if line.strip():
                 try:
                     row = json.loads(line)
                 except ValueError:
-                    continue  # a line still being written
+                    row = None  # a line still being written
                 if isinstance(row, dict):
-                    yield row
+                    yield start, end, row
+            start = end
 
 
-def _wall_calls(record: Path) -> Iterator[dict]:
-    """Each Anthropic Messages call in the wall's record, in order. A call is held only
-    until it ends: a long session's record is gigabytes."""
+def _wall_calls(
+    record: Path, seqs: set[int] | None = None, span: tuple[int, int] | None = None
+) -> Iterator[dict]:
+    """Each Anthropic Messages call in the wall's record, in order, with where it starts
+    (``from``, its request's line) and ends (``to``, after its reply's last line). A call is
+    held only until it ends: a long session's record is gigabytes. With ``seqs``, only
+    those calls, looked for inside ``span``."""
     going: dict[int, dict] = {}
-    for r in _jsonl(record):
+    end = 0
+    for start, end, r in _jsonl(record, span):  # noqa: B007 - end is used after the loop
         kind = r.get("kind")
         if kind == "request":
             path = r.get("path") or ""
             if not path.startswith("/v1/messages") or "count_tokens" in path:
                 continue
+            if seqs is not None and r.get("seq") not in seqs:
+                continue
             headers = {k.lower(): v for k, v in (r.get("headers") or {}).items()}
             going[r["seq"]] = {
+                "from": start,
                 "seq": r["seq"],
                 "src": r.get("src"),
                 "started": r["t_ns"] / 1e9,
@@ -350,20 +429,27 @@ def _wall_calls(record: Path) -> Iterator[dict]:
                 call["chunks"].append(r.get("data") or "")
             elif kind == "response_end":
                 call["ended"] = r["t_ns"] / 1e9
-                yield going.pop(r["req_seq"])
-    yield from going.values()  # calls the wall never saw end: the lab stopped mid-reply
+                yield {**going.pop(r["req_seq"]), "to": end}
+    for call in going.values():  # calls the wall never saw end: the lab stopped mid-reply
+        yield {**call, "to": end}
 
 
-def _transcript(run: str, raw: Path, report: dict) -> list[Call]:
+def _transcript(
+    run: str,
+    raw: Path,
+    report: dict,
+    seqs: set[int] | None = None,
+    span: tuple[int, int] | None = None,
+) -> Iterator[Call]:
     """The run's model calls, each as the logging proxy would have logged it, read by the
-    proxy's rules. Who sent one is the gateway's name for the agent, from the hub's report."""
+    proxy's rules, with its text. Who sent one is the gateway's name for the agent, from the
+    hub's report. With ``seqs``, only those calls, looked for inside ``span``."""
     who = {
         c["request_id"]: c.get("gateway_identity")
         for c in (report.get("tap") or {}).get("calls") or []
         if isinstance(c, dict) and c.get("request_id")
     }
-    found = []
-    for call in _wall_calls(raw / RECORD):
+    for call in _wall_calls(raw / RECORD, seqs, span):
         sender = _id(who.get(call["request_id"]) or f"agent-{call['src']}")
         headers = {"x-claude-code-session-id": call["session"]} if call["session"] else {}
         try:
@@ -384,8 +470,8 @@ def _transcript(run: str, raw: Path, report: dict) -> list[Call]:
         # A call with no session of its own is its run's and its agent's: two plants can
         # name an agent alike, and the proxy's rule would join them by time.
         session = _id(parsed.session_id) if parsed.session_id else _id(f"{run}-{sender}")
-        found.append(replace(parsed, session_id=session, run=run))
-    return found
+        at = ("record", call["from"], call["to"], call["seq"])
+        yield replace(parsed, session_id=session, run=run, at=at)
 
 
 def _utc(t) -> str:
@@ -402,15 +488,12 @@ def _time(value) -> float:
 
 
 def _table(
-    run: str,
-    label: str,
-    table: tuple[list[str], list[list]],
-    clocks: tuple[str, ...],
-    before: list[Call],
+    run: str, label: str, table: tuple[list[str], list[list]], before: list[Call]
 ) -> list[Call]:
-    """A table as one session of records: one per row, or per group of network rows. A
-    row with no time of its own takes the one before it."""
+    """A table as one session of records, with their text: one per row, or per group of
+    network rows. A row with no time of its own takes the one before it."""
     header, rows = table
+    clocks = TABLES[label]
     size = NETWORK_ROWS_PER_RECORD if label == "network" else 1
     last = before[-1].time if before else 0.0
     found = []
@@ -435,8 +518,9 @@ def _table(
                 stop_reason=None,
                 size=0,
                 message_count=0,
-                parts=(("tool_result", content),),
                 run=run,
+                at=("table", label, n),
+                **calls.texts([("tool_result", content)]),
             )
         )
     return found
@@ -454,7 +538,7 @@ def _network(raw: Path) -> tuple[list[str], list[list]]:
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         name = {}
     rows = []
-    for c in _jsonl(raw / CONNECTIONS):
+    for _, _, c in _jsonl(raw / CONNECTIONS):
         if "ts" not in c or "id.orig_h" not in c:
             continue
         rows.append(

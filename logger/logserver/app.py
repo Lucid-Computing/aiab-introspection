@@ -10,8 +10,10 @@ which box an export is sealed to (``logserver.config``). Also ``GET /v1/status``
 read of the proxy's files, and any file that could not be read), ``POST /v1/sync`` (read
 them again now) and ``GET /healthz`` (no key). Every route answers from the last read; none
 reads a file.
-With ``PLANT_HUB_URL`` and ``PLANT_HUB_KEY`` set, the source is the RSI plant's hub instead
-of a proxy's directory (``logserver.plant``); the routes are the same.
+With ``PLANT_HUB_URL`` and ``PLANT_HUB_KEY`` set, the RSI plant's hub is a source too
+(``logserver.plant``), next to the proxy's directory or alone; the routes are the same, and a
+box can be kept to some of the sources (``<NAME>_SOURCES``).
+No text is held in memory: an export reads the chosen calls' text from the disk.
 The export is not signed here: the agreement UI signs the sealed records as it does today.
 """
 
@@ -28,6 +30,7 @@ from logserver import calls, config
 from logserver.box import Box, BoxError
 from logserver.config import Settings, Target
 from logserver.plant import PlantStore
+from logserver.sources import Sources
 from logserver.store import Store, StoreError
 
 
@@ -41,12 +44,11 @@ class ExportRequest(BaseModel):
 
 def create_app(
     settings: Settings,
-    store: Store | PlantStore | None = None,
+    store: Store | PlantStore | Sources | None = None,
     boxes: dict[str, Box] | None = None,
     background: bool = True,
 ) -> FastAPI:
-    # One source per server: the plant's hub when it is set, otherwise the proxy's directory.
-    store = store or (PlantStore(settings) if settings.hub_url else Store(settings))
+    store = store or _store(settings)
     boxes = boxes or {t.name: Box(t.box_host, t.box_repo) for t in settings.boxes}
 
     @asynccontextmanager
@@ -71,9 +73,18 @@ def create_app(
     def healthz():
         return {"ok": True}
 
+    def seen(target: Target) -> list:
+        """The calls this caller may see: those of the sources its box is given."""
+        return [c for c in store.calls() if c.source in target.sources]
+
     @app.get("/v1/status")
     def status(target: Target = Depends(key)):  # noqa: B008 - FastAPI's way to ask for it
-        return {**store.status, "calls": len(store.calls()), "box": target.box_host}
+        return {
+            **store.status,
+            "calls": len(seen(target)),
+            "box": target.box_host,
+            "sources": [s for s in settings.sources if s in target.sources],
+        }
 
     @app.post("/v1/sync", dependencies=[Depends(key)])
     def sync():
@@ -82,9 +93,9 @@ def create_app(
         except StoreError as error:
             raise HTTPException(503, str(error)) from None
 
-    @app.get("/v1/sessions", dependencies=[Depends(key)])
-    def sessions(who: str = ""):
-        found = calls.sessions(store.calls())
+    @app.get("/v1/sessions")
+    def sessions(who: str = "", target: Target = Depends(key)):  # noqa: B008
+        found = calls.sessions(seen(target))
         whos = sorted({s.who for s in found})
         if who:
             found = [s for s in found if s.who == who]
@@ -92,12 +103,17 @@ def create_app(
 
     @app.post("/v1/export")
     async def export(body: ExportRequest, target: Target = Depends(key)):  # noqa: B008
-        by_id = {s.id: s for s in calls.sessions(store.calls())}
+        by_id = {s.id: s for s in calls.sessions(seen(target))}
         unknown = [i for i in body.sessions if i not in by_id]
         if unknown:
             raise HTTPException(404, {"error": "unknown_sessions", "sessions": unknown})
         wanted = list(dict.fromkeys(body.sessions))
-        records = calls.box_records([c for i in wanted for c in by_id[i].calls], body.offset)
+        chosen = [c for i in wanted for c in by_id[i].calls]
+        try:  # the text is read from the disk only now, for these calls
+            chosen = await run_in_threadpool(store.with_text, chosen)
+        except StoreError as error:
+            raise HTTPException(503, str(error)) from None
+        records = calls.box_records(chosen, body.offset)
         if not records:
             raise HTTPException(422, "the chosen sessions hold no text to audit")
         try:
@@ -107,6 +123,13 @@ def create_app(
         return {**sealed, "sessions": wanted}
 
     return app
+
+
+def _store(settings: Settings) -> Store | PlantStore | Sources:
+    """The store for the sources this server reads: the one, or the two joined."""
+    made = {"proxy": Store, "plant": PlantStore}
+    stores = {name: made[name](settings) for name in settings.sources}
+    return next(iter(stores.values())) if len(stores) == 1 else Sources(stores)
 
 
 def main() -> FastAPI:

@@ -24,9 +24,9 @@ def reads(monkeypatch):
     seen = []
     original = store_module._read
 
-    def spy(f, compressed):
+    def spy(f, compressed, first):
         seen.append(os.path.basename(f.name))
-        return original(f, compressed)
+        return original(f, compressed, first)
 
     monkeypatch.setattr(store_module, "_read", spy)
     return seen
@@ -368,7 +368,10 @@ def test_calls_group_into_sessions_and_become_box_records(store):
         ("bob-1800000500", "bob", 1),  # no session header: who and a 30-minute gap
         ("s-alice", "alice", 2),
     ]
-    records = calls.box_records(list(found[1].calls))
+    assert all(c.parts == () for c in store.calls())  # the index holds no text
+    with pytest.raises(ValueError, match="without its text"):
+        calls.box_records(list(found[1].calls))
+    records = calls.box_records(store.with_text(list(found[1].calls)))
     assert [(r["offset"], r["kind"], r["content"]) for r in records] == [
         (0, "request", SECRET),
         (1, "response", ANSWER),
@@ -377,6 +380,56 @@ def test_calls_group_into_sessions_and_become_box_records(store):
     ]
     assert {r["agent_id"] for r in records} == {"alice"}
     assert records[0]["ts"] == "2027-01-15T08:00:00Z"
+
+
+def said(store) -> dict[str, str]:
+    """Each call's first part as an export would send it, read again from the files."""
+    return {c.id: c.parts[0][1] for c in store.with_text(list(store.calls()))}
+
+
+def test_text_is_read_again_from_sealed_pending_and_live_files(settings, proxy, parsed):
+    proxy.rotate()  # b1 becomes pending (seq 3)
+    proxy.append(batch("c", 2))
+    store = Store(settings)
+    store.refresh()
+    parsed.clear()
+    wanted = [c for c in store.calls() if c.id in ("a2", "b1", "c1")]
+    read = store.with_text(wanted)
+    assert [(c.id, c.parts[0][1]) for c in read] == [
+        ("a2", "and the second question"),
+        ("b1", "bob asks something"),
+        ("c1", "question 1"),
+    ]
+    assert sorted(parsed) == ["a2", "b1", "c1"]  # only the lines asked for, not their files
+    assert [c.sizes for c in read] == [c.sizes for c in wanted]
+
+
+def test_text_is_found_after_its_file_was_rotated_and_compressed(settings, proxy):
+    store = Store(settings)
+    store.refresh()  # b1 is in the live file
+    pending = proxy.rotate()
+    assert said(store)["b1"] == "bob asks something"  # read from the pending file, unread yet
+    proxy.compress(pending)
+    assert said(store)["b1"] == "bob asks something"  # and from its .zst
+    store.refresh()
+    assert said(store) == {
+        "a1": SECRET,
+        "a2": "and the second question",
+        "b1": "bob asks something",
+    }
+
+
+def test_text_of_a_log_that_started_again_is_refused_until_it_is_read_again(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    for path in list((settings.proxy_dir / "segments").iterdir()):
+        path.unlink()
+    (settings.proxy_dir / "requests.jsonl").unlink()
+    (settings.proxy_dir / "requests.jsonl").write_bytes(
+        lines([entry("z9", "zed", 1.0, "new", "x")])
+    )
+    with pytest.raises(StoreError):
+        store.with_text(list(store.calls()))
 
 
 def test_settings_stop_at_a_missing_key():

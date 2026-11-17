@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 from aiab.baked import records as box_records
-from conftest import API_KEY, FakeBox
+from conftest import API_KEY, LIVE, PROD_KEY, SEALED, SECRET, FakeBox, ProxyDir
 from fastapi.testclient import TestClient
 
 from logserver import config
@@ -21,7 +21,8 @@ from logserver.app import create_app
 from logserver.box import Box
 from logserver.config import Settings, Target
 from logserver.plant import PlantStore
-from logserver.store import StoreError
+from logserver.sources import Sources
+from logserver.store import Store, StoreError
 
 TOKEN = "reader-token"
 RUN = "mac~1794253937-research"
@@ -338,6 +339,22 @@ def test_an_export_is_sealed_and_the_box_opens_what_the_plant_recorded(client, f
     assert all(r["kind"] in ("request", "response", "tool_result") for r in opened)
 
 
+def test_the_index_holds_no_text_and_an_export_reads_only_the_calls_it_sends(store, hub, settings):
+    hub.runs[RUN]["files"]["egress/record.jsonl"] = RECORD_2
+    store.refresh()
+    assert all(c.parts == () and c.sizes for c in store.calls())
+    second = [c for c in store.calls() if c.id == f"{RUN}:10"]
+    read = store.with_text(second)
+    assert [c.parts for c in read] == [
+        (("request", "second question"), ("response", "second answer"))
+    ]
+    assert read[0].at[1] >= len(RECORD_1)  # found in the record from where its request starts
+
+    (settings.data_dir / "hub" / RUN / "egress/record.jsonl").write_bytes(b"")
+    with pytest.raises(StoreError, match="not where they were"):
+        store.with_text(second)
+
+
 def test_a_run_that_grew_costs_only_its_new_bytes(store, hub, settings):
     hub.asked.clear()
     assert store.refresh()["new"] == 0  # nothing changed: nothing fetched, nothing read again
@@ -407,6 +424,112 @@ def test_a_redirect_is_never_followed_with_the_token(hub, settings):
         assert other.asked == []
     finally:
         other.server.shutdown()
+
+
+@pytest.fixture
+def both(tmp_path, hub):
+    """One server reading a proxy's directory and the hub. The dev box sees both; the
+    production box is kept to the proxy."""
+    proxy = ProxyDir(tmp_path / "proxy-data")
+    proxy.seal(SEALED)
+    proxy.append(LIVE)
+    settings = Settings(
+        proxy_dir=proxy.root,
+        boxes=(
+            Target("dev", API_KEY, "box.example", "org/config"),
+            Target("prod", PROD_KEY, "prod.example", "org/prod-config", sources=("proxy",)),
+        ),
+        sync_seconds=300,
+        sources=("proxy", "plant"),
+        hub_url=hub.url,
+        hub_key=TOKEN,
+        data_dir=tmp_path / "data",
+    )
+    store = Sources({"proxy": Store(settings), "plant": PlantStore(settings)})
+    store.refresh()
+    fakes = {"dev": FakeBox(), "prod": FakeBox()}
+    boxes = {
+        t.name: Box(t.box_host, t.box_repo, connect=fakes[t.name].connect) for t in settings.boxes
+    }
+    app = create_app(settings, store=store, boxes=boxes, background=False)
+    return TestClient(app, headers={"x-log-key": API_KEY}), fakes, store
+
+
+def test_one_server_reads_the_proxy_and_the_plant_and_exports_from_both(both):
+    client, fakes, store = both
+    run = "mac_1794253937-research"
+    assert set(_sessions(client)) == {
+        "s-alice",
+        "bob-1800000500",
+        "s1",
+        f"{run}-jobs",
+        f"{run}-network",
+        f"{run}-scores",
+    }
+    status = client.get("/v1/status").json()
+    assert (status["calls"], status["sources"]) == (7, ["proxy", "plant"])
+    # The proxy's own fields stay where the agreement UI reads them; each source has its own.
+    assert status["result"]["segments"] == 1 and status["result"]["live"] == 1
+    assert status["result"]["plant"]["runs"] == 1 and status["result"]["calls"] == 7
+    assert client.post("/v1/sync").json()["new"] == 0
+
+    response = client.post("/v1/export", json={"sessions": ["s-alice", "s1"]})
+    assert response.status_code == 200 and SECRET not in response.text
+    opened = fakes["dev"].decryptor.unseal(response.json()["records"], fakes["dev"].boot_id)
+    assert [(r["session_id"], r["content"]) for r in opened] == [
+        ("s1", SAID),
+        ("s1", "first answer"),
+        ("s-alice", SECRET),
+        ("s-alice", "I will not repeat the launch code"),
+        ("s-alice", "and the second question"),
+        ("s-alice", "second answer"),
+    ]
+
+
+def test_a_box_kept_to_the_proxy_neither_sees_nor_exports_the_plant(both):
+    client, _, _ = both
+    prod = {"x-log-key": PROD_KEY}
+    listed = client.get("/v1/sessions", headers=prod).json()
+    assert {s["id"] for s in listed["sessions"]} == {"s-alice", "bob-1800000500"}
+    assert listed["whos"] == ["alice", "bob"]
+    status = client.get("/v1/status", headers=prod).json()
+    assert (status["calls"], status["sources"]) == (3, ["proxy"])
+    refused = client.post("/v1/export", json={"sessions": ["s1"]}, headers=prod)
+    assert refused.status_code == 404
+
+
+def test_one_source_down_does_not_hide_the_other(both, hub):
+    client, _, store = both
+    hub.server.shutdown()
+    hub.server.server_close()
+    response = client.post("/v1/sync")
+    assert response.status_code == 503 and "plant: the hub is not answering" in response.text
+    assert store.status["error"].startswith("plant: ")
+    assert len(_sessions(client)) == 6  # the proxy was read, and the plant's last read stays
+
+
+def test_the_sources_follow_the_settings_and_a_box_can_be_kept_to_some():
+    base = {"API_KEY": "k", "BOX_HOST": "box.example", "BOX_REPO": "org/config"}
+    hub = {"PLANT_HUB_URL": "https://hub.example", "PLANT_HUB_KEY": "token"}
+    assert config.load(base).sources == ("proxy",)
+    assert config.load({**base, **hub}).sources == ("plant",)  # a hub and no proxy directory
+    both = config.load({**base, **hub, "PROXY_DIR": "/proxy-data", "SOURCES": "proxy"})
+    assert both.sources == ("proxy", "plant") and both.boxes[0].sources == ("proxy",)
+    listed = {
+        **hub,
+        "PROXY_DIR": "/proxy-data",
+        "BOXES": "dev,prod",
+        "DEV_API_KEY": "d",
+        "DEV_BOX_HOST": "dev.example",
+        "DEV_BOX_REPO": "org/dev",
+        "PROD_API_KEY": "p",
+        "PROD_BOX_HOST": "prod.example",
+        "PROD_BOX_REPO": "org/prod",
+        "PROD_SOURCES": "proxy",
+    }
+    assert [b.sources for b in config.load(listed).boxes] == [("proxy", "plant"), ("proxy",)]
+    with pytest.raises(config.ConfigError, match="not a source this server reads"):
+        config.load({**base, "SOURCES": "plant"})
 
 
 def test_the_two_hub_settings_come_together_or_not_at_all():

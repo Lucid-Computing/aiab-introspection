@@ -1,6 +1,11 @@
 """One proxied call as the proxy recorded it, read as far as the box needs: who, when, which
 session, and the parts of it a run sends to the box.
 
+``parse`` reads a call whole, text included. The index a store keeps holds each call
+``light``: its metadata, the kind and size of each part, and where its line is on disk
+(``at``). The text is read again from there only when a run exports the call
+(the store's ``with_text``), so the index's size does not grow with what was said.
+
 The reading rules are the agreement UI's (ui/server/proxylogs.py), kept the same on purpose,
 so a run reads the same records whichever of the two built them. The UI's copy goes away
 when it reads from this server only.
@@ -35,6 +40,17 @@ class Call:
     message_count: int
     parts: tuple[tuple[str, str], ...]  # (kind, content), in order; never served as metadata
     run: str = ""  # the plant run it came from (logserver.plant); empty for a proxy's call
+    sizes: tuple[tuple[str, int], ...] = ()  # (kind, bytes of content) of each part
+    at: tuple = ()  # where its store finds the text again; the store's own business
+
+    @property
+    def source(self) -> str:
+        """Which kind of store holds it: "plant" or "proxy"."""
+        return "plant" if self.run else "proxy"
+
+    def light(self) -> Call:
+        """The call as an index keeps it: every part's kind and size, none of its text."""
+        return replace(self, parts=())
 
     @property
     def ts(self) -> str:
@@ -52,15 +68,15 @@ class Call:
             "stop_reason": self.stop_reason,
             "request_bytes": self.size,
             "messages": self.message_count,
-            "records": len(self.parts),
-            "kinds": [kind for kind, _ in self.parts],
+            "records": len(self.sizes),
+            "kinds": [kind for kind, _ in self.sizes],
             "content_bytes": self.content_bytes,
         }
 
     @property
     def content_bytes(self) -> int:
         """How much text a run would send for this call. A size, never the text."""
-        return sum(len(content.encode()) for _, content in self.parts)
+        return sum(size for _, size in self.sizes)
 
 
 @dataclass(frozen=True)
@@ -78,7 +94,7 @@ class Session:
             "started": self.calls[0].ts,
             "ended": self.calls[-1].ts,
             "model": next((c.model for c in self.calls if c.model), None),
-            "records": sum(len(c.parts) for c in self.calls),
+            "records": sum(len(c.sizes) for c in self.calls),
             "content_bytes": sum(c.content_bytes for c in self.calls),
             "calls": [c.metadata() for c in self.calls],
         }
@@ -114,8 +130,16 @@ def parse(entry: dict) -> Call:
         stop_reason=stop,
         size=size,
         message_count=len(messages),
-        parts=tuple(_parts(messages, response_blocks)),
+        **texts(_parts(messages, response_blocks)),
     )
+
+
+def texts(parts: list[tuple[str, str]]) -> dict:
+    """A call's ``parts`` and the ``sizes`` that go with them."""
+    return {
+        "parts": tuple(parts),
+        "sizes": tuple((kind, len(content.encode())) for kind, content in parts),
+    }
 
 
 def _parts(messages: list[dict], response_blocks: list[dict]) -> list[tuple[str, str]]:
@@ -173,9 +197,13 @@ def box_records(calls: list[Call], first_offset: int = 0) -> list[dict]:
     Offsets count on from ``first_offset``.
 
     agent_id is who sent it (the proxy's "who"), session_id the grouping above, content what
-    the model saw and said. The box checks these against the plan's input scope."""
+    the model saw and said. The box checks these against the plan's input scope.
+
+    The calls carry their text: a store's ``with_text`` gives it back to light ones."""
     out: list[dict] = []
     for c in sorted(calls, key=lambda x: x.time):
+        if len(c.parts) != len(c.sizes):
+            raise ValueError(f"call {c.id} is here without its text")
         for kind, content in c.parts:
             out.append(
                 {
