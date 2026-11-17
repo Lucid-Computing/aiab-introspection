@@ -1,8 +1,10 @@
 import hashlib
+import json
 import os
 
 import pytest
-from conftest import ANSWER, API_KEY, LIVE, SECRET, ProxyDir, entry, lines
+import zstandard
+from conftest import ANSWER, API_KEY, LIVE, SEALED, SECRET, ProxyDir, entry, lines
 
 from logserver import calls, config
 from logserver import store as store_module
@@ -24,9 +26,9 @@ def reads(monkeypatch):
     seen = []
     original = store_module._read
 
-    def spy(f, compressed):
+    def spy(f, compressed, first):
         seen.append(os.path.basename(f.name))
-        return original(f, compressed)
+        return original(f, compressed, first)
 
     monkeypatch.setattr(store_module, "_read", spy)
     return seen
@@ -44,6 +46,27 @@ def parsed(monkeypatch):
 
     monkeypatch.setattr(calls, "parse", spy)
     return seen
+
+
+def by_hand(proxy, where) -> bytes:
+    """The line a call's ``Where`` names, read without the store: the file whose name holds
+    its seq (or the live file), uncompressed whole, from the offset to the next newline."""
+    data = None
+    for path in sorted(proxy.segments.glob("requests-*")) if proxy.segments.exists() else ():
+        m = store_module.NAME_RE.match(path.name)
+        if m and int(m[1]) <= where.seq <= int(m[2]):
+            raw = path.read_bytes()
+            data = zstandard.ZstdDecompressor().decompress(raw) if m[3] else raw
+    if data is None:
+        data = proxy.live.read_bytes()
+    line = data[where.offset : data.index(b"\n", where.offset) + 1]
+    assert hashlib.sha256(line).digest() == where.sha256
+    return line
+
+
+def located(store, proxy) -> dict[str, tuple[int, str]]:
+    """Each call's seq, and the id of the line its ``Where`` names, read by hand."""
+    return {c.id: (c.where.seq, json.loads(by_hand(proxy, c.where))["id"]) for c in store.calls()}
 
 
 def problems(store):
@@ -423,3 +446,43 @@ def test_several_boxes_each_with_its_own_key():
         config.load({**env, "BOXES": "dev,pr-od"})
     with pytest.raises(config.ConfigError, match="not both"):
         config.load({**env, "API_KEY": "a"})
+
+
+def test_each_call_knows_where_its_line_is(store, proxy):
+    assert located(store, proxy) == {"a1": (1, "a1"), "a2": (2, "a2"), "b1": (3, "b1")}
+    assert [c.where.offset for c in store.calls()] == [0, len(lines(SEALED[:1])), 0]
+
+
+def test_a_call_is_found_at_the_same_place_after_its_file_moves(settings, proxy):
+    proxy.append(batch("c", 2))
+    store = Store(settings)
+    store.refresh()
+    before = located(store, proxy)
+    pending = proxy.rotate()  # the live file, b1 c0 c1, is now pending: same bytes, same offsets
+    assert located(store, proxy) == before
+    proxy.compress(pending)  # and now compressed
+    assert located(store, proxy) == before
+    assert before == {
+        "a1": (1, "a1"),
+        "a2": (2, "a2"),
+        "b1": (3, "b1"),
+        "c0": (4, "c0"),
+        "c1": (5, "c1"),
+    }
+
+
+def test_every_line_counts_for_seq_and_offset(settings, proxy):
+    """Blank, unreadable and restart-ended torn lines take a seq and bytes too; a call after
+    them, or with multi-byte text, is still found."""
+    accents = entry("u1", "zoë", 1_800_003_000.0, "ça va ? 日本語 🙂", "très bien")
+    proxy.append(raw=b"\n")
+    proxy.append(raw=b"not json\n")
+    proxy.append(raw=b'{"id": "cut sho' + b"\n")  # a torn line the proxy ended on restart
+    proxy.append([accents, *batch("c", 1)])
+    store = Store(settings)
+    store.refresh()
+    assert located(store, proxy)["u1"] == (7, "u1")
+    assert located(store, proxy)["c0"] == (8, "c0")
+    proxy.seal([])
+    store.refresh()
+    assert located(store, proxy)["c0"] == (8, "c0")

@@ -18,6 +18,19 @@ SESSION_GAP_SECONDS = 30 * 60  # calls from one person this close together form 
 REMINDER = re.compile(r"(<system-reminder>.*?</system-reminder>)", re.DOTALL)
 
 
+@dataclass(frozen=True, slots=True)
+class Where:
+    """Where the proxy's files hold a call: enough to read it back and know it is the same.
+
+    ``offset`` counts bytes in the file's uncompressed form. The proxy rotates by renaming the
+    live file whole and compresses losslessly, so the same line keeps its offset in the live,
+    pending and compressed file alike; ``seq`` says which of them holds it now."""
+
+    seq: int  # the line's place in the proxy's stream, every line counted
+    offset: int
+    sha256: bytes  # of the line as read, its newline included
+
+
 # What one record may carry. Tool results (file contents, command output) and tool inputs
 # can be enormous, and a plan allows about 100 KB per run, so they are cut, head first.
 @dataclass(frozen=True)
@@ -37,6 +50,7 @@ class Call:
     parts: tuple[tuple[str, str], ...]  # (kind, content), in order; never served as metadata
     kinds: tuple[str, ...] = ()  # each part's kind, in order
     content_bytes: int = 0  # how much text a run would send for this call: a size, never the text
+    where: Where | None = None  # set by the store, which knows the file
 
     @property
     def ts(self) -> str:

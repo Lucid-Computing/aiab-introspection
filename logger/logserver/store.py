@@ -25,19 +25,20 @@ A background thread re-reads every ``SYNC_SECONDS``; requests answer from the la
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import zstandard
 
 from logserver import calls
-from logserver.calls import Call
+from logserver.calls import Call, Where
 from logserver.config import Settings
 
 LIVE = "requests.jsonl"
@@ -272,11 +273,11 @@ class Store:
             for line in handle:
                 if not line.endswith(b"\n"):  # still being written
                     break
-                n = live.lines
+                n, at = live.lines, live.offset
                 live.offset += len(line)
                 live.lines += 1
                 changed = True
-                call = _call(line)
+                call = _call(line, live_first + n, at)
                 if call is not None:
                     live.calls.append((call.id or f"{live_first}:{n}", call))
                 elif line.strip():
@@ -332,7 +333,7 @@ def _parse(c: Container) -> tuple[Parsed | None, str | None]:
     name = f"{SEGMENTS}/{path.name}"
     with f:
         try:
-            found, lines, unreadable = _read(f, compressed)
+            found, lines, unreadable = _read(f, compressed, c.first)
         except (zstandard.ZstdError, OSError) as error:
             failed = Parsed(name, (), 0, f"cannot be read, skipped: {error}")
             return failed, failed.error
@@ -344,19 +345,21 @@ def _parse(c: Container) -> tuple[Parsed | None, str | None]:
     return Parsed(name, keyed, unreadable), None
 
 
-def _read(f, compressed: bool) -> tuple[list[tuple[int, Call]], int, int]:
-    """([(line number, call)], lines, unreadable lines) of one opened file."""
+def _read(f, compressed: bool, first: int) -> tuple[list[tuple[int, Call]], int, int]:
+    """([(line number, call)], lines, unreadable lines) of one opened file whose first line
+    is seq ``first``."""
     if not compressed:
-        return _calls(f)
+        return _calls(f, first)
     with _segment_lock:
         decompressor = zstandard.ZstdDecompressor(max_window_size=1 << WINDOW_LOG)
-        return _calls(io.BufferedReader(decompressor.stream_reader(f, closefd=False)))
+        return _calls(io.BufferedReader(decompressor.stream_reader(f, closefd=False)), first)
 
 
-def _calls(lines) -> tuple[list[tuple[int, Call]], int, int]:
-    found, n, unreadable = [], 0, 0
+def _calls(lines, first: int) -> tuple[list[tuple[int, Call]], int, int]:
+    found, n, unreadable, offset = [], 0, 0, 0
     for n, line in enumerate(lines, 1):  # noqa: B007 - n is the line count after the loop
-        call = _call(line)
+        call = _call(line, first + n - 1, offset)
+        offset += len(line)
         if call is not None:
             found.append((n - 1, call))
         elif line.strip():
@@ -364,12 +367,14 @@ def _calls(lines) -> tuple[list[tuple[int, Call]], int, int]:
     return found, n, unreadable
 
 
-def _call(line: bytes) -> Call | None:
-    """One line as a call; None for a line that does not parse (skipped, never fatal: one
-    odd line, say a request nested past the recursion limit, must not stop every read)."""
+def _call(line: bytes, seq: int, offset: int) -> Call | None:
+    """One line as a call, with where it is; None for a line that does not parse (skipped,
+    never fatal: one odd line, say a request nested past the recursion limit, must not stop
+    every read). Every line counts for ``seq``, whatever it holds."""
     if not line.strip():
         return None
     try:
-        return calls.parse(json.loads(line))
+        call = calls.parse(json.loads(line))
     except Exception:
         return None
+    return replace(call, where=Where(seq, offset, hashlib.sha256(line).digest()))
