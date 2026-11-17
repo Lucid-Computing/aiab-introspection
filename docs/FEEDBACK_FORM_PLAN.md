@@ -84,8 +84,9 @@ The JSON routes rely on the session cookie being `SameSite=Lax`, as the forms do
 | `ui/.gitignore`, `ui/Dockerfile.dockerignore` | `feedback/`, so local feedback is never committed or built into the image. |
 | `render.yaml` | `AIAB_FEEDBACK_EMAIL_TO`, `AIAB_SMTP_HOST`, `AIAB_SMTP_USER`, `AIAB_SMTP_PASSWORD`, `sync: false`. |
 | `ui/README.md` | The file table, the list of scripts, the "Does" line. |
+| `ui/tests/test_feedback.py` | Tests for the server rules: deleting, the delayed email, the email's content, margin fields. |
 
-No tests were added, by request. The existing UI and box test suites pass unchanged.
+`ui/tests/test_feedback.py` covers the server rules: only a note's author can delete it (403 for others, 404 the second time) and `GET /notes` marks it `mine` for them alone; a deleted note is gone from `GET /notes` and the lab's list but kept in `notes.jsonl` with a delete line after it; a note deleted within the delay is not mailed, while a kept note and a form entry are; the email's subject, text and link (`#note=<id>` for notes), with `msg` and `err` dropped from the page and another site's address turned into `/`; nothing is sent without the email settings; `side` and `gap` round-trip, an unknown side is stored as `""` and `gap` is clamped to 0..4000. Where the notes script places a note on the page is not unit-tested.
 
 ## Email setup (once, by hand)
 
