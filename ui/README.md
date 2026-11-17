@@ -66,7 +66,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | [`server/publish.py`](server/publish.py) | The git side: a key change as a branch and pull request with `gh`, draft backups, the checkout following its branch. |
 | [`server/runs.py`](server/runs.py) | The Runs screen's steps: each one a call of the static part's `auditor.baked` CLI, results on disk. |
 | [`server/proxylogs.py`](server/proxylogs.py) | The Logs screen: fetches the logging proxy's segments (every 5 minutes in the background), groups requests into sessions, converts them to box records. |
-| [`server/feedback.py`](server/feedback.py) | The Feedback form's entries and the post-it notes: one append-only JSONL file each in `AIAB_FEEDBACK_DIR`, and an optional Slack post (`AIAB_FEEDBACK_WEBHOOK`). |
+| [`server/feedback.py`](server/feedback.py) | The Feedback form's entries and the post-it notes: one append-only JSONL file each in `AIAB_FEEDBACK_DIR`, and an optional email to a Slack channel (`AIAB_FEEDBACK_EMAIL_TO`, `AIAB_SMTP_*`). |
 | [`server/app.py`](server/app.py) | The routes, one per screen or form. |
 | [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm and Feedback dialogs, the chat panel, browser signing (`assets/sign.js`) and post-it notes (`assets/notes.js`); the builder is its own bundle in an iframe. |
 | [`server/template/`](server/template/) | The minimal valid agreement that "New agreement" starts from. |

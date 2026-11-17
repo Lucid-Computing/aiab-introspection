@@ -3,11 +3,13 @@
 //
 // The button opens a menu: "Write feedback" opens the Feedback dialog; "Stick a note on this
 // page" starts note mode (crosshair cursor, a banner at the top, Esc cancels), and the next
-// click inside the page's main column opens a small form at that spot; Save sends it. A note's spot is kept relative to the nearest element with an id around the
-// click (a fraction of its width, pixels below its top), and relative to <main> for when that
-// element is gone or hidden, so notes stay put when the window changes width. Every text a
-// person typed is set with textContent, never as HTML. Resolved notes are hidden; the lab can
-// resolve and reopen. A link ending in #note=<id> (from the lab's Feedback list) shows that
+// click on the page, in the main column or the empty space either side of it (not the nav),
+// opens a small form at that spot; Save sends it. A note's spot is kept relative to the
+// nearest element with an id around the click (a fraction of its width, pixels below its
+// top), and relative to <main> for when that element is gone or hidden; a note beside the
+// column keeps its distance from that edge of the column. So notes stay put when the window
+// changes width. Every text a person typed is set with textContent, never as HTML. Resolved
+// notes are hidden; the lab can resolve and reopen. The author of a note can delete it. A link ending in #note=<id> (from the lab's Feedback list) shows that
 // note highlighted even when it is resolved or notes are hidden. The builder iframe is a
 // separate page: clicks inside it do not place notes.
 (function () {
@@ -42,20 +44,26 @@
     return null;
   }
 
-  // Where a note goes, in pixels from the top left of <main>.
-  function spot(note) {
+  // Where a note goes, in pixels from the top left of <main>. A note in the column stays in
+  // the column; one beside it stays inside the window.
+  function spot(note, width) {
     var m = main.getBoundingClientRect();
+    var w = width || 200;
     var a = note.anchor ? document.getElementById(note.anchor) : null;
     var left = note.x * m.width, top = note.y;
-    if (a && main.contains(a)) {
+    if (note.side === "left") left = -note.gap - w;
+    else if (note.side === "right") left = m.width + note.gap;
+    else if (a && main.contains(a)) {
       var r = a.getBoundingClientRect();
       if (r.width > 0 && r.height > 0) { left = r.left - m.left + note.ax * r.width; top = r.top - m.top + note.ay; }
     }
-    return { left: Math.max(0, Math.min(left, m.width - 200)), top: Math.max(0, top) };
+    var low = 0, high = m.width - w;
+    if (note.side) { low = 8 - m.left; high = document.documentElement.clientWidth - m.left - w - 8; }
+    return { left: Math.max(low, Math.min(left, high)), top: Math.max(0, top) };
   }
 
   function place(el, note) {
-    var s = spot(note);
+    var s = spot(note, el.offsetWidth);
     el.style.left = s.left + "px";
     el.style.top = s.top + "px";
   }
@@ -80,12 +88,21 @@
     el.appendChild(text("p", "postit-text", note.text));
     var who = note.name ? note.name + " · " + note.user : note.user;
     el.appendChild(text("p", "postit-meta", who + " · " + when(note.time)));
+    var actions = document.createElement("div");
+    actions.className = "postit-links";
     if (lab) {
       var b = text("button", "postit-resolve", note.resolved ? "Reopen" : "Resolve");
       b.type = "button";
       b.addEventListener("click", function () { resolve(note); });
-      el.appendChild(b);
+      actions.appendChild(b);
     }
+    if (note.mine) {
+      var d = text("button", "postit-resolve", "Delete");
+      d.type = "button";
+      d.addEventListener("click", function () { remove(note, d); });
+      actions.appendChild(d);
+    }
+    if (actions.firstChild) el.appendChild(actions);
     place(el, note);
     return el;
   }
@@ -125,6 +142,16 @@
     }).catch(function () { /* left as it was */ });
   }
 
+  function remove(note, button) {
+    if (!window.confirm("Delete this note?")) return;
+    button.disabled = true;
+    send("/notes/" + note.id + "/delete", {}).then(function () {
+      notes = notes.filter(function (n) { return n.id !== note.id; });
+      draw();
+      showBanner("Note deleted", false);
+    }).catch(function () { button.disabled = false; button.textContent = "Not deleted · retry"; });
+  }
+
   // The banner at the top of the window: the note-mode hint with Cancel, or a short message
   // that goes away by itself.
   function showBanner(message, cancel) {
@@ -157,8 +184,12 @@
 
   function openDraft(event) {
     var m = main.getBoundingClientRect();
-    var pos = { anchor: "", ax: 0, ay: 0, x: (event.clientX - m.left) / m.width, y: event.clientY - m.top };
-    var a = anchorOf(event.target);
+    var pos = { anchor: "", side: "", gap: 0, ax: 0, ay: 0, x: (event.clientX - m.left) / m.width, y: event.clientY - m.top };
+    // Beside the column: the note's top left corner goes where the click was, as in the column
+    // (moved out of the column when the click is too close to it).
+    if (event.clientX < m.left) { pos.side = "left"; pos.gap = Math.max(0, m.left - event.clientX - 200); pos.x = 0; }
+    else if (event.clientX > m.right) { pos.side = "right"; pos.gap = event.clientX - m.right; pos.x = 1; }
+    var a = pos.side ? null : anchorOf(event.target);
     if (a) {
       var r = a.getBoundingClientRect();
       if (r.width > 0 && r.height > 0) {
@@ -183,7 +214,7 @@
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       save.disabled = true;
-      send("/notes", { page: page, text: area.value, name: name.value, anchor: pos.anchor, ax: pos.ax, ay: pos.ay, x: pos.x, y: pos.y })
+      send("/notes", { page: page, text: area.value, name: name.value, anchor: pos.anchor, side: pos.side, gap: pos.gap, ax: pos.ax, ay: pos.ay, x: pos.x, y: pos.y })
         .then(function (d) {
           notes.unshift(d.note); closeDraft(); hidden = false; draw();
           showBanner("Note saved · the team will see it", false);
@@ -228,10 +259,12 @@
     if (!menu.hidden && !fb.contains(event.target)) setMenu(false);
   });
   window.addEventListener("blur", function () { if (!menu.hidden) setMenu(false); });
-  // While placing, a click in the page drops the note there and does nothing else (no link
-  // is followed, no button pressed).
-  main.addEventListener("click", function (event) {
-    if (!placing || layer.contains(event.target)) return;
+  // While placing, a click on the page (the column or the space beside it) drops the note
+  // there and does nothing else (no link is followed, no button pressed). The nav, the
+  // Feedback button, the banner, dialogs and the notes themselves are left alone.
+  document.addEventListener("click", function (event) {
+    if (!placing || !(event.target instanceof Element)) return;
+    if (event.target.closest("nav, dialog, .fb, .fb-banner, .notes-layer, #busy")) return;
     event.preventDefault();
     event.stopPropagation();
     setPlacing(false);
