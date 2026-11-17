@@ -115,6 +115,18 @@ class Settings:
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
     trust_follows_production: bool = False
+    # Feedback from the site: the form's entries and the post-it notes, one JSONL file each
+    # (server.feedback). With AIAB_FEEDBACK_EMAIL_TO (a Slack channel's email address, a
+    # secret) and the AIAB_SMTP_* settings, each one is also mailed to that channel; a note
+    # only after AIAB_FEEDBACK_NOTE_DELAY seconds, so one deleted by then is never posted.
+    feedback_dir: Path = UI_ROOT / "feedback"
+    feedback_email_to: str | None = field(default=None, repr=False)
+    feedback_email_from: str | None = None
+    feedback_note_delay: float = 300.0
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = field(default=None, repr=False)
 
     @property
     def repo_url(self) -> str | None:
@@ -220,6 +232,14 @@ def load_settings() -> Settings:
         oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
         admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
+        feedback_dir=Path(env.get("AIAB_FEEDBACK_DIR", UI_ROOT / "feedback")).resolve(),
+        feedback_email_to=env.get("AIAB_FEEDBACK_EMAIL_TO", "").strip() or None,
+        feedback_email_from=env.get("AIAB_FEEDBACK_EMAIL_FROM", "").strip() or None,
+        feedback_note_delay=float(env.get("AIAB_FEEDBACK_NOTE_DELAY", "300") or 300),
+        smtp_host=env.get("AIAB_SMTP_HOST", "").strip() or None,
+        smtp_port=int(env.get("AIAB_SMTP_PORT", "587") or 587),
+        smtp_user=env.get("AIAB_SMTP_USER", "").strip() or None,
+        smtp_password=env.get("AIAB_SMTP_PASSWORD", "") or None,
     )
 
 

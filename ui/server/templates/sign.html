@@ -19,7 +19,7 @@
   {% for party in parties %}{% set s = view.signatures[party] %}
   {% set k = keys.parties[party] if keys else None %}
   {% set demo = party == 'lab' and lab_sign and s.status != 'ok' %}
-  <div class="card">
+  <div class="card" id="sign-{{ party }}">
     <div class="card-header">{{ party }}</div>
     <div class="card-body sign-card">
       <p class="sign-state {% if s.status == 'ok' %}ok{% elif s.status == 'invalid' %}bad{% endif %}">{% if s.auto %}Signed by the server{% elif s.status == 'ok' %}Signed{% elif s.status == 'missing' %}Not signed{% else %}Signed an older version, sign again{% endif %}</p>
