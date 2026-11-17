@@ -23,6 +23,7 @@ from markupsafe import Markup, escape
 from server import (
     deploystatus,
     editing,
+    feedback,
     githubexport,
     plan_chat,
     plantlogs,
@@ -466,6 +467,125 @@ async def how(request: Request) -> Response:
     if user_of(request) is None:
         return to_login(request)
     return render(request, "how.html")
+
+
+# --------------------------------------------------------------------------- feedback
+
+
+@app.post("/feedback")
+async def send_feedback(
+    request: Request,
+    text: str = Form(""),
+    name: str = Form(""),
+    page: str = Form("/"),
+) -> Response:
+    """The Feedback form: one line in feedback.jsonl, then back to the page it came from."""
+    who = user_of(request)
+    if who is None:
+        return to_login(request)
+    target = feedback.clean_page(page)
+    if not text.strip():
+        return back(target)
+    entry = await asyncio.to_thread(feedback.record, settings, who, target, text, name)
+    feedback.notify(settings, entry, "form", public_origin(request))
+    return back(target, msg="Thanks, sent to the team")
+
+
+@app.get("/feedback")
+async def feedback_list(request: Request) -> Response:
+    """The lab's list of what people sent: form entries and post-it notes, newest first."""
+    who = user_of(request)
+    if who is None:
+        return to_login(request)
+    if who["party"] != "lab":
+        return Response("Only the lab can read feedback.", status_code=403, media_type="text/plain")
+    items = [{**e, "kind": "form"} for e in feedback.entries(settings)]
+    items += feedback.notes(settings)
+    items.sort(key=lambda e: str(e.get("time", "")), reverse=True)
+    return render(request, "feedback.html", items=items)
+
+
+def _note_view(note: dict[str, Any], who: dict[str, str]) -> dict[str, Any]:
+    """A note for the notes script; ``mine`` when the viewer wrote it (they may delete it)."""
+    keys = (
+        "id",
+        "time",
+        "user",
+        "party",
+        "name",
+        "text",
+        "anchor",
+        "side",
+        "gap",
+        "ax",
+        "ay",
+        "x",
+        "y",
+    )
+    return {k: note.get(k) for k in keys} | {
+        "resolved": bool(note.get("resolved")),
+        "mine": note.get("user") == who["username"],
+    }
+
+
+@app.get("/notes")
+async def page_notes(request: Request) -> Response:
+    """The post-it notes left on one page, for the notes script."""
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    page = feedback.clean_page(request.query_params.get("page"))
+    found = await asyncio.to_thread(feedback.notes, settings, page)
+    return JSONResponse({"notes": [_note_view(n, who) for n in found]})
+
+
+@app.post("/notes")
+async def add_note(request: Request) -> Response:
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict) or not str(body.get("text") or "").strip():
+        return JSONResponse({"error": "empty"}, status_code=400)
+    note = await asyncio.to_thread(feedback.add_note, settings, who, body)
+    feedback.notify(settings, note, "note", public_origin(request))
+    return JSONResponse({"note": _note_view(note, who)})
+
+
+@app.post("/notes/{note_id}/resolve")
+async def resolve_note(request: Request, note_id: str) -> Response:
+    """The lab marks a note resolved, or opens it again."""
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    if who["party"] != "lab":
+        return JSONResponse({"error": "lab only"}, status_code=403)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    resolved = bool(body.get("resolved", True)) if isinstance(body, dict) else True
+    note = await asyncio.to_thread(feedback.resolve_note, settings, who, note_id, resolved)
+    if note is None:
+        return JSONResponse({"error": "no such note"}, status_code=404)
+    return JSONResponse({"note": _note_view(note, who)})
+
+
+@app.post("/notes/{note_id}/delete")
+async def delete_note(request: Request, note_id: str) -> Response:
+    """The author deletes their note. It stays in notes.jsonl but is shown nowhere."""
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    outcome = await asyncio.to_thread(feedback.delete_note, settings, who, note_id)
+    if outcome == "forbidden":
+        return JSONResponse({"error": "only its author can delete a note"}, status_code=403)
+    if outcome == "missing":
+        return JSONResponse({"error": "no such note"}, status_code=404)
+    return JSONResponse({"deleted": note_id})
 
 
 # The audit plan playground (ui/playground): a standalone prototype, served from its build

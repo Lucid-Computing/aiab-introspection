@@ -57,3 +57,11 @@ services:
         sync: false
       - key: AIAB_GITHUB_EXPORT_KEY  # optional, for the Logs screen: opens the committed GitHub export bundle (github-export-bundle in 1Password); GitHub Logs
         sync: false
+      - key: AIAB_FEEDBACK_EMAIL_TO  # optional, a secret: the #amber-feedback Slack channel's email address; each Feedback entry and post-it note is also mailed there
+        sync: false
+      - key: AIAB_SMTP_HOST  # with AIAB_FEEDBACK_EMAIL_TO: the mail server, e.g. smtp.gmail.com (port AIAB_SMTP_PORT, default 587, STARTTLS)
+        sync: false
+      - key: AIAB_SMTP_USER  # the Workspace account the feedback email is sent from
+        sync: false
+      - key: AIAB_SMTP_PASSWORD  # that account's app password
+        sync: false

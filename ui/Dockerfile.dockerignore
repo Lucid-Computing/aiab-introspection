@@ -9,6 +9,7 @@ plan/**
 ui/.venv
 ui/runs
 ui/logs
+ui/feedback
 ui/accounts.json
 ui/playground/node_modules
 ui/playground/dist
