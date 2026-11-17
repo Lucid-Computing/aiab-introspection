@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
@@ -34,6 +35,8 @@ class Call:
     size: int  # bytes of the request body
     message_count: int
     parts: tuple[tuple[str, str], ...]  # (kind, content), in order; never served as metadata
+    kinds: tuple[str, ...] = ()  # each part's kind, in order
+    content_bytes: int = 0  # how much text a run would send for this call: a size, never the text
 
     @property
     def ts(self) -> str:
@@ -51,15 +54,10 @@ class Call:
             "stop_reason": self.stop_reason,
             "request_bytes": self.size,
             "messages": self.message_count,
-            "records": len(self.parts),
-            "kinds": [kind for kind, _ in self.parts],
+            "records": len(self.kinds),
+            "kinds": list(self.kinds),
             "content_bytes": self.content_bytes,
         }
-
-    @property
-    def content_bytes(self) -> int:
-        """How much text a run would send for this call. A size, never the text."""
-        return sum(len(content.encode()) for _, content in self.parts)
 
 
 @dataclass(frozen=True)
@@ -75,7 +73,7 @@ class Session:
             "started": self.calls[0].ts,
             "ended": self.calls[-1].ts,
             "model": next((c.model for c in self.calls if c.model), None),
-            "records": sum(len(c.parts) for c in self.calls),
+            "records": sum(len(c.kinds) for c in self.calls),
             "content_bytes": sum(c.content_bytes for c in self.calls),
             "calls": [c.metadata() for c in self.calls],
         }
@@ -100,18 +98,22 @@ def parse(entry: dict) -> Call:
     size = (
         len(raw_req.get("text") or raw_req.get("base64") or "") if isinstance(raw_req, dict) else 0
     )
+    parts = tuple(_parts(messages, response_blocks))
+    # Interned: thousands of calls share one copy of each sender, model, session and kind.
     return Call(
         id=str(entry.get("id", "")),
         time=float(entry.get("time", 0)),
-        who=str(entry.get("who", "?")),
+        who=sys.intern(str(entry.get("who", "?"))),
         status=entry.get("status"),
         duration_s=entry.get("duration_s"),
-        session_id=session,
-        model=model if isinstance(model, str) else None,
-        stop_reason=stop,
+        session_id=sys.intern(session),
+        model=sys.intern(model) if isinstance(model, str) else None,
+        stop_reason=sys.intern(stop) if isinstance(stop, str) else stop,
         size=size,
         message_count=len(messages),
-        parts=tuple(_parts(messages, response_blocks)),
+        parts=parts,
+        kinds=tuple(sys.intern(kind) for kind, _ in parts),
+        content_bytes=sum(len(content.encode()) for _, content in parts),
     )
 
 
