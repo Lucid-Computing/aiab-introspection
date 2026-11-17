@@ -27,6 +27,7 @@ from aiab.audit.protocol import AuditError
 from aiab.baked import plan_ir
 from aiab.baked.bundle import bundle_files, file_digest, load_bundle
 from aiab.baked.graph import select_records
+from aiab.baked.sealing import seal_record
 
 from server.config import STATIC_DIR, Settings
 
@@ -52,10 +53,11 @@ STEPS = (
     (
         "export",
         "Seal and sign the test export",
-        "Takes the chosen records, seals each record's text to the box's encryption key "
-        "from step 2 (only the box can open it) and signs them with the demo logger key, "
-        "standing in for the real logger. The box will refuse records without this evidence. "
-        "The plain records are deleted from the server once the export is written.",
+        "Takes the chosen records and signs them with the demo logger key, standing in for "
+        "the real logger. The box will refuse records without this evidence. Records from a "
+        "log server arrive already sealed to the box's encryption key (only the box can open "
+        "them); any others are sealed here to the key from step 2, and their plain form is "
+        "deleted from the server once the export is written.",
     ),
     (
         "submit",
@@ -91,7 +93,7 @@ def _plan(folder: Path) -> dict | None:
 
 
 def plan_source(folder: Path) -> str | None:
-    """The log source the agreement's Input filter names (``config.source``), or None when
+    """The log source the agreement's Log Source names (``config.source``), or None when
     the plan does not load. The caller decides whether the name is one of its sources."""
     plan = _plan(folder)
     try:
@@ -101,7 +103,7 @@ def plan_source(folder: Path) -> str | None:
 
 
 def plan_sessions(folder: Path) -> set[str]:
-    """The sessions the agreement's Input filter names (``filter.sessions``); empty when it
+    """The sessions the agreement's Log Source names (``filter.sessions``); empty when it
     names none, which means every session of the source."""
     plan = _plan(folder)
     try:
@@ -112,7 +114,7 @@ def plan_sessions(folder: Path) -> set[str]:
 
 
 def plan_scope(folder: Path) -> dict | None:
-    """What the agreement's Input Logs step pins (agents, a time window), or None when it
+    """What the agreement's Log Source step pins (agents, a time window), or None when it
     pins nothing or the plan does not load."""
     plan = _plan(folder)
     try:
@@ -305,6 +307,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
             # its end so this server never holds the text at all.
             identity = json.loads(files["anchor"].read_text()).get("identity", {})
             sealed = "encryption_key" in identity
+            from_server = _seal_here(fixture, identity)
             _cli(
                 settings,
                 plan,
@@ -317,7 +320,6 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 "ui-" + uuid.uuid4().hex,
                 "--output",
                 str(files["submission"]),
-                *(("--seal-to", str(files["anchor"])) if sealed else ()),
                 timeout=None,  # as long as the records need
             )
             submission = json.loads(files["submission"].read_text())
@@ -326,6 +328,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 "records": len(submission["records"]),
                 "input_scope": submission["input_scope"],
                 "sealed": sealed,
+                "sealed_by_log_server": from_server,
                 "boot_id": identity.get("boot_id"),
             }
         if key == "submit":
@@ -400,6 +403,26 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
     state["status"] = "done"
     state["finished"] = _now()
     _write(folder, state)
+
+
+def _seal_here(fixture: Path, identity: dict) -> int:
+    """Seal the run's records that are not sealed yet to the box's key, in place, when the
+    box publishes one. Records from a log server arrive sealed and are left as they are;
+    returns how many those were. A record sealed for another start of the box cannot be
+    opened by this one, so the run stops here with the reason."""
+    records = [json.loads(line) for line in fixture.read_text().splitlines() if line.strip()]
+    arrived = [r for r in records if "enc" in r]
+    stale = {r.get("boot_id") for r in arrived} - {identity.get("boot_id")}
+    if stale:
+        raise RuntimeError(
+            "the box restarted after the log server sealed the records, so it can no longer"
+            " open them; start the run again"
+        )
+    if "encryption_key" in identity and len(arrived) < len(records):
+        key, boot = identity["encryption_key"], identity["boot_id"]
+        records = [r if "enc" in r else seal_record(r, key, boot) for r in records]
+        fixture.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return len(arrived)
 
 
 def start_run(
@@ -481,14 +504,42 @@ def list_runs(settings: Settings) -> list[dict]:
     return runs
 
 
+# What each fact of a Report (records_report) means, for the run page.
+METADATA_MEANING = {
+    "record_count": "records that reached the report",
+    "session_count": "sessions they belong to",
+    "agent_count": "agents (who sent them)",
+    "agent_ids": "the agents, at most 64",
+    "kind_counts": "records of each kind",
+    "first_ts": "earliest record",
+    "last_ts": "latest record",
+    "content_bytes": "bytes of text in all of them",
+}
+INCLUDED_KEYS = ("records_total", "records_included", "records")
+
+
+def _shown(name: str, value: object) -> object:
+    """A Report fact as one table cell: the counts per kind and the agent ids on one line."""
+    if name == "kind_counts" and isinstance(value, dict):
+        return " · ".join(f"{k} {v}" for k, v in value.items())
+    if name == "agent_ids" and isinstance(value, list):
+        return ", ".join(map(str, value)) or "none"
+    if name in ("first_ts", "last_ts") and value == "":
+        return "none"
+    return value
+
+
 def result_view(settings: Settings, state: dict) -> dict:
     """What the run page shows of the result: one row per released field with the plan's
     own description of it (read from the frozen plan copy in the run folder), and a few
-    facts about the run. Empty rows when there is no verified, completed report."""
+    facts about the run. Empty rows when there is no verified, completed report. For a
+    Report that includes records, ``disclosed`` holds them and how many of how many."""
     steps = {step["key"]: step for step in state["steps"]}
     out = state["outcome"]
     result = out.get("result") if out.get("verified") else None
     described: dict[str, str] = {}
+    records_report = False
+    min_count = 1
     try:
         plan = json.loads(
             (settings.runs_dir / state["id"] / "plan" / "plan.json").read_text(encoding="utf-8")
@@ -497,26 +548,47 @@ def result_view(settings: Settings, state: dict) -> dict:
             if node.get("type") == "final_report":
                 for f in node.get("config", {}).get("fields", []):
                     described[f.get("name", "")] = f.get("description", "")
+            elif node.get("type") == "records_report":
+                records_report = True
+                described.update(METADATA_MEANING)
+                min_count = node.get("config", {}).get("min_count") or 1
     except (OSError, ValueError, AttributeError):
         pass
+    items = list(result.items()) if isinstance(result, dict) else []
+    if records_report:  # the signed report sorts its keys; show the facts in the builder's order
+        order = {k: i for i, k in enumerate(plan_ir.METADATA)}
+        items.sort(key=lambda kv: order.get(kv[0], len(order)))
     rows = [
-        {"name": k, "value": v, "description": described.get(k, "")}
-        for k, v in (result.items() if isinstance(result, dict) else [])
+        {
+            "name": k,
+            "value": _shown(k, v) if records_report else v,
+            "description": described.get(k, ""),
+        }
+        for k, v in items
+        if not (records_report and k in INCLUDED_KEYS)
     ]
+    disclosed = None
+    if records_report and isinstance(result, dict) and "records" in result:
+        disclosed = {
+            "included": result.get("records_included"),
+            "total": result.get("records_total"),
+            "items": [r for r in result.get("records") or () if isinstance(r, dict)],
+        }
     manifest = (steps.get("attest", {}).get("output") or {}).get("manifest") or {}
     seconds = None
     try:
         fmt = "%Y-%m-%dT%H:%M:%SZ"
         seconds = int(
             (
-                datetime.strptime(state["finished"], fmt)
-                - datetime.strptime(state["started"], fmt)
+                datetime.strptime(state["finished"], fmt) - datetime.strptime(state["started"], fmt)
             ).total_seconds()
         )
     except (KeyError, ValueError, TypeError):
         pass
     return {
         "rows": rows,
+        "disclosed": disclosed,
+        "min_count": min_count,
         "records": (steps.get("export", {}).get("output") or {}).get("records"),
         "seconds": seconds,
         "model": (manifest.get("model_binding") or {}).get("id"),
@@ -557,17 +629,20 @@ def outcome(state: dict) -> dict:
             "or a prompt that is too long by itself. Review that step."
         ),
         "invalid_output": (
-            "The plan returned a result outside its agreed report fields. Review the Final "
-            "Report, then re-sign the corrected plan."
+            "The plan returned a result outside its agreed report fields, or larger than its"
+            " byte cap. Review the report, then re-sign the corrected plan."
         ),
         "plan_start_failed": (
             "The plan worker failed to start or to compile the plan's Python steps. Check the "
             "runtime and the plan."
         ),
-        "plan_query_failed": ("The plan failed in its Input Logs step while selecting records."),
+        "plan_query_failed": (
+            "The plan failed while selecting records: in its Log Source, a Filter's rules, or "
+            "an AND or OR block."
+        ),
         "plan_classify_failed": (
-            "The plan failed in a classifier or model step: the model's answers did not fit, "
-            "or an item could not be prepared."
+            "The plan failed in a classifier or model step (an LLM Filter is one): the model's "
+            "answers did not fit, or an item could not be prepared."
         ),
         "plan_metric_failed": (
             "A Python step failed or returned a value that does not match its declared output. "
@@ -575,8 +650,9 @@ def outcome(state: dict) -> dict:
         ),
         "plan_report_failed": "The plan failed while producing the report from its input.",
         "execution_timeout": (
-            "A Python step used an hour of processor time without finishing; it was stopped. "
-            "Check its code for a loop that never ends."
+            "The plan used an hour of processor time without finishing; it was stopped. Check "
+            "Python steps for a loop that never ends, and Filter regexes for a slow pattern "
+            "over long records."
         ),
         "model_output_truncated": (
             "The classifier exhausted its output-token budget before completing its answer. "
@@ -599,7 +675,7 @@ def outcome(state: dict) -> dict:
 
 def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list[dict]) -> dict:
     """What a run sends, by session: id, title, the records sent, and how many of them
-    the agreement's Input filter keeps. The filter is the box's own (``select_records``) run
+    the agreement's Log Source keeps. The filter is the box's own (``select_records``) run
     on the records' metadata only: kind, agent, session. When the filter also matches
     keywords, ``kept`` is None: that reads the text, and which records pass is the box's
     to know. Written into the run's state at start; the records themselves are deleted."""
@@ -634,10 +710,11 @@ def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list
 def run_counts(settings: Settings, state: dict) -> dict | None:
     """Sessions sent, dropped and classified for the run page. Sent and dropped come from
     what the UI sent (``sent_sessions``); what reaches the classifier is worked out from the
-    frozen plan when the classifier reads the Input filter directly; classified comes only
-    from fields of the verified report that count the classifier's items. Those are items,
-    not sessions: a session longer than the classifier's window is several items. None for
-    runs saved before runs recorded their sessions."""
+    frozen plan when the classifier reads the Log Source directly. With a Filter, AND or OR
+    between them the box decides which records go on, so it is not worked out here.
+    Classified comes only from fields of the verified report that count the classifier's
+    items. Those are items, not sessions: a session longer than the classifier's window is
+    several items. None for runs saved before runs recorded their sessions."""
     sent = state.get("input")
     if not sent:
         return None
@@ -653,6 +730,7 @@ def run_counts(settings: Settings, state: dict) -> dict | None:
             return None
 
     report = next((n for n in nodes.values() if n.get("type") == "final_report"), None)
+    records_report = any(n.get("type") == "records_report" for n in nodes.values())
     classifier = source_of(report, plan_ir.REPORT_INPUT)
     if not classifier or classifier.get("type") != "classifier":
         classifier = None
@@ -697,4 +775,6 @@ def run_counts(settings: Settings, state: dict) -> dict | None:
         "counts": counts,
         "reported": result is not None,
         "min_count": privacy.get("min_count") or 1,
+        # A Report (records_report) reads records, not a classifier's items.
+        "records_report": records_report,
     }

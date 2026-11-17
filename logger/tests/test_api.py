@@ -1,8 +1,10 @@
 import json
+import os
 
+import pytest
 from aiab.baked import records as box_records
 from aiab.baked.sealing import SCHEME
-from conftest import ANSWER, SECRET
+from conftest import ANSWER, PROD_KEY, SECRET, entry
 
 from logserver import calls
 
@@ -31,6 +33,7 @@ def test_sessions_are_metadata_and_never_what_was_said(client):
         "ended": "2027-01-15T08:01:00Z",
         "model": "claude-haiku-5-5",
         "records": 4,
+        "content_bytes": 92,
         "calls": [
             {
                 "id": "a1",
@@ -44,6 +47,7 @@ def test_sessions_are_metadata_and_never_what_was_said(client):
                 "messages": 1,
                 "records": 2,
                 "kinds": ["request", "response"],
+                "content_bytes": len(SECRET) + len(ANSWER),
             },
             alice["calls"][1],
         ],
@@ -60,7 +64,7 @@ def test_an_export_is_sealed_and_only_the_box_opens_it(client, store, fakebox):
     assert body["scheme"] == SCHEME and body["boot_id"] == fakebox.boot_id
     assert body["box"] == "box.example" and body["sessions"] == ["s-alice"]
     sealed = body["records"]
-    plain = calls.box_records(list(calls.sessions(store.load())[1].calls))
+    plain = calls.box_records(list(calls.sessions(list(store.calls()))[1].calls))
     # Metadata stays readable, for the UI's scope checks; the content does not.
     for s, p in zip(sealed, plain, strict=True):
         assert {k: s[k] for k in p if k != "content"} == {k: p[k] for k in p if k != "content"}
@@ -113,7 +117,78 @@ def test_no_box_means_no_export_and_no_plaintext(client, fakebox):
     assert SECRET not in response.text and "records" not in json.loads(response.text)
 
 
-def test_sync_and_status(client):
-    assert client.post("/v1/sync").json()["new"] == 0
+def test_sync_reads_again_and_status_tells_how_it_went(client, proxy):
+    proxy.append([{"id": "c1"}])  # parses as a call with no request: one more call
+    proxy.append(raw=b"not json\n")
+    assert client.post("/v1/sync").json() == {"new": 0, "segments": 1, "live": 3, "calls": 4}
     status = client.get("/v1/status").json()
-    assert status["calls"] == 3 and status["error"] is None and status["box"] == "box.example"
+    assert status["calls"] == 4 and status["error"] is None and status["box"] == "box.example"
+    assert status["result"]["live"] == 3 and status["at"]
+    assert status["problems"] == [{"file": "requests.jsonl", "problem": "1 lines are not calls"}]
+
+
+def test_status_and_sessions_answer_while_a_read_is_running(client, store):
+    with store._refresh_lock:  # a long read in progress
+        assert client.get("/v1/status").json()["calls"] == 3
+        assert len(client.get("/v1/sessions").json()["sessions"]) == 2
+
+
+def test_an_unexpected_read_error_is_a_503_too(client, store, monkeypatch):
+    def refuse(*args):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(store, "_snapshot", refuse)
+    response = client.post("/v1/sync")
+    assert response.status_code == 503 and "permission denied" in response.json()["detail"]
+    assert client.get("/v1/status").json()["error"]
+
+
+def test_an_unreadable_proxy_directory_is_a_503_and_keeps_the_index(client, settings):
+    os.rename(settings.proxy_dir, settings.proxy_dir.with_name("moved"))
+    response = client.post("/v1/sync")
+    assert response.status_code == 503 and "missing" in response.json()["detail"]
+    status = client.get("/v1/status").json()
+    assert status["error"] and status["calls"] == 3
+    assert len(client.get("/v1/sessions").json()["sessions"]) == 2
+
+
+def test_each_key_gets_its_own_box_and_no_other(client, fakebox, prodbox):
+    """Two UIs, two boxes: the key decides the box, and only that box opens the export."""
+    dev = client.post("/v1/export", json={"sessions": ["s-alice"]}).json()
+    prod = client.post(
+        "/v1/export", json={"sessions": ["s-alice"]}, headers={"x-log-key": PROD_KEY}
+    ).json()
+    assert dev["box"] == "box.example" and dev["boot_id"] == fakebox.boot_id
+    assert prod["box"] == "prod.example" and prod["boot_id"] == prodbox.boot_id
+    assert prodbox.decryptor.unseal(prod["records"], prodbox.boot_id)[0]["content"] == SECRET
+    with pytest.raises(Exception):  # noqa: B017, PT011 - the dev box cannot open it
+        fakebox.decryptor.unseal(prod["records"], prodbox.boot_id)
+    status = client.get("/v1/status", headers={"x-log-key": PROD_KEY}).json()
+    assert status["box"] == "prod.example"
+
+
+def test_one_box_down_does_not_stop_the_other(client, prodbox):
+    prodbox.down = True
+    assert client.post("/v1/export", json={"sessions": ["s-alice"]}).status_code == 200
+    response = client.post(
+        "/v1/export", json={"sessions": ["s-alice"]}, headers={"x-log-key": PROD_KEY}
+    )
+    assert response.status_code == 502
+
+
+def test_an_export_can_start_its_numbering_later_and_long_records_stay_whole(client, proxy):
+    """A run joining two servers' exports gives each its own range of offsets."""
+    first = client.post("/v1/export", json={"sessions": ["s-alice"]}).json()["records"]
+    later = client.post("/v1/export", json={"sessions": ["s-alice"], "offset": 40}).json()
+    assert [r["offset"] for r in later["records"]] == [40 + r["offset"] for r in first]
+    assert (
+        client.post("/v1/export", json={"sessions": ["s-alice"], "offset": -1}).status_code == 422
+    )
+
+
+def test_a_long_record_is_sealed_whole(client, proxy, fakebox):
+    long = "x" * 30_000
+    proxy.append([entry("long1", "carol", 500, long, "ok", session="s-long")])
+    client.post("/v1/sync")
+    sealed = client.post("/v1/export", json={"sessions": ["s-long"]}).json()["records"]
+    assert fakebox.decryptor.unseal(sealed, fakebox.boot_id)[0]["content"] == long

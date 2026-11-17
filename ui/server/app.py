@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import secrets
 import time
@@ -22,6 +23,7 @@ from markupsafe import Markup, escape
 from server import (
     deploystatus,
     editing,
+    feedback,
     githubexport,
     plan_chat,
     plantlogs,
@@ -264,6 +266,8 @@ def render(request: Request, template: str, **context: Any) -> Response:
     # Prototype: the server holds a working lab key, so the Sign screen offers Lab Sign to
     # anyone logged in and every page says DEV MODE.
     context.setdefault("lab_sign", pv.server_signs(settings, "lab"))
+    # A short word shown beside the name, so nobody mistakes dev for the demo (AIAB_ENV_TAG).
+    context.setdefault("env_tag", os.environ.get("AIAB_ENV_TAG", "").strip()[:12])
     context.update(
         user=user_of(request),
         settings=settings,
@@ -347,6 +351,13 @@ async def login_form(request: Request) -> Response:
     return render(request, "login.html", next=safe_next(request.query_params.get("next")))
 
 
+@app.get("/login/local")
+async def login_local_form(request: Request) -> Response:
+    """The password form for local accounts, apart from the provider's sign-in."""
+    next_path = safe_next(request.query_params.get("next"))
+    return render(request, "login.html", next=next_path, local=True)
+
+
 @app.get("/login/start")
 async def login_start(request: Request) -> Response:
     """Send the browser to the provider. What must come back unchanged (state), what the ID
@@ -418,7 +429,9 @@ async def login(
     target = safe_next(next)
     account = authenticate(settings.accounts_file, username.strip(), password)
     if account is None:
-        return render(request, "login.html", next=target, err="Unknown account or wrong password.")
+        return render(
+            request, "login.html", next=target, local=True, err="Unknown account or wrong password."
+        )
     response = RedirectResponse(target, status_code=303)
     response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
     return response
@@ -525,6 +538,147 @@ async def proxy_key(request: Request, name: Annotated[str, Form()] = "") -> Resp
     return await _proxy_page(request, user, name=name, key=outcome.key)
 
 
+# --------------------------------------------------------------------------- feedback
+
+
+@app.post("/feedback")
+async def send_feedback(
+    request: Request,
+    text: str = Form(""),
+    name: str = Form(""),
+    page: str = Form("/"),
+) -> Response:
+    """The Feedback form: one line in feedback.jsonl, then back to the page it came from."""
+    who = user_of(request)
+    if who is None:
+        return to_login(request)
+    target = feedback.clean_page(page)
+    if not text.strip():
+        return back(target)
+    entry = await asyncio.to_thread(feedback.record, settings, who, target, text, name)
+    feedback.notify(settings, entry, "form", public_origin(request))
+    return back(target, msg="Thanks, sent to the team")
+
+
+@app.get("/feedback")
+async def feedback_list(request: Request) -> Response:
+    """The lab's list of what people sent: form entries and post-it notes, newest first."""
+    who = user_of(request)
+    if who is None:
+        return to_login(request)
+    if who["party"] != "lab":
+        return Response("Only the lab can read feedback.", status_code=403, media_type="text/plain")
+    items = [{**e, "kind": "form"} for e in feedback.entries(settings)]
+    items += feedback.notes(settings)
+    items.sort(key=lambda e: str(e.get("time", "")), reverse=True)
+    return render(request, "feedback.html", items=items)
+
+
+def _note_view(note: dict[str, Any], who: dict[str, str]) -> dict[str, Any]:
+    """A note for the notes script; ``mine`` when the viewer wrote it (they may delete it)."""
+    keys = (
+        "id",
+        "time",
+        "user",
+        "party",
+        "name",
+        "text",
+        "anchor",
+        "side",
+        "gap",
+        "ax",
+        "ay",
+        "x",
+        "y",
+    )
+    return {k: note.get(k) for k in keys} | {
+        "edited": note.get("edited") or "",
+        "resolved": bool(note.get("resolved")),
+        "mine": note.get("user") == who["username"],
+    }
+
+
+@app.get("/notes")
+async def page_notes(request: Request) -> Response:
+    """The post-it notes left on one page, for the notes script."""
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    page = feedback.clean_page(request.query_params.get("page"))
+    found = await asyncio.to_thread(feedback.notes, settings, page)
+    return JSONResponse({"notes": [_note_view(n, who) for n in found]})
+
+
+@app.post("/notes")
+async def add_note(request: Request) -> Response:
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict) or not str(body.get("text") or "").strip():
+        return JSONResponse({"error": "empty"}, status_code=400)
+    note = await asyncio.to_thread(feedback.add_note, settings, who, body)
+    feedback.notify(settings, note, "note", public_origin(request))
+    return JSONResponse({"note": _note_view(note, who)})
+
+
+@app.post("/notes/{note_id}/resolve")
+async def resolve_note(request: Request, note_id: str) -> Response:
+    """The lab marks a note resolved, or opens it again."""
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    if who["party"] != "lab":
+        return JSONResponse({"error": "lab only"}, status_code=403)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    resolved = bool(body.get("resolved", True)) if isinstance(body, dict) else True
+    note = await asyncio.to_thread(feedback.resolve_note, settings, who, note_id, resolved)
+    if note is None:
+        return JSONResponse({"error": "no such note"}, status_code=404)
+    return JSONResponse({"note": _note_view(note, who)})
+
+
+@app.post("/notes/{note_id}/edit")
+async def edit_note(request: Request, note_id: str) -> Response:
+    """The author changes their note's text. The earlier text stays in notes.jsonl."""
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    text = body.get("text") if isinstance(body, dict) else None
+    outcome = await asyncio.to_thread(feedback.edit_note, settings, who, note_id, text)
+    if outcome == "forbidden":
+        return JSONResponse({"error": "only its author can edit a note"}, status_code=403)
+    if outcome == "missing":
+        return JSONResponse({"error": "no such note"}, status_code=404)
+    if outcome == "empty":
+        return JSONResponse({"error": "empty"}, status_code=400)
+    return JSONResponse({"note": _note_view(outcome, who)})
+
+
+@app.post("/notes/{note_id}/delete")
+async def delete_note(request: Request, note_id: str) -> Response:
+    """The author deletes their note. It stays in notes.jsonl but is shown nowhere."""
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    outcome = await asyncio.to_thread(feedback.delete_note, settings, who, note_id)
+    if outcome == "forbidden":
+        return JSONResponse({"error": "only its author can delete a note"}, status_code=403)
+    if outcome == "missing":
+        return JSONResponse({"error": "no such note"}, status_code=404)
+    return JSONResponse({"deleted": note_id})
+
+
 # The audit plan playground (ui/playground): a standalone prototype, served from its build
 # output when `pnpm build` has been run there. Static: it reads no agreement and calls no
 # endpoint; plans live in the browser.
@@ -550,7 +704,7 @@ async def playground(request: Request, path: str = "") -> Response:
 
 
 def _run_source(request: Request, folder: Path | None, form: Any = None) -> tuple[LogSource, bool]:
-    """The log source a run reads: the one the agreement's Input filter names, when it is
+    """The log source a run reads: the one the agreement's Log Source names, when it is
     one of this server's sources; otherwise the page's ``logs`` choice (plans written before
     the filter named a source). The flag says whether the agreement decided."""
     named = runs.plan_source(folder) if folder else None
@@ -587,7 +741,7 @@ def _log_source(request: Request, form: Any = None) -> LogSource:
 
 @app.get("/logs/sessions.json")
 async def logs_sessions(request: Request) -> Response:
-    """The sessions of one log source, by metadata only, for the Input filter's picker."""
+    """The sessions of one log source, by metadata only, for the Log Source's picker."""
     if user_of(request) is None:
         return JSONResponse({"error": "sign in"}, status_code=401)
     source = _log_source(request)
@@ -1013,7 +1167,7 @@ async def runs_index(request: Request) -> Response:
         pre["ok"] = False
     source, source_fixed = _run_source(request, folder)
     all_sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
-    # The agreement's input filter decides what is sent: sessions it takes, sessions outside
+    # The agreement's Log Source decides what is sent: sessions it takes, sessions outside
     # its scope (the box would refuse them), and sessions with nothing to send.
     fits, outside, empty = [], [], []
     named = runs.plan_sessions(folder) if folder else set()
@@ -1027,7 +1181,7 @@ async def runs_index(request: Request) -> Response:
             "session": s,
             "notes": notes,
             "records": len(recs),
-            "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
+            "kb": proxylogs.sent_kb(s.records, recs),
         }
         (outside if item["notes"] else empty if not recs else fits).append(item)
     labels = [source.label]
@@ -1037,7 +1191,7 @@ async def runs_index(request: Request) -> Response:
             "session": s,
             "notes": [],
             "records": len(recs),
-            "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
+            "kb": proxylogs.sent_kb(s.records, recs),
         }
         (fits if recs else empty).append(item)
         if recs and other.label not in labels:
@@ -1095,10 +1249,12 @@ async def runs_start(request: Request) -> Response:
         ]
         named = runs.plan_sessions(target.plan_dir) & chosen_sessions
         elsewhere = _named_elsewhere(source, named)
+        picks = [(source, s) for s in picked] + elsewhere
         picked += [s for _, s in elsewhere]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
-        records = proxylogs.box_records([r for s in picked for r in s.records])
+        # A log server's sessions arrive sealed to the box; the rest are built here.
+        records = proxylogs.run_records(picks)
         if not records:
             return back(here, err="The chosen sessions hold no text to audit.")
         label = (
@@ -1115,7 +1271,7 @@ async def runs_start(request: Request) -> Response:
         run_id = runs.start_run(
             settings, user, chosen, target.plan_dir, records, label=label, sent=sent
         )
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, proxylogs.ProxyError) as exc:
         return back(here, err=str(exc))
     plan = (runs.load_run(settings, run_id) or {}).get("plan") or {}
     version = f", version {plan['digest'][7:19]}" if plan.get("digest") else ""

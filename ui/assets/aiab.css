@@ -19,6 +19,7 @@
   --ok-line: #7AA874;
   --ok-tint: #EEF4E6;
   --destructive: #B4321C;
+  --warn: #8A6E12;                /* muted ochre: needs attention, not an error */
   --bad-line: #E2B4B0;
   --bad-tint: #F8ECEA;
   --overlay: rgba(255, 255, 255, 0.88);
@@ -79,8 +80,13 @@ textarea:disabled, input:disabled { background: var(--paper-2); color: var(--ink
 .flow li strong { color: var(--ink-1); font-weight: 500; }
 .flow li.here { background: var(--paper-2); box-shadow: inset 2px 0 0 0 var(--accent); padding-left: var(--space-3); }
 .flow li.done::before { color: var(--accent-ink); }
-.login { max-width: 360px; margin: var(--space-24) auto; border: var(--border-strong); }
-.login h3 { margin-top: 0; }
+.login { max-width: 400px; margin: var(--space-16) auto; padding: var(--space-10) var(--space-8); border: var(--border-strong); }
+.login-title { margin: 0 0 var(--space-8); }
+.btn--block { display: flex; width: 100%; }
+.login-form .btn { margin-top: var(--space-6); }
+.login-switch { margin: var(--space-6) 0 0; text-align: center; font-size: var(--text-xs); }
+.login-switch a { color: var(--ink-2); }
+.login-switch a:hover { color: var(--ink-1); }
 .explain { font-size: var(--text-sm); color: var(--ink-2); max-width: 760px; margin-bottom: var(--space-6); }
 .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); }
 @media (max-width: 900px) { .three { grid-template-columns: 1fr; } }
@@ -350,15 +356,23 @@ button[disabled], .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .logs-sub, .req-meta { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); margin: 0 0 var(--space-4); overflow-wrap: anywhere; }
 /* Plant Logs: one lane chart per plant run (_logplant.html). Marks are placed by --l and --w. */
 .plant-run { margin-bottom: var(--space-5); }
-.plant-chart { display: grid; gap: var(--space-1); }
-.plant-lane { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr); gap: var(--space-3); align-items: center; }
-.plant-name { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
-.plant-track { position: relative; height: var(--space-4); background: var(--paper-2); border-bottom: var(--border-hairline); }
-.plant-track i { position: absolute; top: 0; bottom: 0; left: var(--l); width: var(--w); min-width: 1px; background: var(--accent); opacity: var(--o, 1); }
-.plant-axis .plant-track { background: none; border: 0; }
-.plant-axis .plant-track span { position: absolute; left: var(--l); transform: translateX(-50%); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); white-space: nowrap; }
-.plant-axis .plant-track span:first-child { transform: none; }
-.plant-axis .plant-track span:last-child { transform: translateX(-100%); }
+.plant-chart { display: block; width: 100%; height: auto; }
+.plant-base { stroke: var(--ink-1); stroke-width: 1; }
+.plant-grid { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 4; }
+.plant-tick { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); }
+.plant-line { fill: none; stroke: var(--ink-1); stroke-width: 1.5; stroke-linejoin: round; }
+.plant-line-2 { stroke: var(--amber-ink); }
+.plant-line-3 { stroke: var(--ink-3); stroke-dasharray: 5 3; }
+.plant-line-4 { stroke: var(--ink-2); stroke-dasharray: 1 3; }
+.plant-legend { border-collapse: collapse; font-size: var(--text-sm); color: var(--ink-2); margin: var(--space-2) 0; }
+.plant-legend td { padding: 2px var(--space-4) 2px 0; vertical-align: baseline; }
+.plant-legend td:first-child { color: var(--ink-1); white-space: nowrap; }
+.plant-legend td:nth-child(2) { font-family: var(--font-mono); text-align: right; }
+.plant-read { font-size: var(--text-sm); color: var(--ink-3); margin: 0; }
+.plant-key { display: inline-block; width: 16px; border-top: 2px solid var(--ink-1); vertical-align: middle; margin-right: var(--space-1); }
+.plant-key-2 { border-color: var(--amber-ink); }
+.plant-key-3 { border-color: var(--ink-3); border-top-style: dashed; }
+.plant-key-4 { border-color: var(--ink-2); border-top-style: dotted; }
 .req-meta { margin: var(--space-4) 0; }
 .ok { color: var(--accent-ink); } .bad { color: var(--destructive); }
 details.fold { border: var(--border-strong); margin: 0 0 var(--space-3); }
@@ -529,6 +543,13 @@ code.hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var
 .table td.state { font-size: var(--text-sm); color: var(--ink-2); }
 .table td.state.ok { color: var(--ok); }
 .table td.state.bad { color: var(--destructive); }
+/* Lab above Auditor, names right-aligned so the icons sit in one column. */
+.sigs { display: inline-grid; justify-items: end; row-gap: 2px; vertical-align: middle; }
+.sigs .sig { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; margin: 0; }
+.sig svg { flex: none; }
+.sig--ok svg { color: var(--ok); }
+.sig--missing svg { color: var(--ink-3); }
+.sig--old svg { color: var(--warn); }
 
 /* Plan page: one line on where the agreement stands. */
 .plan-state{margin:0 0 var(--space-4);font-size:var(--text-sm);color:var(--ink-2)}
@@ -570,9 +591,6 @@ select[hidden] { display: none !important; }
 .sel-list button.on { background: var(--paper-2); font-weight: 600; }
 
 /* Plant session: the run's numbers, and wide tables that scroll inside their fold. */
-.plant-facts { margin: var(--space-3) 0; }
-.plant-scroll { overflow-x: auto; max-height: 24rem; overflow-y: auto; }
-.plant-scroll .table { white-space: nowrap; }
 .plant-run + .plant-run { margin-top: var(--space-8); }
 
 /* Sign page: per party, the state, the Sign action, and the root key with its form. */
@@ -581,9 +599,11 @@ select[hidden] { display: none !important; }
 .sign-state.ok { color: var(--ok); }
 .sign-state.bad { color: var(--destructive); }
 
+/* A short word beside the name (AIAB_ENV_TAG), so nobody mistakes dev for the demo.
+   Yellow and black so it is seen; prod sets no tag. */
+.env-tag { margin-right: auto; margin-left: var(--space-4); padding: 2px 8px; background: #FFD400; color: #000; border: 2px solid #000; font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
 /* Prototype, demo only: the server signs as the lab. Yellow and black so nobody takes it
    for the real thing. */
-.dev-mode { margin-right: auto; margin-left: var(--space-4); padding: 2px 8px; background: #FFD400; color: #000; border: 2px solid #000; font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.08em; white-space: nowrap; }
 .demo-sign { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 6px solid transparent; border-image: repeating-linear-gradient(-45deg, #000 0 10px, #FFD400 10px 20px) 6; background: #FFD400; color: #000; }
 .demo-tag { font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 .demo-btn { background: #000; color: #FFD400; border: 2px solid #000; }
@@ -607,6 +627,16 @@ select[hidden] { display: none !important; }
 .result-table td { padding-top: var(--space-2); padding-bottom: var(--space-2); }
 .result-value { font-weight: 600; }
 .result-facts { font-size: var(--text-sm); margin: var(--space-3) 0 0; }
+/* A Report that includes records: how many of how many, then the records in a scrolling list */
+.result-included { font-size: var(--text-sm); margin: var(--space-4) 0 var(--space-2); }
+.result-records { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow-y: auto; border: var(--border-hairline); }
+.result-records li { padding: var(--space-2) var(--space-3); border-bottom: var(--border-hairline); }
+.result-records li:last-child { border-bottom: none; }
+.result-record-meta { margin: 0; font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }
+.result-records pre.cmd { margin: var(--space-1) 0 0; }
+.result-record-cut { margin: var(--space-1) 0 0; font-size: var(--text-xs); }
+/* Plan and Sign pages: the plan releases records */
+.plan-discloses { margin: 0 0 var(--space-3); font-size: var(--text-sm); font-weight: 600; color: var(--ink-1); }
 
 /* New agreement: the description is optional, behind one line */
 .add-description > summary { cursor: pointer; font-family: var(--font-sans); font-size: var(--text-sm); color: var(--accent-ink); list-style: none; }
@@ -625,3 +655,53 @@ select[hidden] { display: none !important; }
 .nav-links .chip, .nav-links .btn { display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; padding: 0 var(--space-3); font-size: var(--text-xs); line-height: 1; }
 .nav-links .chip .party-icon { vertical-align: middle; }
 .home-art .block { fill: var(--ink-1); }
+.runs-pick { gap: var(--space-2); flex-wrap: wrap; }
+
+/* ---- feedback: the button and menu, the form (base.html) and post-it notes (notes.js) ---- */
+/* The button sits over the bottom right of the window, about 80px tall with its label. The
+   extra padding lets the last content on a page scroll clear of it. Its circle is the one
+   exception to swiss.css's no-rounded-corners rule, by request. */
+body.has-feedback main.page { padding-bottom: 136px; }
+.fb { position: fixed; right: var(--space-6); bottom: var(--space-4); z-index: 40; }
+.fb-button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 0; background: none; border: 0; color: var(--ink-1); font: inherit; cursor: pointer; }
+.fb-circle { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; box-sizing: border-box; border-radius: 50% !important; background: #FFFFFF; border: 1px solid var(--rule-strong); box-shadow: 0 2px 8px rgba(22, 24, 27, 0.16); }
+.fb-button:hover .fb-circle, .fb-button[aria-expanded="true"] .fb-circle { border-color: var(--ink-1); }
+.fb-button:focus-visible { outline: none; }
+.fb-button:focus-visible .fb-circle { outline: 2px solid var(--ring); outline-offset: 2px; }
+.fb-label { font-size: var(--text-xs); line-height: 1; font-weight: 500; color: var(--ink-2); }
+.fb-menu { position: absolute; right: 0; bottom: calc(100% + var(--space-2)); width: 300px; padding: var(--space-2); box-sizing: border-box; background: var(--paper-1); border: var(--border-strong); box-shadow: 0 8px 24px rgba(22, 24, 27, 0.16); }
+.fb-choice { display: flex; align-items: flex-start; gap: var(--space-3); width: 100%; padding: var(--space-3); background: none; border: 0; color: var(--ink-1); font: inherit; text-align: left; cursor: pointer; }
+.fb-choice:hover, .fb-choice:focus-visible { background: var(--paper-2); outline: none; }
+.fb-choice:disabled { opacity: 0.5; cursor: default; background: none; }
+.fb-choice svg { flex: none; margin-top: 1px; }
+.fb-choice strong { display: block; font-size: var(--text-base); font-weight: 600; }
+.fb-choice small { display: block; margin-top: 2px; font-size: var(--text-sm); color: var(--ink-2); }
+.fb-more { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-1); padding: var(--space-3) var(--space-3) var(--space-2); border-top: var(--border-hairline); }
+.fb-link { padding: 0; background: none; border: 0; font: inherit; font-size: var(--text-sm); color: var(--ink-3); text-align: left; text-decoration: none; cursor: pointer; }
+.fb-link:hover, .fb-link:focus-visible { color: var(--ink-1); text-decoration: underline; }
+.fb-menu[hidden], .fb-more[hidden], .fb-link[hidden], .fb-banner[hidden], .fb-banner .btn[hidden] { display: none; }
+.fb-banner { position: fixed; top: calc(var(--nav-height) + var(--space-3)); left: 50%; transform: translateX(-50%); z-index: 110; display: flex; align-items: center; gap: var(--space-4); max-width: calc(100vw - 2 * var(--space-4)); box-sizing: border-box; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); background: var(--ink-1); color: var(--paper-1); font-size: var(--text-sm); box-shadow: 0 4px 16px rgba(22, 24, 27, 0.2); }
+.fb-banner--done { padding-right: var(--space-4); }
+.fb-banner .btn { color: var(--paper-1); border-color: var(--paper-1); padding: var(--space-1) var(--space-3); }
+.fb-banner .btn:hover { background: var(--paper-1); color: var(--ink-1); }
+.feedback-form textarea.prose { margin-bottom: var(--space-4); }
+.feedback-name { margin-bottom: var(--space-6); }
+main.page { position: relative; }
+.notes-layer { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
+.postit { position: absolute; width: 200px; box-sizing: border-box; padding: var(--space-2) var(--space-3); background: #FFF2A8; border: 1px solid #D9C55A; box-shadow: 2px 3px 0 0 rgba(22, 24, 27, 0.18); color: var(--ink-1); font-family: var(--font-sans); font-size: var(--text-xs); line-height: 1.4; pointer-events: auto; }
+.postit-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow-y: auto; }
+.postit-meta { margin: var(--space-1) 0 0; color: var(--ink-2); font-size: 12px; }
+.postit-links { display: flex; gap: var(--space-3); margin-top: var(--space-1); }
+.postit-resolve { padding: 0; background: none; border: 0; color: var(--accent-ink); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
+.postit--resolved { opacity: 0.6; }
+.postit--focus { outline: 3px solid var(--accent); outline-offset: 2px; }
+.postit--draft { width: 240px; }
+.postit--editing { width: 240px; }
+.postit--editing textarea { width: 100%; min-height: 80px; box-sizing: border-box; font: inherit; font-size: var(--text-sm); border: 1px solid #D9C55A; background: #FFFBE0; padding: var(--space-1) var(--space-2); resize: vertical; }
+.postit--draft textarea { width: 100%; min-height: 80px; box-sizing: border-box; font: inherit; font-size: var(--text-sm); border: 1px solid #D9C55A; background: #FFFBE0; padding: var(--space-1) var(--space-2); resize: vertical; }
+.postit--draft input { width: 100%; box-sizing: border-box; margin-top: var(--space-1); font: inherit; border: 1px solid #D9C55A; background: #FFFBE0; padding: var(--space-1) var(--space-2); }
+.postit-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+body.notes-placing, body.notes-placing main * { cursor: crosshair; }
+body.notes-placing :is(nav, .fb, .fb-banner) * { cursor: auto; }
+.feedback-list td.page { white-space: nowrap; }
+.feedback-list td.text { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 36rem; }

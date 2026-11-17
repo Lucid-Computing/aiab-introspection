@@ -108,7 +108,7 @@ export function structuralIssues(plan: Plan): Issue[] {
     for (const [name, r] of Object.entries(n.inputs)) {
       const path = ["nodes", i, "inputs", name];
       if (rule.kind === "none") {
-        issues.push({ severity: "error", nodeId: n.id, path, message: `${n.id}: Input Logs takes no inputs` });
+        issues.push({ severity: "error", nodeId: n.id, path, message: `${n.id}: Log Source takes no inputs` });
         continue;
       }
       if (rule.kind === "fixed" && !rule.ports.includes(name)) {
@@ -138,7 +138,7 @@ export function structuralIssues(plan: Plan): Issue[] {
           path,
           message: out
             ? `${n.id}.inputs.${name}: "${src}" has no output "${port}" (its output is "${out.name}")`
-            : `${n.id}.inputs.${name}: "${src}" is a Final Report and has no output`,
+            : `${n.id}.inputs.${name}: "${src}" is a report and has no output`,
         });
     }
   });

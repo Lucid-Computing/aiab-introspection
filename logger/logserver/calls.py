@@ -15,11 +15,10 @@ from datetime import UTC, datetime
 
 SESSION_GAP_SECONDS = 30 * 60  # calls from one person this close together form one session
 REMINDER = re.compile(r"(<system-reminder>.*?</system-reminder>)", re.DOTALL)
+
+
 # What one record may carry. Tool results (file contents, command output) and tool inputs
 # can be enormous, and a plan allows about 100 KB per run, so they are cut, head first.
-CONTENT_LIMITS = {"request": 8000, "response": 8000, "tool_call": 2000, "tool_result": 2000}
-
-
 @dataclass(frozen=True)
 class Call:
     """One call without its conversation: the metadata, and the parts kept for the box."""
@@ -54,7 +53,13 @@ class Call:
             "messages": self.message_count,
             "records": len(self.parts),
             "kinds": [kind for kind, _ in self.parts],
+            "content_bytes": self.content_bytes,
         }
+
+    @property
+    def content_bytes(self) -> int:
+        """How much text a run would send for this call. A size, never the text."""
+        return sum(len(content.encode()) for _, content in self.parts)
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,7 @@ class Session:
             "ended": self.calls[-1].ts,
             "model": next((c.model for c in self.calls if c.model), None),
             "records": sum(len(c.parts) for c in self.calls),
+            "content_bytes": sum(c.content_bytes for c in self.calls),
             "calls": [c.metadata() for c in self.calls],
         }
 
@@ -134,7 +140,9 @@ def _parts(messages: list[dict], response_blocks: list[dict]) -> list[tuple[str,
         if b["kind"] == "tool_use":
             name = b["label"].removeprefix("tool call: ")
             parts.append(("tool_call", f"{name} {b['text']}"))
-    return [(kind, _cut(body, CONTENT_LIMITS[kind])) for kind, body in parts if body.strip()]
+    # Whole, however long: the box splits a text longer than the model's context, and a
+    # run has no size limit, so nothing is cut here (the agreement UI's rule, PR #66).
+    return [(kind, body.strip()) for kind, body in parts if body.strip()]
 
 
 def sessions(calls: list[Call]) -> list[Session]:
@@ -157,8 +165,9 @@ def sessions(calls: list[Call]) -> list[Session]:
     return result
 
 
-def box_records(calls: list[Call]) -> list[dict]:
+def box_records(calls: list[Call], first_offset: int = 0) -> list[dict]:
     """The box's record format, one record per part of each call, oldest call first.
+    Offsets count on from ``first_offset``.
 
     agent_id is who sent it (the proxy's "who"), session_id the grouping above, content what
     the model saw and said. The box checks these against the plan's input scope."""
@@ -169,7 +178,7 @@ def box_records(calls: list[Call]) -> list[dict]:
                 {
                     "stream": "proxy",
                     "batch": 0,
-                    "offset": len(out),
+                    "offset": first_offset + len(out),
                     "agent_id": c.who,
                     "session_id": c.session_id,
                     "ts": c.ts,
@@ -178,13 +187,6 @@ def box_records(calls: list[Call]) -> list[dict]:
                 }
             )
     return out
-
-
-def _cut(text: str, limit: int) -> str:
-    text = text.strip()
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip() + f"\n… [cut here; {len(text):,} characters in all]"
 
 
 # ---- helpers -----------------------------------------------------------------------------

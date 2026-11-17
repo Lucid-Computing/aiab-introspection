@@ -487,7 +487,7 @@ def test_plant_export_is_sent_as_written_with_a_batch_per_file(tmp_path):
     sessions = [s for s in every if not s.who.startswith("plant-")]
     assert [s.id for s in sessions] == ["s1", "s2"]  # the split session is one
     s1 = sessions[0]
-    assert s1.title.startswith("agt-1 · ") and s1.title.endswith("· 4 records")
+    assert s1.title.startswith("s · transcript · ") and s1.title.endswith("· 4 records")
     assert "secret" not in s1.title
 
     sent = P.box_records([r for s in sessions for r in s.records])
@@ -510,14 +510,8 @@ def test_plant_export_is_sent_as_written_with_a_batch_per_file(tmp_path):
 
     first, resumed = plantlogs.timeline(plant.path(settings), s1.records)
     assert (first["run"], first["batch"], resumed["batch"]) == ("s/1-first", 0, 2)
-    lanes = {lane["name"]: lane for lane in resumed["lanes"]}
-    assert [lane["name"] for lane in resumed["lanes"]] == list(plantlogs.LANES)
-    assert lanes["Slurm jobs"]["count"] == "1" and lanes["GPU use"]["count"] == "1"
-    assert lanes["Model calls"]["count"] == "1" and lanes["Network"]["count"] == "0.0 MB"
-    assert len(lanes["Network"]["marks"]) == 1  # the row after the run is left out
-    job = lanes["Slurm jobs"]["marks"][0]
-    assert job == {"left": 16.667, "width": 50.0}
-    assert {lane["name"]: lane["count"] for lane in first["lanes"]}["Tool calls"] == "1"
+    assert len(resumed["lines"][0]["points"].split()) == plantlogs.CHART_BINS
+    assert {line["name"]: line["count"] for line in first["lines"]}["Tool calls"] == 1
 
 
 def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):
@@ -534,7 +528,7 @@ def test_plant_session_view_and_runs_show_metadata_only(tmp_path, monkeypatch):
     page = client.get("/logs?logs=plant&session=s1").text
     detail = page.split('class="logs-detail"')[1]
     assert "s/1-first · 2026-01-01 10:00:00 to 2026-01-01 10:10:00 UTC" in detail
-    assert detail.count('class="plant-run"') == 2 and "Slurm jobs" in detail
+    assert detail.count('class="plant-run"') == 2 and "plant-line" in detail
     assert "secret" not in page
     page = client.get("/runs?logs=plant").text
     assert 'name="logs" value="plant"' in page and "secret" not in page

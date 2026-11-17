@@ -10,7 +10,7 @@ DATA="${AIAB_DATA:-/data}"
 REPO="${AIAB_REPO:?set AIAB_REPO to owner/name}"
 URL="${AIAB_REPO_URL:-https://github.com/$REPO.git}"
 BRANCH="${AIAB_CHECKOUT_BRANCH:-master}"
-mkdir -p "$DATA/runs" "$DATA/demo-keys"
+mkdir -p "$DATA/runs" "$DATA/demo-keys" "$DATA/feedback"
 umask 077
 
 # Identity for the deploy commits; the GitHub token serves both git push and gh.
@@ -48,6 +48,8 @@ export AIAB_GIT_DIR="$DATA/repo" AIAB_PLAN_DIR="$DATA/repo/plan" AIAB_AGREEMENTS
 export UI_ACCOUNTS_FILE="$DATA/accounts.json"  # admins.json is the committed one in ui/
 # The trust file is the checkout's static/aiab/baked/trust.json (production's); not copied.
 export AIAB_RUNS_DIR="$DATA/runs" AIAB_DEMO_KEYS="$DATA/demo-keys" AIAB_LOGS_DIR="$DATA/logs"
+# The Feedback form's entries and the post-it notes (server/feedback.py), kept across deploys.
+export AIAB_FEEDBACK_DIR="$DATA/feedback"
 # Runs verify the box against the release pins in the checkout, which follows its branch.
 export AIAB_RELEASE_FILE="${AIAB_RELEASE_FILE:-$DATA/repo/static/deploy/tinfoil/audit/release.json}"
 

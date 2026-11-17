@@ -51,25 +51,25 @@ def test_new_agreement_is_a_valid_plan_asking_the_question(draft):
     assert view.issue is None
     assert view.plan_id == "builder-test"
     assert view.description == "Does the agent leak secrets?"
-    assert "leak secrets" in node(view.plan, "classifier")["config"]["instructions"]
-    assert [n.type for n in view.nodes] == ["input_logs", "classifier", "final_report"]
+    assert node(view.plan, "filter")["config"]["llm"]["question"] == "Does the agent leak secrets?"
+    assert [n.type for n in view.nodes] == ["input_logs", "filter_logs", "records_report"]
     assert pv.load_history(draft.plan_dir)[0]["kind"] == "created"
 
 
 def test_save_plan_refuses_what_the_box_refuses_and_records_the_rest(draft):
     before = pv.load_plan_view(draft).digest
     plan = plan_of(draft)
-    node(plan, "report")["inputs"]["result"] = "logs.records"
+    node(plan, "report")["inputs"]["records"] = "missing.records"
     digest, issues = pv.save_plan(draft, plan, ACTOR)
     assert digest is None
-    assert issues[0]["node"] == "report" and "receives LogRecords" in issues[0]["message"]
+    assert issues[0]["node"] == "report" and 'no node "missing"' in issues[0]["message"]
     assert pv.load_plan_view(draft).digest == before  # nothing written
     plan = plan_of(draft)
-    node(plan, "classifier")["config"]["threshold"] = 0.9
+    node(plan, "filter")["config"]["llm"]["threshold"] = 0.9
     digest, issues = pv.save_plan(draft, plan, ACTOR)
     assert digest and not issues and digest != before
     event = pv.load_history(draft.plan_dir)[0]
-    assert event["kind"] == "plan" and '+        "threshold": 0.9' in event["detail"]
+    assert event["kind"] == "plan" and '+          "threshold": 0.9' in event["detail"]
     assert (draft.plan_dir / "plan.json").read_bytes().endswith(b"}\n")  # canonical JSON
     assert pv.save_plan(draft, plan, ACTOR) == (digest, [])  # saving the same plan is a no-op
     assert pv.load_history(draft.plan_dir)[0] == event
@@ -93,7 +93,7 @@ def test_builder_endpoints_follow_login_lease_frozen_and_version(draft, monkeypa
     assert doc["plan"]["plan_id"] == "builder-test" and doc["issue"] is None
     assert doc["editable"] is False  # nobody pressed Edit yet
     plan = doc["plan"]
-    node(plan, "classifier")["config"]["threshold"] = 0.8
+    node(plan, "filter")["config"]["llm"]["threshold"] = 0.8
 
     # Saving needs the edit lease.
     response = client.put(url, json={"plan": plan, "expect": doc["digest"]})
@@ -112,7 +112,7 @@ def test_builder_endpoints_follow_login_lease_frozen_and_version(draft, monkeypa
 
     # A plan the box refuses comes back with the loader's issues and is not saved.
     broken = json.loads(json.dumps(plan))
-    node(broken, "report")["inputs"]["result"] = "logs.records"
+    node(broken, "report")["inputs"]["records"] = "missing.records"
     refused = client.put(url, json={"plan": broken, "expect": doc["digest"]})
     assert refused.status_code == 422
     assert refused.json()["issues"][0]["node"] == "report"
@@ -121,7 +121,7 @@ def test_builder_endpoints_follow_login_lease_frozen_and_version(draft, monkeypa
     saved = client.put(url, json={"plan": plan, "expect": doc["digest"]})
     assert saved.status_code == 200
     assert saved.json()["digest"] != doc["digest"]
-    assert node(plan_of(draft), "classifier")["config"]["threshold"] == 0.8
+    assert node(plan_of(draft), "filter")["config"]["llm"]["threshold"] == 0.8
 
     # Another person cannot save while the lease is held.
     other = TestClient(web.app)
