@@ -350,6 +350,13 @@ async def login_form(request: Request) -> Response:
     return render(request, "login.html", next=safe_next(request.query_params.get("next")))
 
 
+@app.get("/login/local")
+async def login_local_form(request: Request) -> Response:
+    """The password form for local accounts, apart from the provider's sign-in."""
+    next_path = safe_next(request.query_params.get("next"))
+    return render(request, "login.html", next=next_path, local=True)
+
+
 @app.get("/login/start")
 async def login_start(request: Request) -> Response:
     """Send the browser to the provider. What must come back unchanged (state), what the ID
@@ -421,7 +428,9 @@ async def login(
     target = safe_next(next)
     account = authenticate(settings.accounts_file, username.strip(), password)
     if account is None:
-        return render(request, "login.html", next=target, err="Unknown account or wrong password.")
+        return render(
+            request, "login.html", next=target, local=True, err="Unknown account or wrong password."
+        )
     response = RedirectResponse(target, status_code=303)
     response.set_cookie(COOKIE, signer.issue(account), httponly=True, samesite="lax")
     return response

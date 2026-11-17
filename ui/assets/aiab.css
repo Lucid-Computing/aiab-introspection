@@ -80,8 +80,13 @@ textarea:disabled, input:disabled { background: var(--paper-2); color: var(--ink
 .flow li strong { color: var(--ink-1); font-weight: 500; }
 .flow li.here { background: var(--paper-2); box-shadow: inset 2px 0 0 0 var(--accent); padding-left: var(--space-3); }
 .flow li.done::before { color: var(--accent-ink); }
-.login { max-width: 360px; margin: var(--space-24) auto; border: var(--border-strong); }
-.login h3 { margin-top: 0; }
+.login { max-width: 400px; margin: var(--space-16) auto; padding: var(--space-10) var(--space-8); border: var(--border-strong); }
+.login-title { margin: 0 0 var(--space-8); }
+.btn--block { display: flex; width: 100%; }
+.login-form .btn { margin-top: var(--space-6); }
+.login-switch { margin: var(--space-6) 0 0; text-align: center; font-size: var(--text-xs); }
+.login-switch a { color: var(--ink-2); }
+.login-switch a:hover { color: var(--ink-1); }
 .explain { font-size: var(--text-sm); color: var(--ink-2); max-width: 760px; margin-bottom: var(--space-6); }
 .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); }
 @media (max-width: 900px) { .three { grid-template-columns: 1fr; } }
