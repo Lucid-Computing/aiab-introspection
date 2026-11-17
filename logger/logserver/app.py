@@ -8,12 +8,11 @@
 Both take the caller's key as ``x-log-key``. Each box has its own key, and the key decides
 which box an export is sealed to (``logserver.config``). Also ``GET /v1/status`` (the last
 read of the proxy's files, and any file that could not be read), ``POST /v1/sync`` (read
-them again now) and ``GET /healthz`` (no key). Every route answers from the last read; none
-reads a file.
+them again now) and ``GET /healthz`` (no key). Every route answers from the last read, and
+only an export reads a file: the text of the calls it sends.
 With ``PLANT_HUB_URL`` and ``PLANT_HUB_KEY`` set, the RSI plant's hub is a source too
 (``logserver.plant``), next to the proxy's directory or alone; the routes are the same, and a
 box can be kept to some of the sources (``<NAME>_SOURCES``).
-No text is held in memory: an export reads the chosen calls' text from the disk.
 The export is not signed here: the agreement UI signs the sealed records as it does today.
 """
 

@@ -78,7 +78,8 @@ An export:
 }
 ```
 
-Every route answers from the last read; none reads a file. Until the first read after a
+Every route answers from the last read, and only an export reads a file: the text of the
+calls it sends. Until the first read after a
 start has finished, `/v1/sessions` is empty and `/v1/status` says `"at": null`.
 
 Errors: `401` without the key, `404` for a session id it does not hold, `422` for a body
