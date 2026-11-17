@@ -166,6 +166,7 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
    - `AIAB_LOG_KEY`: optional, only for the Logs screen; production's log reader key from 1Password.
    - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Both keys can be set: the Logs screen then offers both sources.
+   - `AIAB_LOG_SERVER_URL` and `AIAB_LOG_SERVER_KEY`: optional; read Prod Agent Logs through the proxy's log server (`logger/`) instead of downloading them. `AIAB_PROXY_SERVER_URL` and `AIAB_PROXY_SERVER_KEY` do the same for Dev Agent Logs. With both of a pair set, this server lists that source's sessions by metadata, gets a run's records already sealed to the box, and downloads no readable log of it; that proxy's own key is then unused. The key is the one the log server holds for this environment's box.
    - `AIAB_SLACK_EXPORT_KEY`: optional, only for the Logs screen; the key that opens the committed Slack export bundle (`slack-export-bundle` in 1Password). Slack Logs is then read from the bundle, opened at every start.
    - `AIAB_SLACK_EXPORT`: optional; a folder of the Slack export read in place instead of the bundle (a laptop setting).
    - `AIAB_GITHUB_EXPORT_KEY`: optional, only for the Logs screen; the key that opens the committed GitHub export bundle (`github-export-bundle` in 1Password). `AIAB_GITHUB_EXPORT` names a folder to read in place instead.

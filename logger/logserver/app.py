@@ -31,6 +31,9 @@ from logserver.store import Store, StoreError
 class ExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")  # no field may name another box or key
     sessions: list[str] = Field(min_length=1, max_length=1000)
+    # Where this export's record numbers start. A run that joins exports from several log
+    # servers gives each its own range: the box refuses two records at one position.
+    offset: int = Field(default=0, ge=0, le=2**52)
 
 
 def create_app(
@@ -90,7 +93,7 @@ def create_app(
         if unknown:
             raise HTTPException(404, {"error": "unknown_sessions", "sessions": unknown})
         wanted = list(dict.fromkeys(body.sessions))
-        records = calls.box_records([c for i in wanted for c in by_id[i].calls])
+        records = calls.box_records([c for i in wanted for c in by_id[i].calls], body.offset)
         if not records:
             raise HTTPException(422, "the chosen sessions hold no text to audit")
         try:

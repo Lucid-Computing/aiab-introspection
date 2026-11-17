@@ -34,7 +34,7 @@ its own key, and the key decides which box an export is sealed to.
 | Route | What it returns |
 |---|---|
 | `GET /v1/sessions` | `{"whos": [...], "sessions": [...]}`, newest session first. `?who=alice` keeps one person's. |
-| `POST /v1/export` | Body `{"sessions": ["<id>", ...]}`. The records of those sessions, sealed. |
+| `POST /v1/export` | Body `{"sessions": ["<id>", ...]}`. The records of those sessions, sealed. Optional `"offset": n` starts the record numbers at `n`, for a run that joins exports from several log servers. |
 | `GET /v1/status` | The last read of the proxy's files (`at`, `error`, `result`), the files it could not read (`problems`), the number of calls held, the box this key seals to. |
 | `POST /v1/sync` | Reads the proxy's files again now (it also happens every `SYNC_SECONDS`). Returns `{"new", "segments", "live", "calls"}`: files parsed this time, sealed and pending files listed, lines in the live file, calls held. |
 | `GET /healthz` | `{"ok": true}`. No key. |
@@ -49,13 +49,18 @@ A session in `/v1/sessions`:
   "ended": "2026-10-28T08:12:35Z",
   "model": "claude-fable-5-1",
   "records": 17,
+  "content_bytes": 5120,
   "calls": [
     {"id": "…", "ts": "2026-10-28T08:08:41Z", "who": "tester", "status": 200,
      "duration_s": 1.84, "model": "claude-fable-5-1", "stop_reason": "end_turn",
-     "request_bytes": 314, "messages": 1, "records": 2, "kinds": ["request", "response"]}
+     "request_bytes": 314, "messages": 1, "records": 2, "kinds": ["request", "response"],
+     "content_bytes": 412}
   ]
 }
 ```
+
+`content_bytes` is how much text a run would send, a size and never the text. A record's
+text is sent whole, however long.
 
 An export:
 

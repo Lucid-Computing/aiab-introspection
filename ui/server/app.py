@@ -970,7 +970,7 @@ async def runs_index(request: Request) -> Response:
             "session": s,
             "notes": notes,
             "records": len(recs),
-            "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
+            "kb": proxylogs.sent_kb(s.records, recs),
         }
         (outside if item["notes"] else empty if not recs else fits).append(item)
     labels = [source.label]
@@ -980,7 +980,7 @@ async def runs_index(request: Request) -> Response:
             "session": s,
             "notes": [],
             "records": len(recs),
-            "kb": round(len(json.dumps(recs).encode("utf-8")) / 1024, 1),
+            "kb": proxylogs.sent_kb(s.records, recs),
         }
         (fits if recs else empty).append(item)
         if recs and other.label not in labels:
@@ -1038,10 +1038,12 @@ async def runs_start(request: Request) -> Response:
         ]
         named = runs.plan_sessions(target.plan_dir) & chosen_sessions
         elsewhere = _named_elsewhere(source, named)
+        picks = [(source, s) for s in picked] + elsewhere
         picked += [s for _, s in elsewhere]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
-        records = proxylogs.box_records([r for s in picked for r in s.records])
+        # A log server's sessions arrive sealed to the box; the rest are built here.
+        records = proxylogs.run_records(picks)
         if not records:
             return back(here, err="The chosen sessions hold no text to audit.")
         label = (
@@ -1058,7 +1060,7 @@ async def runs_start(request: Request) -> Response:
         run_id = runs.start_run(
             settings, user, chosen, target.plan_dir, records, label=label, sent=sent
         )
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, proxylogs.ProxyError) as exc:
         return back(here, err=str(exc))
     plan = (runs.load_run(settings, run_id) or {}).get("plan") or {}
     version = f", version {plan['digest'][7:19]}" if plan.get("digest") else ""

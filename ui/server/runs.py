@@ -27,6 +27,7 @@ from aiab.audit.protocol import AuditError
 from aiab.baked import plan_ir
 from aiab.baked.bundle import bundle_files, file_digest, load_bundle
 from aiab.baked.graph import select_records
+from aiab.baked.sealing import seal_record
 
 from server.config import STATIC_DIR, Settings
 
@@ -52,10 +53,11 @@ STEPS = (
     (
         "export",
         "Seal and sign the test export",
-        "Takes the chosen records, seals each record's text to the box's encryption key "
-        "from step 2 (only the box can open it) and signs them with the demo logger key, "
-        "standing in for the real logger. The box will refuse records without this evidence. "
-        "The plain records are deleted from the server once the export is written.",
+        "Takes the chosen records and signs them with the demo logger key, standing in for "
+        "the real logger. The box will refuse records without this evidence. Records from a "
+        "log server arrive already sealed to the box's encryption key (only the box can open "
+        "them); any others are sealed here to the key from step 2, and their plain form is "
+        "deleted from the server once the export is written.",
     ),
     (
         "submit",
@@ -305,6 +307,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
             # its end so this server never holds the text at all.
             identity = json.loads(files["anchor"].read_text()).get("identity", {})
             sealed = "encryption_key" in identity
+            from_server = _seal_here(fixture, identity)
             _cli(
                 settings,
                 plan,
@@ -317,7 +320,6 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 "ui-" + uuid.uuid4().hex,
                 "--output",
                 str(files["submission"]),
-                *(("--seal-to", str(files["anchor"])) if sealed else ()),
                 timeout=None,  # as long as the records need
             )
             submission = json.loads(files["submission"].read_text())
@@ -326,6 +328,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 "records": len(submission["records"]),
                 "input_scope": submission["input_scope"],
                 "sealed": sealed,
+                "sealed_by_log_server": from_server,
                 "boot_id": identity.get("boot_id"),
             }
         if key == "submit":
@@ -400,6 +403,26 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
     state["status"] = "done"
     state["finished"] = _now()
     _write(folder, state)
+
+
+def _seal_here(fixture: Path, identity: dict) -> int:
+    """Seal the run's records that are not sealed yet to the box's key, in place, when the
+    box publishes one. Records from a log server arrive sealed and are left as they are;
+    returns how many those were. A record sealed for another start of the box cannot be
+    opened by this one, so the run stops here with the reason."""
+    records = [json.loads(line) for line in fixture.read_text().splitlines() if line.strip()]
+    arrived = [r for r in records if "enc" in r]
+    stale = {r.get("boot_id") for r in arrived} - {identity.get("boot_id")}
+    if stale:
+        raise RuntimeError(
+            "the box restarted after the log server sealed the records, so it can no longer"
+            " open them; start the run again"
+        )
+    if "encryption_key" in identity and len(arrived) < len(records):
+        key, boot = identity["encryption_key"], identity["boot_id"]
+        records = [r if "enc" in r else seal_record(r, key, boot) for r in records]
+        fixture.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return len(arrived)
 
 
 def start_run(

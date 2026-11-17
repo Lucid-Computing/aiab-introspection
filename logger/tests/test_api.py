@@ -4,7 +4,7 @@ import os
 import pytest
 from aiab.baked import records as box_records
 from aiab.baked.sealing import SCHEME
-from conftest import ANSWER, PROD_KEY, SECRET
+from conftest import ANSWER, PROD_KEY, SECRET, entry
 
 from logserver import calls
 
@@ -33,6 +33,7 @@ def test_sessions_are_metadata_and_never_what_was_said(client):
         "ended": "2027-01-15T08:01:00Z",
         "model": "claude-haiku-5-5",
         "records": 4,
+        "content_bytes": 92,
         "calls": [
             {
                 "id": "a1",
@@ -46,6 +47,7 @@ def test_sessions_are_metadata_and_never_what_was_said(client):
                 "messages": 1,
                 "records": 2,
                 "kinds": ["request", "response"],
+                "content_bytes": len(SECRET) + len(ANSWER),
             },
             alice["calls"][1],
         ],
@@ -172,3 +174,21 @@ def test_one_box_down_does_not_stop_the_other(client, prodbox):
         "/v1/export", json={"sessions": ["s-alice"]}, headers={"x-log-key": PROD_KEY}
     )
     assert response.status_code == 502
+
+
+def test_an_export_can_start_its_numbering_later_and_long_records_stay_whole(client, proxy):
+    """A run joining two servers' exports gives each its own range of offsets."""
+    first = client.post("/v1/export", json={"sessions": ["s-alice"]}).json()["records"]
+    later = client.post("/v1/export", json={"sessions": ["s-alice"], "offset": 40}).json()
+    assert [r["offset"] for r in later["records"]] == [40 + r["offset"] for r in first]
+    assert (
+        client.post("/v1/export", json={"sessions": ["s-alice"], "offset": -1}).status_code == 422
+    )
+
+
+def test_a_long_record_is_sealed_whole(client, proxy, fakebox):
+    long = "x" * 30_000
+    proxy.append([entry("long1", "carol", 500, long, "ok", session="s-long")])
+    client.post("/v1/sync")
+    sealed = client.post("/v1/export", json={"sessions": ["s-long"]}).json()["records"]
+    assert fakebox.decryptor.unseal(sealed, fakebox.boot_id)[0]["content"] == long
