@@ -17,7 +17,6 @@ The export is not signed here: the agreement UI signs the sealed records as it d
 from __future__ import annotations
 
 import hmac
-import threading
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -45,8 +44,6 @@ def create_app(
 ) -> FastAPI:
     store = store or Store(settings)
     boxes = boxes or {t.name: Box(t.box_host, t.box_repo) for t in settings.boxes}
-    # One export reads and holds its plaintext at a time; a box's own attestation is not in it.
-    export_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -103,11 +100,10 @@ def create_app(
             raise HTTPException(422, "the chosen sessions hold no text to audit")
         box = boxes[target.name]
         try:
-            identity = box.identity()  # a box that is down fails here, before any read
-            with export_lock:
-                texts = store.texts(chosen)
-                records = calls.box_records(list(zip(chosen, texts, strict=True)), body.offset)
-                sealed = box.seal(records, identity)
+            box.identity()  # a box that is down fails here, before any read
+            texts = store.texts(chosen)  # decompression is one at a time (the store's lock)
+            records = calls.box_records(list(zip(chosen, texts, strict=True)), body.offset)
+            sealed = box.seal(records)  # the key asked for again, just before sealing
         except BoxError as error:
             raise HTTPException(502, str(error)) from None
         except GoneError as error:

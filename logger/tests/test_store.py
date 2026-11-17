@@ -322,6 +322,8 @@ def test_a_new_empty_live_file_with_no_segments_drops_the_old_calls(tmp_path):
     held = proxy.live.with_name("held")  # renamed, not deleted: its inode is not reused
     os.replace(proxy.live, held)
     proxy.live.touch()
+    store.refresh()  # a first look keeps what was read: it could be a rotation not listed yet
+    assert ids(store) == ["b1"] and "requests.jsonl" in problems(store)
     assert store.refresh() == {"new": 0, "segments": 0, "live": 0, "calls": 0}
     assert ids(store) == []
 
@@ -721,3 +723,110 @@ def test_memory_held_does_not_grow_with_the_text(tmp_path):
     large = held_after_refresh(tmp_path / "large", 50_000)  # 10 MB of text
     assert large < small * 1.1 + 20_000, (small, large)
     assert large / 200 < 2_000, f"{large / 200:.0f} bytes per call"
+
+
+def test_a_read_back_holds_one_line_at_a_time(tmp_path):
+    """Each proxy line resends the whole conversation: an export keeps the parts, never all
+    the lines at once."""
+    history = [{"role": "user", "content": "h" * 400_000}, {"role": "assistant", "content": "ok"}]
+    written = []
+    for i in range(30):
+        e = entry(f"h{i}", "hal", 1_800_020_000.0 + i, "", f"short answer {i}", "s-hist")
+        msgs = [*history, {"role": "user", "content": f"short question {i}"}]
+        e["request_raw"] = {"text": json.dumps({"model": "m", "messages": msgs})}
+        written.append(e)
+    proxy = ProxyDir(tmp_path / "p")
+    proxy.seal(written[:15])
+    proxy.append(written[15:])  # 12 MB of lines, half compressed, half live
+    store = Store(
+        Settings(proxy_dir=proxy.root, boxes=(Target("dev", API_KEY, "b", "r"),), sync_seconds=300)
+    )
+    store.refresh()
+    tracemalloc.start()
+    try:
+        got = store.texts(list(store.calls()))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert got[0] == (("request", "short question 0"), ("response", "short answer 0"))
+    assert peak < 4_000_000, f"peak {peak:,} bytes for 12 MB of lines"
+
+
+def test_a_live_call_is_looked_for_again_if_a_listing_misses_the_newest_file(
+    settings, proxy, monkeypatch
+):
+    store = Store(settings)
+    store.refresh()
+    proxy.compress(proxy.rotate())  # b1, indexed live, is now in the newest segment
+    proxy.append(batch("c", 1))
+    real_list, looks = Store._list, []
+
+    def misses_newest_once(self):
+        looks.append(1)
+        listing = real_list(self)
+        return listing[:-1] if len(looks) == 1 else listing
+
+    monkeypatch.setattr(Store, "_list", misses_newest_once)
+    read_back(store, "b1")
+    assert len(looks) == 2 and store._stale == set()
+
+
+def test_a_live_file_that_changed_is_refused_then_read_again(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    proxy.live.write_bytes(lines([entry("z1", "zed", 1_800_000_501.0, "replaced", "live")]))
+    with pytest.raises(store_module.ChangedError, match=r"seq 3 \(call b1\)"):
+        store.texts(chosen(store, "b1"))
+    store.refresh()  # the live file is read again from its start
+    assert ids(store) == ["a1", "a2", "z1"]
+
+
+def test_a_changed_file_that_is_then_gone_keeps_its_calls_listed(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    zst = proxy.segments / "requests-000000001-000000002.jsonl.zst"
+    zst.write_bytes(compress(lines([SEALED[1], SEALED[0]])))  # same lines, swapped
+    with pytest.raises(store_module.ChangedError):
+        store.texts(chosen(store, "a1"))
+    zst.unlink()
+    store.refresh()
+    assert ids(store) == ["a1", "a2", "b1"]  # still listed; an export says 410
+    with pytest.raises(store_module.GoneError):
+        store.texts(chosen(store, "a1"))
+
+
+def test_a_long_list_of_gone_calls_is_cut_short(settings, proxy):
+    proxy.seal(batch("c", 8))
+    store = Store(settings)
+    store.refresh()
+    (proxy.segments / "requests-000000003-000000011.jsonl.zst").unlink()
+    with pytest.raises(store_module.GoneError, match=r"seq 7 \(call c3\) and 4 more$") as gone:
+        store.texts(chosen(store, "b1", *[f"c{i}" for i in range(8)]))
+    assert len(gone.value.calls) == 9
+
+
+def test_a_refresh_whose_listing_misses_the_rotated_file_waits_for_a_second_look(
+    settings, proxy, monkeypatch
+):
+    store = Store(settings)
+    store.refresh()
+    proxy.compress(proxy.rotate())  # b1's live file is now requests-3-3
+    proxy.append(batch("c", 1))  # c0 is seq 4 in the new live file
+    real_list, looks = Store._list, []
+
+    def misses_newest_once(self):
+        looks.append(1)
+        listing = real_list(self)
+        return listing[:-1] if len(looks) == 1 else listing
+
+    monkeypatch.setattr(Store, "_list", misses_newest_once)
+    store.refresh()  # the new live file is not read as if it started at seq 3
+    assert ids(store) == ["a1", "a2", "b1"] and "requests.jsonl" in problems(store)
+    store.refresh()
+    assert located(store, proxy) == {
+        "a1": (1, "a1"),
+        "a2": (2, "a2"),
+        "b1": (3, "b1"),
+        "c0": (4, "c0"),
+    }
+    read_back(store, "b1", "c0")

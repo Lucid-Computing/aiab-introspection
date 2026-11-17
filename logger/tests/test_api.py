@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -269,8 +270,25 @@ def test_nothing_is_read_for_a_session_with_no_text_or_a_box_that_is_down(
 
 
 def test_an_export_does_not_wait_for_a_refresh(client, store):
+    codes = []
     with store._refresh_lock:
-        assert client.post("/v1/export", json={"sessions": ["s-alice"]}).status_code == 200
+        export = threading.Thread(
+            target=lambda: codes.append(
+                client.post("/v1/export", json={"sessions": ["s-alice"]}).status_code
+            )
+        )
+        export.start()
+        export.join(timeout=10)
+    assert codes == [200], "the export waited for the refresh lock"
+
+
+def test_a_disk_error_during_an_export_is_a_503(client, store, monkeypatch):
+    def denied(self, problems):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(type(store), "_snapshot", denied)
+    response = client.post("/v1/export", json={"sessions": ["s-alice"]})
+    assert response.status_code == 503 and "denied" in response.json()["detail"]
 
 
 def test_two_exports_at_once_both_get_the_same_records(client, fakebox):
@@ -289,3 +307,17 @@ def test_calls_at_the_same_time_keep_their_order():
     pairs = [(first, (("request", "first"),)), (second, (("request", "second"),))]
     assert [r["content"] for r in calls.box_records(pairs)] == ["first", "second"]
     assert [r["content"] for r in calls.box_records(pairs[::-1])] == ["second", "first"]
+
+
+def test_a_live_file_that_will_not_open_on_every_look_is_a_503(client, store, monkeypatch):
+    real = type(store)._snapshot
+
+    def no_live_file(self, problems):
+        handle, listing = real(self, problems)
+        handle.close()
+        problems.append({"file": "requests.jsonl", "problem": "cannot be opened: denied"})
+        return None, listing
+
+    monkeypatch.setattr(type(store), "_snapshot", no_live_file)
+    response = client.post("/v1/export", json={"sessions": ["bob-1800000500"]})
+    assert response.status_code == 503 and "cannot be opened: denied" in response.json()["detail"]
