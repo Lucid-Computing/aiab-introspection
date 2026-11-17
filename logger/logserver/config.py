@@ -14,14 +14,11 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Settings:
-    proxy_url: str  # the logging proxy's address; its /_logs download API is read from here
-    proxy_header: str  # the header the proxy takes its reader key in
-    proxy_key: str = field(repr=False)
+    proxy_dir: Path  # the logging proxy's data directory, mounted read-only
     api_key: str = field(repr=False)  # what a caller of this server must send as x-log-key
     box_host: str  # the box records are sealed to: its Tinfoil host ...
     box_repo: str  # ... and the config repo its attestation is checked against
-    data_dir: Path  # the proxy's segments, kept between syncs
-    sync_seconds: int
+    sync_seconds: int  # how often the proxy's files are read again
 
 
 def load(env: dict[str, str] | None = None) -> Settings:
@@ -34,12 +31,9 @@ def load(env: dict[str, str] | None = None) -> Settings:
         return value
 
     return Settings(
-        proxy_url=need("PROXY_URL").rstrip("/"),
-        proxy_header=env.get("PROXY_KEY_HEADER", "").strip() or "x-log-key",
-        proxy_key=need("PROXY_KEY"),
+        proxy_dir=Path(env.get("PROXY_DIR", "").strip() or "/proxy-data"),
         api_key=need("API_KEY"),
         box_host=need("BOX_HOST"),
         box_repo=need("BOX_REPO"),
-        data_dir=Path(env.get("DATA_DIR", "").strip() or "/data"),
         sync_seconds=int(env.get("SYNC_SECONDS", "").strip() or 300),
     )
