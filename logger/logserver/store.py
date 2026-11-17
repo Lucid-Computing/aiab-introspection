@@ -25,6 +25,7 @@ A background thread re-reads every ``SYNC_SECONDS``; requests answer from the la
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import io
 import json
@@ -50,6 +51,25 @@ OPEN_TRIES = 3  # rotations caught between opening the live file and listing seg
 
 class StoreError(RuntimeError):
     """The proxy's directory cannot be read at all."""
+
+
+class GoneError(RuntimeError):
+    """Chosen calls are in files the proxy no longer has: they can be listed, not read."""
+
+    def __init__(self, calls: list[Call]):
+        self.calls = calls
+        super().__init__("no file holds " + ", ".join(_named(c) for c in calls))
+
+
+class ChangedError(RuntimeError):
+    """A chosen call no longer reads as it did when it was indexed."""
+
+
+class _Vanished(Exception):
+    """A listed file went before it was opened: look again."""
+
+    def __init__(self, calls: list[Call]):
+        self.calls = calls
 
 
 @dataclass(frozen=True)
@@ -97,6 +117,9 @@ class Store:
         self._live_first = 0  # the highest live first seq seen
         self._backwards: int | None = None  # a lower one, seen once: wait for a second look
         self._calls: tuple[Call, ...] = ()
+        # Files a read-back found changed: the next refresh parses them again.
+        self._stale: set[tuple[int, int] | str] = set()
+        self._stale_lock = threading.Lock()
         # Replaced whole, never changed in place, so a request reads it without the lock.
         self.status: dict = {"at": None, "error": None, "result": None, "problems": []}
 
@@ -133,6 +156,78 @@ class Store:
 
         threading.Thread(target=loop, daemon=True, name="proxy-read").start()
 
+    def texts(self, chosen: list[Call]) -> list[tuple[tuple[str, str], ...]]:
+        """Each chosen call's parts, read back from the proxy's files by its ``Where``, in the
+        order given. Never takes the refresh lock (the first refresh can hold it for the whole
+        history) and parses only the chosen lines.
+
+        A line is used only if its SHA-256 is the one indexed, so the text is the text that was
+        listed. A call that cannot be found raises ``GoneError``; one that reads differently, or
+        whose file no longer decompresses, raises ``ChangedError`` and its file is parsed again
+        at the next refresh; a disk error raises ``StoreError``. Never part of an answer."""
+        # One listing can miss a pending file and its new .zst while the proxy compresses, and
+        # a pending file can go between the listing and the open: a call is gone only if every
+        # look says so.
+        for _ in range(OPEN_TRIES):
+            problems: list[dict] = []
+            handle, listing = self._snapshot(problems)
+            try:
+                plan, missing = _resolve(chosen, handle, listing, self._live_first)
+                if not missing:
+                    try:
+                        found = self._read_lines(plan, handle)
+                        break
+                    except _Vanished as vanished:
+                        missing = vanished.calls
+            finally:
+                if handle is not None:
+                    handle.close()
+        else:
+            if problems:  # the live file kept moving, or would not open
+                raise StoreError("; ".join(f"{p['file']}: {p['problem']}" for p in problems))
+            raise GoneError(missing)
+        return [self._checked(c, *found[c.where.seq]) for c in chosen]
+
+    def _read_lines(self, plan, handle) -> dict[int, tuple[object, bytes]]:
+        """{seq: (where it was read, the line)} for the planned files."""
+        found: dict[int, tuple[object, bytes]] = {}
+        for where, wanted in plan.items():
+            offsets = sorted((c.where.offset, c.where.seq) for c in wanted)
+            key = LIVE if where == LIVE else (where.first, where.last)
+            name = LIVE if where == LIVE else where.name
+            try:
+                if where == LIVE:
+                    got = _lines_at(handle, False, offsets)
+                else:
+                    try:
+                        f, compressed = _open(where)
+                    except FileNotFoundError:
+                        raise _Vanished(wanted) from None
+                    with f:
+                        got = _lines_at(f, compressed, offsets)
+            except zstandard.ZstdError as error:
+                self._mark_stale(key)
+                raise ChangedError(f"{name} no longer reads: {error}") from None
+            except OSError as error:  # the disk, not the file: try again later
+                raise StoreError(f"{name} cannot be read: {error}") from None
+            found.update({seq: (key, line) for seq, line in got.items()})
+        return found
+
+    def _checked(self, call: Call, key, line: bytes) -> tuple[tuple[str, str], ...]:
+        """The parts of the line read back for ``call``, if it is the line indexed."""
+        where = call.where
+        again = None
+        if line.endswith(b"\n") and hashlib.sha256(line).digest() == where.sha256:
+            again = _call(line, where.seq, where.offset)
+        if again is None or again.id != call.id:
+            self._mark_stale(key)
+            raise ChangedError(f"{_named(call)} no longer reads as it did when it was listed")
+        return again.parts
+
+    def _mark_stale(self, key) -> None:
+        with self._stale_lock:
+            self._stale.add(key)
+
     # ---- one refresh ------------------------------------------------------------------
 
     def _refresh(self) -> tuple[dict, list[dict]]:
@@ -155,6 +250,14 @@ class Store:
                 )
                 return self._result(len(listing), 0), problems
             changed = False
+            with self._stale_lock:
+                stale, self._stale = self._stale, set()
+            for key in stale:  # files a read-back found changed: parse them again
+                if key == LIVE:
+                    self._live = Live()
+                else:
+                    self._parsed.pop(key, None)
+                changed = True
             # The second look: the proxy's log started again (or its newest segments were
             # removed by hand, which reads the same). Everything is read afresh.
             if live_first < self._live_first:
@@ -297,6 +400,68 @@ class Store:
         for key, call in self._live.calls:
             seen[key] = call
         return tuple(seen.values())
+
+
+def _named(call: Call) -> str:
+    return f"seq {call.where.seq}" + (f" (call {call.id})" if call.id else "")
+
+
+def _resolve(chosen: list[Call], handle, listing: list[Container], live_seen: int):
+    """({container or LIVE: [calls]}, [calls no file holds]): each call by its seq, in the
+    listed file whose name holds it, or the live file past them. ``live_seen`` is the highest
+    live first seq the index has seen: a listing missing its newest files must not make an
+    older call look live."""
+    firsts = [c.first for c in listing]
+    live_first = max(listing[-1].last + 1 if listing else 1, live_seen)
+    plan: dict[object, list[Call]] = {}
+    unresolved: list[Call] = []
+    for call in chosen:
+        seq = call.where.seq
+        i = bisect.bisect_right(firsts, seq) - 1
+        if i >= 0 and seq <= listing[i].last:
+            plan.setdefault(listing[i], []).append(call)
+        elif seq >= live_first and handle is not None:
+            plan.setdefault(LIVE, []).append(call)
+        else:
+            unresolved.append(call)
+    return plan, unresolved
+
+
+def _open(c: Container):
+    """(open file, compressed) for a listed file; a pending file compressed meanwhile is read
+    from its ``.zst``."""
+    try:
+        return c.path.open("rb"), c.compressed
+    except FileNotFoundError:
+        if c.compressed:
+            raise
+        return c.path.with_name(c.path.name + ".zst").open("rb"), True
+
+
+def _lines_at(f, compressed: bool, offsets: list[tuple[int, int]]) -> dict[int, bytes]:
+    """{seq: the line starting at its offset} in one opened file, offsets in increasing
+    order. A compressed file is read forward (as the proxy's segments.read_at does), one at a
+    time, and only up to the last wanted line."""
+    got: dict[int, bytes] = {}
+    if not compressed:
+        for offset, seq in offsets:
+            f.seek(offset)
+            got[seq] = f.readline()
+        return got
+    with _segment_lock:
+        decompressor = zstandard.ZstdDecompressor(max_window_size=1 << WINDOW_LOG)
+        reader = io.BufferedReader(decompressor.stream_reader(f, closefd=False))
+        at = 0
+        for offset, seq in offsets:
+            while at < offset:
+                skipped = reader.read(min(offset - at, 1 << 20))
+                if not skipped:
+                    break
+                at += len(skipped)
+            line = reader.readline() if at == offset else b""
+            at += len(line)
+            got[seq] = line
+    return got
 
 
 def _same_file(handle, path: Path) -> bool:

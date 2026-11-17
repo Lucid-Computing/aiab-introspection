@@ -1,10 +1,21 @@
 import hashlib
 import json
 import os
+import threading
 
 import pytest
 import zstandard
-from conftest import ANSWER, API_KEY, LIVE, SEALED, SECRET, ProxyDir, entry, lines
+from conftest import (
+    ANSWER,
+    API_KEY,
+    LIVE,
+    SEALED,
+    SECRET,
+    ProxyDir,
+    compress,
+    entry,
+    lines,
+)
 
 from logserver import calls, config
 from logserver import store as store_module
@@ -486,3 +497,171 @@ def test_every_line_counts_for_seq_and_offset(settings, proxy):
     proxy.seal([])
     store.refresh()
     assert located(store, proxy)["c0"] == (8, "c0")
+
+
+# ---- reading chosen calls back -------------------------------------------------------------
+
+
+def chosen(store, *wanted):
+    """The indexed calls with these ids, in the order given."""
+    by_id = {c.id: c for c in store.calls()}
+    return [by_id[i] for i in wanted]
+
+
+def read_back(store, *wanted):
+    """Each call's parts read back from the disk, checked against what the index holds."""
+    picked = chosen(store, *wanted)
+    got = store.texts(picked)
+    assert got == [c.parts for c in picked]  # the same text the index was built from
+    return got
+
+
+def test_chosen_calls_are_read_back_in_the_order_given(store):
+    got = read_back(store, "b1", "a1")
+    assert got[1] == (("request", SECRET), ("response", ANSWER))
+
+
+def test_a_call_moved_live_then_pending_then_compressed_is_read_back(settings, proxy):
+    proxy.append(batch("c", 2))
+    store = Store(settings)
+    store.refresh()
+    pending = proxy.rotate()
+    read_back(store, "b1", "c1")
+    proxy.compress(pending)
+    read_back(store, "a1", "b1", "c0", "c1")
+
+
+def test_two_rotations_between_the_index_and_the_read(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    proxy.compress(proxy.rotate())
+    proxy.append(batch("c", 2))
+    proxy.rotate()  # left pending
+    proxy.append(batch("d", 1))
+    read_back(store, "a1", "a2", "b1")
+
+
+def test_a_session_across_a_segment_cut_and_the_live_file(settings, proxy):
+    proxy.seal([entry("a3", "alice", 1_800_000_100.0, "q3", "r3", "s-alice")])
+    proxy.append([entry("a4", "alice", 1_800_000_200.0, "q4", "r4", "s-alice")])
+    store = Store(settings)
+    store.refresh()
+    session = next(s for s in calls.sessions(store.calls()) if s.id == "s-alice")
+    assert [c.id for c in session.calls] == ["a1", "a2", "a3", "a4"]
+    assert store.texts(list(session.calls)) == [c.parts for c in session.calls]
+
+
+def test_with_no_live_file_between_the_two_renames_the_pending_file_is_read(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    proxy.segments.mkdir(exist_ok=True)
+    os.replace(proxy.live, proxy.segments / "requests-000000003-000000003.jsonl")
+    read_back(store, "b1")
+
+
+def test_a_pending_file_compressed_between_the_listing_and_the_open(settings, proxy, monkeypatch):
+    proxy.append(batch("c", 1))
+    pending = proxy.rotate()
+    store = Store(settings)
+    store.refresh()
+    real_list = Store._list
+
+    def list_then_compress(self):
+        listing = real_list(self)
+        if pending.exists():
+            proxy.compress(pending)
+        return listing
+
+    monkeypatch.setattr(Store, "_list", list_then_compress)
+    read_back(store, "b1", "c0")
+
+
+def test_a_listing_that_misses_a_file_once_is_looked_at_again(settings, proxy, monkeypatch):
+    store = Store(settings)
+    store.refresh()
+    real_list, looks = Store._list, []
+
+    def misses_once(self):
+        looks.append(1)
+        listing = real_list(self)
+        return listing[1:] if len(looks) == 1 else listing  # a1 a2's file not seen once
+
+    monkeypatch.setattr(Store, "_list", misses_once)
+    read_back(store, "a1")
+    assert len(looks) == 2
+
+
+def test_a_file_gone_for_good_is_gone(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    (proxy.segments / "requests-000000001-000000002.jsonl.zst").unlink()
+    with pytest.raises(store_module.GoneError, match=r"seq 1 \(call a1\)") as gone:
+        store.texts(chosen(store, "a1", "b1"))
+    assert [c.id for c in gone.value.calls] == ["a1"]
+
+
+def test_a_log_that_started_again_is_refused_and_the_next_read_takes_the_new_one(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    zst = proxy.segments / "requests-000000001-000000002.jsonl.zst"
+    other = [entry("x1", "mallory", 1_900_000_000.0, "another", "call"), SEALED[1]]
+    zst.write_bytes(compress(lines(other)))  # seq 1 now names another call
+    with pytest.raises(store_module.ChangedError, match=r"seq 1 \(call a1\) no longer reads"):
+        store.texts(chosen(store, "a1"))
+    store.refresh()  # the changed file is parsed again
+    assert ids(store) == ["x1", "a2", "b1"]
+    assert read_back(store, "x1")[0][0] == ("request", "another")
+
+
+def test_a_file_that_no_longer_decompresses_is_refused(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    zst = proxy.segments / "requests-000000001-000000002.jsonl.zst"
+    zst.write_bytes(zst.read_bytes()[:20])
+    with pytest.raises(store_module.ChangedError, match="no longer reads"):
+        store.texts(chosen(store, "a2"))
+
+
+def test_a_disk_error_is_a_store_error(store, monkeypatch):
+    def denied(c):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(store_module, "_open", denied)
+    with pytest.raises(StoreError, match="cannot be read: denied"):
+        store.texts(chosen(store, "a1"))
+
+
+def test_a_call_after_a_gap_or_a_failed_segment_is_read_back(settings, proxy):
+    bad = proxy.seal(batch("c", 2))
+    bad.write_bytes(bad.read_bytes()[:20])  # its calls are never indexed
+    proxy.seal(batch("d", 1))
+    store = Store(settings)
+    store.refresh()
+    assert "c0" not in ids(store) and "b1" not in ids(store)  # b1 was sealed with them
+    read_back(store, "a2", "d0")
+
+
+def test_a_repeated_id_reads_back_its_latest_copy(settings, proxy):
+    proxy.append([entry("a1", "alice", 1_800_000_000.0, "a1 again, changed", "and answered")])
+    store = Store(settings)
+    store.refresh()
+    assert read_back(store, "a1")[0][0] == ("request", "a1 again, changed")
+
+
+def test_calls_left_from_the_old_live_file_are_read_from_its_pending_file(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    proxy.segments.mkdir(exist_ok=True)
+    os.replace(proxy.live, proxy.segments / "requests-000000003-000000003.jsonl")
+    store.refresh()  # no live file: the old live calls stay next to the pending file's
+    assert chosen(store, "b1")[0].where.seq == 3
+    read_back(store, "a1", "b1")
+
+
+def test_a_read_back_does_not_wait_for_a_refresh(store):
+    done = []
+    with store._refresh_lock:
+        reader = threading.Thread(target=lambda: done.append(store.texts(chosen(store, "a1"))))
+        reader.start()
+        reader.join(timeout=5)
+    assert done, "texts() waited for the refresh lock"
