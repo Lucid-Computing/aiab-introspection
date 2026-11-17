@@ -523,6 +523,7 @@ def _note_view(note: dict[str, Any], who: dict[str, str]) -> dict[str, Any]:
         "y",
     )
     return {k: note.get(k) for k in keys} | {
+        "edited": note.get("edited") or "",
         "resolved": bool(note.get("resolved")),
         "mine": note.get("user") == who["username"],
     }
@@ -572,6 +573,27 @@ async def resolve_note(request: Request, note_id: str) -> Response:
     if note is None:
         return JSONResponse({"error": "no such note"}, status_code=404)
     return JSONResponse({"note": _note_view(note, who)})
+
+
+@app.post("/notes/{note_id}/edit")
+async def edit_note(request: Request, note_id: str) -> Response:
+    """The author changes their note's text. The earlier text stays in notes.jsonl."""
+    who = user_of(request)
+    if who is None:
+        return JSONResponse({"error": "login"}, status_code=401)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    text = body.get("text") if isinstance(body, dict) else None
+    outcome = await asyncio.to_thread(feedback.edit_note, settings, who, note_id, text)
+    if outcome == "forbidden":
+        return JSONResponse({"error": "only its author can edit a note"}, status_code=403)
+    if outcome == "missing":
+        return JSONResponse({"error": "no such note"}, status_code=404)
+    if outcome == "empty":
+        return JSONResponse({"error": "empty"}, status_code=400)
+    return JSONResponse({"note": _note_view(outcome, who)})
 
 
 @app.post("/notes/{note_id}/delete")

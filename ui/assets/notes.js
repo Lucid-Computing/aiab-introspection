@@ -9,7 +9,8 @@
 // top), and relative to <main> for when that element is gone or hidden; a note beside the
 // column keeps its distance from that edge of the column. So notes stay put when the window
 // changes width. Every text a person typed is set with textContent, never as HTML. Resolved
-// notes are hidden; the lab can resolve and reopen. The author of a note can delete it. A link ending in #note=<id> (from the lab's Feedback list) shows that
+// notes are hidden; the lab can resolve and reopen. The author of a note can edit its text
+// in place and delete it. A link ending in #note=<id> (from the lab's Feedback list) shows that
 // note highlighted even when it is resolved or notes are hidden. The builder iframe is a
 // separate page: clicks inside it do not place notes.
 (function () {
@@ -87,7 +88,7 @@
     el.dataset.note = note.id;
     el.appendChild(text("p", "postit-text", note.text));
     var who = note.name ? note.name + " · " + note.user : note.user;
-    el.appendChild(text("p", "postit-meta", who + " · " + when(note.time)));
+    el.appendChild(text("p", "postit-meta", who + " · " + when(note.time) + (note.edited ? " · edited" : "")));
     var actions = document.createElement("div");
     actions.className = "postit-links";
     if (lab) {
@@ -97,6 +98,10 @@
       actions.appendChild(b);
     }
     if (note.mine) {
+      var e = text("button", "postit-resolve", "Edit");
+      e.type = "button";
+      e.addEventListener("click", function () { editCard(note, el); });
+      actions.appendChild(e);
       var d = text("button", "postit-resolve", "Delete");
       d.type = "button";
       d.addEventListener("click", function () { remove(note, d); });
@@ -140,6 +145,41 @@
       note.resolved = d.note.resolved;
       draw();
     }).catch(function () { /* left as it was */ });
+  }
+
+  // The author's note becomes a small form in place: the text, Cancel and Save.
+  function editCard(note, el) {
+    var form = document.createElement("form");
+    form.className = "postit-edit";
+    var area = document.createElement("textarea");
+    area.required = true; area.maxLength = 1000; area.setAttribute("aria-label", "Note");
+    area.value = note.text;
+    var row = document.createElement("div");
+    row.className = "postit-actions";
+    var cancel = text("button", "btn btn--ghost btn--sm", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", draw);
+    var save = text("button", "btn btn--primary btn--sm", "Save");
+    row.appendChild(cancel); row.appendChild(save);
+    form.appendChild(area); form.appendChild(row);
+    form.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") { event.stopPropagation(); draw(); }
+    });
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (area.value.trim() === note.text) { draw(); return; }
+      save.disabled = true;
+      send("/notes/" + note.id + "/edit", { text: area.value }).then(function (d) {
+        note.text = d.note.text; note.edited = d.note.edited;
+        draw();
+        showBanner("Note saved", false);
+      }).catch(function () { save.disabled = false; save.textContent = "Not saved · retry"; });
+    });
+    while (el.firstChild) el.removeChild(el.firstChild);
+    el.classList.add("postit--editing");
+    el.appendChild(form);
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
   }
 
   function remove(note, button) {

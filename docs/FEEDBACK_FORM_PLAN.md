@@ -10,13 +10,13 @@ Anyone logged in can send feedback from any screen in one step, either as a form
 
 1. **Storage: append-only JSONL files on disk.** The UI keeps no database, and its state is folders on disk. `AIAB_FEEDBACK_DIR` (default `ui/feedback/`, git-ignored; `$DATA/feedback` on Render via `ui/docker-entrypoint.sh`, so it survives redeploys) holds one file per kind:
    - `feedback.jsonl`: one line per form submission.
-   - `notes.jsonl`: one line per note (`"kind": "note"`), plus one line each time the lab resolves or reopens a note (`"kind": "resolve"`, the note's id, `resolved`, who, when), and one line when its author deletes it (`"kind": "delete"`, the note's id, who, when). Readers fold the resolve lines into the notes and leave deleted notes out. Nothing is rewritten, so a deleted note's text stays in the file.
+   - `notes.jsonl`: one line per note (`"kind": "note"`), plus one line each time the lab resolves or reopens a note (`"kind": "resolve"`, the note's id, `resolved`, who, when), one line each time its author edits it (`"kind": "edit"`, the note's id, the new text, who, when), and one line when its author deletes it (`"kind": "delete"`, the note's id, who, when). Readers fold the resolve and edit lines into the notes (only edits by the note's author count) and leave deleted notes out. Nothing is rewritten, so earlier and deleted text stays in the file.
    Not GitHub issues: the repository is public and feedback is internal.
 2. **Slack by email, optional.** Decided at the Snoopy check-in on 2026-11-16: no Slack app or webhook (ops never provided a key); every Slack channel has an email address that posts each email it gets as a message. The channel is `#amber-feedback`. Its address is a secret (anyone holding it can post there), so it lives only in the `AIAB_FEEDBACK_EMAIL_TO` env var on Render, never in the repo, the page or a PR. The server sends through a Google Workspace account over SMTP (`smtp.gmail.com`, port 587, STARTTLS, an app password) with Python's `smtplib`, so no new dependency or vendor; mail from a lucidcomputing.ai address also passes if a Slack admin restricts the channel to certain sender domains.
    - The file is written first. The mail goes out from a background thread with a 10 s timeout, and a failure is logged, never shown, so mail being down cannot lose or block feedback.
-   - A form entry is mailed at once. A note is mailed `AIAB_FEEDBACK_NOTE_DELAY` seconds (default 300) after it is saved, and not at all if its author deleted it by then, so a mistyped note that is deleted straight away never reaches Slack. A note deleted later stays in Slack. A server restart inside the delay loses that one email; the note itself is on disk.
+   - A form entry is mailed at once. A note is mailed `AIAB_FEEDBACK_NOTE_DELAY` seconds (default 300) after it is saved, with its text as it is then (an edit within the delay is in the email; a later edit is not mailed), and not at all if its author deleted it by then, so a mistyped note that is deleted straight away never reaches Slack. A note deleted later stays in Slack. A server restart inside the delay loses that one email; the note itself is on disk.
    - Plain text, because Slack posts the subject and body as written. Subject: `Note from audit3 (Sam) on /a/bio/sign` (or `Feedback from …`). Body: the text, a full link to the page (a note's ends in `#note=<id>`), then the party and the time.
-   - Resolving or deleting a note is not mailed.
+   - Resolving, editing or deleting a note is not mailed on its own.
 3. **One Feedback button, bottom right, on every page.** For everyone logged in, `base.html` puts a white circle (48px, a speech-bubble icon in the stroke style of `_icons.html`) with `Feedback` in small type under it, fixed at the bottom right of the window. Nothing about feedback is in the nav. The button is a `<button>` with `aria-label`, `aria-expanded` and a focus ring. It sits above the notes and below the busy overlay, and is made inert with the page while a key submission is waited on. `main.page` gets 136px of bottom padding when logged in, so the last content on a page can scroll clear of the button (checked on the Sign, plan and Agreements pages from 1440 to 900 px wide, as the lab and as an auditor: no control is under the button at any scroll position). On a page taller than the window, for example with a warning box at the top, a control can sit under the button until the page is scrolled further. The circle is the one exception to `swiss.css`'s no-rounded-corners rule, by request.
 4. **The button opens a small menu above it** with two choices, each an icon, a bold label and one line:
    - `Write feedback` / `Tell us anything.`: opens the form, a `<dialog>` defined once in `base.html` (the same `.modal` element and CSS as the confirm dialog). The page's path and query go in a hidden field, filled in by the server.
@@ -33,7 +33,7 @@ Anyone logged in can send feedback from any screen in one step, either as a form
    - After saving, the banner says `Note saved · the team will see it` for a few seconds.
    - The hide or show choice from the menu is remembered in the browser.
    - The click can be in the main column or in the empty space either side of it. Clicks on the nav, the Feedback button, the banner and dialogs do not place a note.
-   Notes show for everyone logged in, each with its text, the name if given, the account, and the date. Resolved notes are hidden. The lab sees `Resolve` on each note and `Reopen` on a resolved one. The author of a note (the same login) sees `Delete`, which asks `Delete this note?` and then removes it from the page, from the lab's list and from everyone's view; the banner says `Note deleted`. On a shared account (the demo's `auditor`, `audit1`–`audit10`) everyone using that account counts as the author. The lab has no delete; it resolves.
+   Notes show for everyone logged in, each with its text, the name if given, the account, and the date. Resolved notes are hidden. The lab sees `Resolve` on each note and `Reopen` on a resolved one. The author of a note (the same login) sees `Edit`, which turns the note into a text field with `Cancel` and `Save` (Escape cancels; the note then shows `edited` after its date, and so does the lab's list), and `Delete`, which asks `Delete this note?` and then removes it from the page, from the lab's list and from everyone's view; the banner says `Note deleted`. On a shared account (the demo's `auditor`, `audit1`–`audit10`) everyone using that account counts as the author. The lab has no delete; it resolves.
    History: a first version floated note buttons at the bottom right without extra page padding, where they covered the Sign page's Run button; a second put `Feedback`, `Add note` and `Hide notes` in the nav. The current button replaces both.
 6. **Where a note sits.** Each note keeps two positions:
    - **Anchored:** the nearest ancestor of the clicked element that has an id, inside `<main>` (for example the builder iframe `#builder`, a run step `#step-2`, or a party's card on the Sign page, `#sign-lab` and `#sign-auditor`, ids added for this). The Sign page shows each party different buttons, so the cards differ in height between the lab and the auditor; anchoring keeps a note on the card it was left on. The note stores that id, x as a fraction of the element's width, and y in pixels below its top.
@@ -63,6 +63,7 @@ Anyone logged in can send feedback from any screen in one step, either as a form
 | `GET /notes?page=` | logged in | JSON `{"notes": [...]}` for that page, resolved ones included (the script hides them), deleted ones not. Each has `mine` when the viewer wrote it. 401 when logged out. |
 | `POST /notes` | logged in | JSON `{page, text, name, anchor, side, gap, ax, ay, x, y}`. Returns the saved note. 400 for empty text. |
 | `POST /notes/{id}/resolve` | lab | JSON `{"resolved": true or false}`. 403 for the auditor, 404 for an unknown note. |
+| `POST /notes/{id}/edit` | the note's author | JSON `{"text": ...}`. Appends an edit line and returns the note. 400 for empty text, 403 for anyone else, 404 for an unknown or deleted note. |
 | `POST /notes/{id}/delete` | the note's author | Appends a delete line. 403 for anyone else, 404 for an unknown or already deleted note. |
 
 The JSON routes rely on the session cookie being `SameSite=Lax`, as the forms do: a cross-site POST carries no cookie.
@@ -72,21 +73,21 @@ The JSON routes rely on the session cookie being `SameSite=Lax`, as the forms do
 | File | What |
 | --- | --- |
 | `ui/server/config.py` | `feedback_dir` (`AIAB_FEEDBACK_DIR`), the email settings (`AIAB_FEEDBACK_EMAIL_TO`, `AIAB_FEEDBACK_EMAIL_FROM`, `AIAB_FEEDBACK_NOTE_DELAY`, `AIAB_SMTP_HOST`, `AIAB_SMTP_PORT`, `AIAB_SMTP_USER`, `AIAB_SMTP_PASSWORD`) on `Settings`, with defaults, because tests build settings with `replace(load_settings(), ...)`. |
-| `ui/server/feedback.py` | Record and read both kinds, `clean_page`, the caps, folding resolve and delete lines, the email and its delayed send. |
-| `ui/server/app.py` | The six routes above. |
+| `ui/server/feedback.py` | Record and read both kinds, `clean_page`, the caps, folding resolve, edit and delete lines, the email and its delayed send. |
+| `ui/server/app.py` | The seven routes above. |
 | `ui/server/templates/base.html` | The Feedback button and its menu, the note-mode banner, the dialog, and the script tag, all inside `{% if user %}`, because `login.html` extends this layout. |
 | `ui/server/templates/_icons.html` | `feedback_icon`: the speech bubble, the pen (write) and the sticky note. |
 | `ui/server/templates/feedback.html` | The lab's list. |
 | `ui/server/templates/sign.html` | An id on each party's card (`sign-lab`, `sign-auditor`), so notes left on the Sign page anchor to the card. |
-| `ui/assets/notes.js` | The button's menu, note mode and its banner, and the notes: placing (in the column or beside it), drawing, hiding, resolving, deleting, highlighting. Plain JS, no framework. |
+| `ui/assets/notes.js` | The button's menu, note mode and its banner, and the notes: placing (in the column or beside it), drawing, hiding, resolving, editing, deleting, highlighting. Plain JS, no framework. |
 | `ui/assets/aiab.css` | The button, the menu, the banner, the page's bottom padding, the dialog's name field, the notes. |
 | `ui/docker-entrypoint.sh` | `AIAB_FEEDBACK_DIR="$DATA/feedback"`. |
 | `ui/.gitignore`, `ui/Dockerfile.dockerignore` | `feedback/`, so local feedback is never committed or built into the image. |
 | `render.yaml` | `AIAB_FEEDBACK_EMAIL_TO`, `AIAB_SMTP_HOST`, `AIAB_SMTP_USER`, `AIAB_SMTP_PASSWORD`, `sync: false`. |
 | `ui/README.md` | The file table, the list of scripts, the "Does" line. |
-| `ui/tests/test_feedback.py` | Tests for the server rules: deleting, the delayed email, the email's content, margin fields. |
+| `ui/tests/test_feedback.py` | Tests for the server rules: deleting, editing, the delayed email, the email's content, margin fields. |
 
-`ui/tests/test_feedback.py` covers the server rules: only a note's author can delete it (403 for others, 404 the second time) and `GET /notes` marks it `mine` for them alone; a deleted note is gone from `GET /notes` and the lab's list but kept in `notes.jsonl` with a delete line after it; a note deleted within the delay is not mailed, while a kept note and a form entry are; the email's subject, text and link (`#note=<id>` for notes), with `msg` and `err` dropped from the page and another site's address turned into `/`; nothing is sent without the email settings; `side` and `gap` round-trip, an unknown side is stored as `""` and `gap` is clamped to 0..4000. Where the notes script places a note on the page is not unit-tested.
+`ui/tests/test_feedback.py` covers the server rules: only a note's author can delete it (403 for others, 404 the second time) and `GET /notes` marks it `mine` for them alone; a deleted note is gone from `GET /notes` and the lab's list but kept in `notes.jsonl` with a delete line after it; only the author can edit a note (400 for empty text, 404 once deleted), the list shows the new text and `edited`, and the earlier text stays in the file before an edit line; a note edited within the delay is mailed with its new text; a note deleted within the delay is not mailed, while a kept note and a form entry are; the email's subject, text and link (`#note=<id>` for notes), with `msg` and `err` dropped from the page and another site's address turned into `/`; nothing is sent without the email settings; `side` and `gap` round-trip, an unknown side is stored as `""` and `gap` is clamped to 0..4000. Where the notes script places a note on the page is not unit-tested.
 
 ## Email setup (once, by hand)
 
@@ -97,7 +98,7 @@ The JSON routes rely on the session cookie being `SameSite=Lax`, as the forms do
 
 ## Not built
 
-- Editing a note. Deleting by the lab (it resolves instead).
+- Editing or deleting by the lab (it resolves instead). Editing a note's name or moving a note.
 - Replies under a note (planned as a follow-up).
 - Notes on the nav bar (planned as a follow-up, as a small pin on the bar that opens the note).
 - A way for the lab to see resolved notes on a page other than through the list's link.

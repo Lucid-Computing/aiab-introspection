@@ -195,3 +195,44 @@ def test_without_email_nothing_is_sent_and_margin_fields_round_trip(site, monkey
     assert listed[left["id"]] == ("left", 120.5)
     assert listed[right["id"]] == ("right", 4000.0)
     assert listed[neither["id"]] == ("", 0.0)
+
+
+def test_only_the_author_can_edit_a_note_and_the_earlier_text_is_kept(site):
+    note = _note(site, text="Frist draft")
+    url = f"/notes/{note['id']}/edit"
+
+    site.who = SAM
+    assert site.client.post(url, json={"text": "Hijacked"}).status_code == 403
+
+    site.who = CHAN
+    assert site.client.post(url, json={"text": "   "}).status_code == 400
+    edited = site.client.post(url, json={"text": "First draft"})
+    assert edited.status_code == 200
+    assert edited.json()["note"]["text"] == "First draft" and edited.json()["note"]["edited"]
+
+    [seen] = site.client.get("/notes", params={"page": "/a/bio/sign"}).json()["notes"]
+    assert seen["text"] == "First draft" and seen["edited"]
+    site.who = LAB
+    html = site.client.get("/feedback").text
+    assert "First draft" in html and "Frist draft" not in html and "edited" in html
+
+    lines = _lines(site)
+    assert lines[0]["text"] == "Frist draft"
+    assert [(e["kind"], e.get("text")) for e in lines[1:]] == [("edit", "First draft")]
+
+    site.who = CHAN
+    assert site.client.post(f"/notes/{note['id']}/delete").status_code == 200
+    assert site.client.post(url, json={"text": "Too late"}).status_code == 404
+
+
+def test_a_note_edited_before_the_delay_is_mailed_with_its_new_text(site, outbox):
+    site.configure(**EMAIL, feedback_note_delay=0.5)
+    note = _note(site, text="Typo in teh step")
+    assert (
+        site.client.post(f"/notes/{note['id']}/edit", json={"text": "Typo in the step"}).status_code
+        == 200
+    )
+    outbox.wait()
+    [message] = outbox.messages
+    assert "Typo in the step" in message.get_content()
+    assert "teh" not in message.get_content()

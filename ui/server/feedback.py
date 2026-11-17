@@ -2,15 +2,17 @@
 
 Each kind is one append-only JSONL file in ``settings.feedback_dir``: ``feedback.jsonl``
 for the form, ``notes.jsonl`` for the notes. Resolving a note appends a ``resolve`` line
-for it and deleting one appends a ``delete`` line, so nothing is ever rewritten and a
-deleted note's text stays in the file; reading folds those lines into the notes and leaves
+for it, its author editing it appends an ``edit`` line with the new text, and deleting one
+appends a ``delete`` line, so nothing is ever rewritten and earlier and deleted text stays
+in the file; reading folds those lines into the notes and leaves
 deleted notes out.
 
 When email is set up (``settings.feedback_email_to`` and the SMTP settings), each form
 entry and each new note is also mailed, from a background thread, to that address: a Slack
 channel's email address, which posts every email it gets in the channel. A note is mailed
-``settings.feedback_note_delay`` seconds after it is saved, and not at all if its author
-deleted it by then. A failure is logged and never shown.
+``settings.feedback_note_delay`` seconds after it is saved, as its text is then (edits up
+to that point are in it, later ones are not mailed), and not at all if its author deleted
+it by then. A failure is logged and never shown.
 
 All text here was typed by someone using the site and is shown to other people: the
 templates escape it, and the notes script sets it as text, never as HTML.
@@ -172,7 +174,8 @@ def add_note(settings: Settings, user: dict[str, str], body: dict[str, Any]) -> 
 
 def notes(settings: Settings, page: str | None = None) -> list[dict[str, Any]]:
     """Every note (or one page's) that its author has not deleted, newest first, with
-    ``resolved`` as the last resolve line for it left it."""
+    ``resolved`` as the last resolve line for it left it, and the text of its author's last
+    edit (``edited`` its time)."""
     found: dict[str, dict[str, Any]] = {}
     deleted: set[str] = set()
     for item in _read(_notes_file(settings)):
@@ -180,6 +183,11 @@ def notes(settings: Settings, page: str | None = None) -> list[dict[str, Any]]:
             found[item["id"]] = {**item, "resolved": False}
         elif item.get("kind") == "resolve" and item.get("note") in found:
             found[item["note"]]["resolved"] = bool(item.get("resolved"))
+        elif item.get("kind") == "edit" and item.get("note") in found:
+            note = found[item["note"]]
+            if item.get("user") == note.get("user") and isinstance(item.get("text"), str):
+                note["text"] = item["text"]
+                note["edited"] = str(item.get("time", ""))
         elif item.get("kind") == "delete" and item.get("note") in found:
             deleted.add(item["note"])
     out = [
@@ -230,8 +238,29 @@ def delete_note(settings: Settings, user: dict[str, str], note_id: str) -> str:
     return "deleted"
 
 
-def _is_open(settings: Settings, note_id: str) -> bool:
-    return any(n["id"] == note_id for n in notes(settings))
+def edit_note(
+    settings: Settings, user: dict[str, str], note_id: str, text: Any
+) -> dict[str, Any] | str:
+    """Change a note's text for its author: the note as it is now, or ``missing`` (no such
+    note, or deleted), ``forbidden`` (someone else's) or ``empty``. The earlier text stays
+    in the file; an ``edit`` line after it holds the new text."""
+    if not NOTE_ID.match(note_id):
+        return "missing"
+    current = next((n for n in notes(settings) if n["id"] == note_id), None)
+    if current is None:
+        return "missing"
+    if current.get("user") != user["username"]:
+        return "forbidden"
+    new = clean_text(text, NOTE_MAX)
+    if not new:
+        return "empty"
+    line = {"kind": "edit", "note": note_id, "text": new, "time": _now(), "user": user["username"]}
+    _append(_notes_file(settings), line)
+    return {**current, "text": new, "edited": line["time"]}
+
+
+def _current(settings: Settings, note_id: str) -> dict[str, Any] | None:
+    return next((n for n in notes(settings) if n["id"] == note_id), None)
 
 
 # ---- email to the Slack channel (optional)
@@ -279,12 +308,14 @@ def notify(settings: Settings, entry: dict[str, Any], kind: str, origin: str) ->
     is up loses that email (the note itself is on disk)."""
     if not email_ready(settings):
         return
-    message = email_message(settings, entry, kind, origin)
 
     def run() -> None:
-        if kind == "note" and not _is_open(settings, entry["id"]):
-            return
-        _send(settings, message)
+        current = entry
+        if kind == "note":
+            current = _current(settings, entry["id"])
+            if current is None:  # deleted in the meantime
+                return
+        _send(settings, email_message(settings, current, kind, origin))
 
     delay = settings.feedback_note_delay if kind == "note" else 0
     timer = threading.Timer(max(delay, 0), run)
