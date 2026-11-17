@@ -26,6 +26,15 @@ then the live `requests.jsonl`. Each sealed or pending file is parsed once; the 
 read on from where the last read stopped, up to its last complete line. A file that cannot be
 read (gone, corrupt, truncated) is skipped and named in `/v1/status`; the rest is still served.
 
+**No text is kept in memory.** For each call the index keeps a card: the metadata the API
+serves, the kinds and size of what a run would send, and where the call's line is (its seq in
+the stream, its byte offset, and a SHA-256 of the line). That is about 600 bytes of Python
+objects a call, whatever was said (the process's RSS grows by a few KB a call, with the
+allocator's own overhead). An export reads only the chosen calls' lines back from the proxy's files,
+from whichever file holds them by then (the proxy moves a line from live to pending to `.zst`
+without changing its bytes), uses a line only if its SHA-256 is the one indexed, seals the
+records and drops them.
+
 ## The API
 
 Every route but `/healthz` takes the caller's key in the `x-log-key` header. Each box has
@@ -78,12 +87,22 @@ An export:
 }
 ```
 
-Every route answers from the last read; none reads a file. Until the first read after a
-start has finished, `/v1/sessions` is empty and `/v1/status` says `"at": null`.
+Every route answers from the last read, except an export, which reads the chosen calls back
+as above. Until the first read after a start has finished, `/v1/sessions` is empty and
+`/v1/status` says `"at": null`.
 
 Errors: `401` without the key, `404` for a session id it does not hold, `422` for a body
 with any other field or sessions that hold no text, `502` when the box does not answer or
-its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot be read.
+its attestation fails, `503` when the proxy's directory cannot be read. An export also
+answers:
+
+- `409` when a chosen call no longer reads as it did when it was listed (the proxy's log
+  started again, or a file was replaced or damaged). Nothing is sent. The changed file is
+  read again at the next `/v1/sync`; list the sessions again and choose again. A log that
+  started again takes two reads to be believed, as for any read.
+- `410` when a chosen call's file is gone from the proxy's directory. Its sessions stay
+  listed, and `/v1/status` names the file, but they can no longer be exported: their text
+  is not kept anywhere else.
 
 ## What it guarantees, and what it does not
 
@@ -98,9 +117,15 @@ its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot b
 - **The export is not signed here.** The agreement UI signs the sealed records, as it does
   today, with the logger key the box trusts. Sealing hides the text; it does not prove where
   the records came from. Moving that key to this server is a later step and changes no format.
-- **This server reads plaintext**, from the proxy's files, and holds the parts a run needs in
-  memory. It keeps no copy on disk and writes nothing to the proxy's volume. It must run where
-  the proxy runs.
+- **This server reads plaintext**, from the proxy's files, only for an export, and holds it
+  only while that export is sealed. It keeps no copy, in memory or on disk, and writes
+  nothing to the proxy's volume. It must run where the proxy runs.
+- **The 409 checks the index against the disk.** An export takes the sessions as the index
+  holds them now: a call added to a session after the UI listed it is exported too, as it
+  was before.
+- **Memory still grows with the number of calls**, about 600 bytes each, and an export holds
+  all its records at once while it is sealed. Keeping only recent calls, or a small database,
+  and a cap on an export's size are later steps.
 
 ## Running it
 
