@@ -33,9 +33,10 @@ class Where:
 
 # What one record may carry. Tool results (file contents, command output) and tool inputs
 # can be enormous, and a plan allows about 100 KB per run, so they are cut, head first.
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Call:
-    """One call without its conversation: the metadata, and the parts kept for the box."""
+    """One call as the index keeps it: its metadata, its sizes and where it is. No text: what
+    was said stays in the proxy's files and is read back only for an export."""
 
     id: str
     time: float
@@ -47,8 +48,7 @@ class Call:
     stop_reason: str | None
     size: int  # bytes of the request body
     message_count: int
-    parts: tuple[tuple[str, str], ...]  # (kind, content), in order; never served as metadata
-    kinds: tuple[str, ...] = ()  # each part's kind, in order
+    kinds: tuple[str, ...] = ()  # the kind of each part a run sends, in order
     content_bytes: int = 0  # how much text a run would send for this call: a size, never the text
     where: Where | None = None  # set by the store, which knows the file
 
@@ -93,7 +93,11 @@ class Session:
         }
 
 
-def parse(entry: dict) -> Call:
+Parts = tuple[tuple[str, str], ...]  # (kind, content), in order: what a run sends for a call
+
+
+def parse(entry: dict) -> tuple[Call, Parts]:
+    """The call, and its parts. The index keeps the call and drops the parts."""
     body = _json_text(entry.get("request_raw"))
     reply = _json_text(entry.get("response_raw"))
     headers = {k.lower(): v for k, v in (entry.get("request_headers") or {}).items()}
@@ -114,7 +118,7 @@ def parse(entry: dict) -> Call:
     )
     parts = tuple(_parts(messages, response_blocks))
     # Interned: thousands of calls share one copy of each sender, model, session and kind.
-    return Call(
+    call = Call(
         id=str(entry.get("id", "")),
         time=float(entry.get("time", 0)),
         who=sys.intern(str(entry.get("who", "?"))),
@@ -125,10 +129,10 @@ def parse(entry: dict) -> Call:
         stop_reason=sys.intern(stop) if isinstance(stop, str) else stop,
         size=size,
         message_count=len(messages),
-        parts=parts,
         kinds=tuple(sys.intern(kind) for kind, _ in parts),
         content_bytes=sum(len(content.encode()) for _, content in parts),
     )
+    return call, parts
 
 
 def _parts(messages: list[dict], response_blocks: list[dict]) -> list[tuple[str, str]]:
@@ -181,15 +185,15 @@ def sessions(calls: list[Call]) -> list[Session]:
     return result
 
 
-def box_records(calls: list[Call], first_offset: int = 0) -> list[dict]:
-    """The box's record format, one record per part of each call, oldest call first.
-    Offsets count on from ``first_offset``.
+def box_records(calls: list[tuple[Call, Parts]], first_offset: int = 0) -> list[dict]:
+    """The box's record format, one record per part of each (call, its parts), oldest call
+    first (calls at the same time keep their order). Offsets count on from ``first_offset``.
 
     agent_id is who sent it (the proxy's "who"), session_id the grouping above, content what
     the model saw and said. The box checks these against the plan's input scope."""
     out: list[dict] = []
-    for c in sorted(calls, key=lambda x: x.time):
-        for kind, content in c.parts:
+    for c, parts in sorted(calls, key=lambda pair: pair[0].time):
+        for kind, content in parts:
             out.append(
                 {
                     "stream": "proxy",

@@ -18,7 +18,8 @@ disk. A sealed or pending file is parsed once and kept by its seq range, so a pe
 that becomes its ``.zst`` is not parsed again; the live file is read on from where the last
 read stopped, up to its last complete line. A file that cannot be read is skipped and
 reported in the status, never the whole load. The index keeps one light ``Call`` per
-recorded call (metadata and the parts a run sends to the box), never the whole conversation.
+recorded call: its metadata, its sizes, and where its line is. No text is kept: an export reads
+the chosen calls' lines back (``Store.texts``), checks each is the line indexed, and drops them.
 
 A background thread re-reads every ``SYNC_SECONDS``; requests answer from the last index.
 """
@@ -39,7 +40,7 @@ from pathlib import Path
 import zstandard
 
 from logserver import calls
-from logserver.calls import Call, Where
+from logserver.calls import Call, Parts, Where
 from logserver.config import Settings
 
 LIVE = "requests.jsonl"
@@ -156,7 +157,7 @@ class Store:
 
         threading.Thread(target=loop, daemon=True, name="proxy-read").start()
 
-    def texts(self, chosen: list[Call]) -> list[tuple[tuple[str, str], ...]]:
+    def texts(self, chosen: list[Call]) -> list[Parts]:
         """Each chosen call's parts, read back from the proxy's files by its ``Where``, in the
         order given. Never takes the refresh lock (the first refresh can hold it for the whole
         history) and parses only the chosen lines.
@@ -213,16 +214,15 @@ class Store:
             found.update({seq: (key, line) for seq, line in got.items()})
         return found
 
-    def _checked(self, call: Call, key, line: bytes) -> tuple[tuple[str, str], ...]:
+    def _checked(self, call: Call, key, line: bytes) -> Parts:
         """The parts of the line read back for ``call``, if it is the line indexed."""
-        where = call.where
         again = None
-        if line.endswith(b"\n") and hashlib.sha256(line).digest() == where.sha256:
-            again = _call(line, where.seq, where.offset)
-        if again is None or again.id != call.id:
+        if line.endswith(b"\n") and hashlib.sha256(line).digest() == call.where.sha256:
+            again = _entry(line)
+        if again is None or again[0].id != call.id:
             self._mark_stale(key)
             raise ChangedError(f"{_named(call)} no longer reads as it did when it was listed")
-        return again.parts
+        return again[1]
 
     def _mark_stale(self, key) -> None:
         with self._stale_lock:
@@ -341,7 +341,7 @@ class Store:
 
     def _file_problems(self, listed: set[tuple[int, int]]) -> list[dict]:
         """Files that failed, lines that are not calls, gaps, and files gone since read
-        (their calls are kept: the proxy never deletes a range)."""
+        (their calls stay listed, but can no longer be exported: their text is not kept)."""
         problems: list[dict] = []
         expected = None
         for key in sorted(listed | self._parsed.keys()):
@@ -354,7 +354,12 @@ class Store:
             if parsed is None:
                 continue
             if key not in listed:
-                problems.append({"file": parsed.name, "problem": "gone; its calls are kept"})
+                problems.append(
+                    {
+                        "file": parsed.name,
+                        "problem": "gone; its calls are still listed but can no longer be exported",
+                    }
+                )
             if parsed.error:
                 problems.append({"file": parsed.name, "problem": parsed.error})
             if parsed.unreadable:
@@ -536,10 +541,16 @@ def _call(line: bytes, seq: int, offset: int) -> Call | None:
     """One line as a call, with where it is; None for a line that does not parse (skipped,
     never fatal: one odd line, say a request nested past the recursion limit, must not stop
     every read). Every line counts for ``seq``, whatever it holds."""
+    found = _entry(line)
+    if found is None:
+        return None
+    return replace(found[0], where=Where(seq, offset, hashlib.sha256(line).digest()))
+
+
+def _entry(line: bytes) -> tuple[Call, Parts] | None:
     if not line.strip():
         return None
     try:
-        call = calls.parse(json.loads(line))
+        return calls.parse(json.loads(line))
     except Exception:
         return None
-    return replace(call, where=Where(seq, offset, hashlib.sha256(line).digest()))

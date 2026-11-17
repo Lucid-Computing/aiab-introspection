@@ -1,7 +1,9 @@
+import gc
 import hashlib
 import json
 import os
 import threading
+import tracemalloc
 
 import pytest
 import zstandard
@@ -331,7 +333,7 @@ def test_a_zst_being_written_is_ignored(settings, proxy):
     assert ids(store) == ["a1", "a2", "b1"] and store.status["problems"] == []
 
 
-def test_a_segment_missing_from_a_later_listing_keeps_its_calls(settings, proxy):
+def test_a_segment_missing_from_a_later_listing_keeps_its_calls_listed(settings, proxy):
     proxy.seal(batch("c", 1))  # seq 4, so the first segment is not the last
     store = Store(settings)
     store.refresh()
@@ -339,7 +341,9 @@ def test_a_segment_missing_from_a_later_listing_keeps_its_calls(settings, proxy)
     first.rename(proxy.root / "elsewhere")
     store.refresh()
     assert ids(store) == ["a1", "a2", "b1", "c0"]
-    assert problems(store) == {f"segments/{first.name}": "gone; its calls are kept"}
+    assert problems(store) == {
+        f"segments/{first.name}": "gone; its calls are still listed but can no longer be exported"
+    }
 
 
 def test_a_log_that_starts_again_is_read_afresh_after_a_second_look(settings, proxy):
@@ -402,7 +406,8 @@ def test_calls_group_into_sessions_and_become_box_records(store):
         ("bob-1800000500", "bob", 1),  # no session header: who and a 30-minute gap
         ("s-alice", "alice", 2),
     ]
-    records = calls.box_records(list(found[1].calls))
+    alice = list(found[1].calls)
+    records = calls.box_records(list(zip(alice, store.texts(alice), strict=True)))
     assert [(r["offset"], r["kind"], r["content"]) for r in records] == [
         (0, "request", SECRET),
         (1, "response", ANSWER),
@@ -509,11 +514,20 @@ def chosen(store, *wanted):
 
 
 def read_back(store, *wanted):
-    """Each call's parts read back from the disk, checked against what the index holds."""
+    """Each call's parts read back by the store, checked against the same lines read by hand
+    and parsed straight from the proxy's files."""
     picked = chosen(store, *wanted)
     got = store.texts(picked)
-    assert got == [c.parts for c in picked]  # the same text the index was built from
+    files = ProxyFiles(store.dir)
+    assert got == [calls.parse(json.loads(by_hand(files, c.where)))[1] for c in picked]
     return got
+
+
+class ProxyFiles:
+    """The two paths ``by_hand`` reads, for a store's directory."""
+
+    def __init__(self, root):
+        self.segments, self.live = root / "segments", root / "requests.jsonl"
 
 
 def test_chosen_calls_are_read_back_in_the_order_given(store):
@@ -548,7 +562,7 @@ def test_a_session_across_a_segment_cut_and_the_live_file(settings, proxy):
     store.refresh()
     session = next(s for s in calls.sessions(store.calls()) if s.id == "s-alice")
     assert [c.id for c in session.calls] == ["a1", "a2", "a3", "a4"]
-    assert store.texts(list(session.calls)) == [c.parts for c in session.calls]
+    assert store.texts(list(session.calls)) == read_back(store, "a1", "a2", "a3", "a4")
 
 
 def test_with_no_live_file_between_the_two_renames_the_pending_file_is_read(settings, proxy):
@@ -665,3 +679,45 @@ def test_a_read_back_does_not_wait_for_a_refresh(store):
         reader.start()
         reader.join(timeout=5)
     assert done, "texts() waited for the refresh lock"
+
+
+# ---- memory -------------------------------------------------------------------------------
+
+
+def tool_call(i, size):
+    """A call whose newest turn carries a tool result of ``size`` characters."""
+    e = entry(f"m{i}", "mia", 1_800_010_000.0 + i, "", f"answer {i}", "s-mem")
+    result = [{"type": "tool_result", "tool_use_id": "t", "content": f"{i} " + "x" * size}]
+    e["request_raw"] = {
+        "text": json.dumps({"model": "m", "messages": [{"role": "user", "content": result}]})
+    }
+    return e
+
+
+def held_after_refresh(root, size, n=200) -> int:
+    """Bytes still allocated once a store has indexed ``n`` calls with ``size``-character tool
+    results: half sealed, half live."""
+    proxy = ProxyDir(root)
+    proxy.seal([tool_call(i, size) for i in range(n // 2)])
+    proxy.append([tool_call(i, size) for i in range(n // 2, n)])
+    store = Store(
+        Settings(proxy_dir=root, boxes=(Target("dev", API_KEY, "b", "r"),), sync_seconds=300)
+    )
+    gc.collect()
+    tracemalloc.start()
+    try:
+        store.refresh()
+        gc.collect()
+        held, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert len(store.calls()) == n and store.calls()[0].content_bytes > size
+    return held
+
+
+def test_memory_held_does_not_grow_with_the_text(tmp_path):
+    held_after_refresh(tmp_path / "warm", 10)  # imports and caches, once
+    small = held_after_refresh(tmp_path / "small", 1_000)  # 200 KB of text
+    large = held_after_refresh(tmp_path / "large", 50_000)  # 10 MB of text
+    assert large < small * 1.1 + 20_000, (small, large)
+    assert large / 200 < 2_000, f"{large / 200:.0f} bytes per call"

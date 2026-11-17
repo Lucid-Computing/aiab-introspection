@@ -61,9 +61,10 @@ class Box:
                     error = exc
             raise BoxError(f"the box could not be attested or did not answer: {error}")
 
-    def seal(self, records: list[dict]) -> dict:
-        """The records with each content sealed to the box's current key."""
-        identity = self.identity()
+    def seal(self, records: list[dict], identity: dict | None = None) -> dict:
+        """The records with each content sealed to the box's current key: ``identity`` if
+        it was just fetched, otherwise asked for now."""
+        identity = identity or self.identity()
         return {
             "scheme": SCHEME,
             "box": self.host,
