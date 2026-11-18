@@ -8,8 +8,8 @@
 Both take the caller's key as ``x-log-key``. Each box has its own key, and the key decides
 which box an export is sealed to (``logserver.config``). Also ``GET /v1/status`` (the last
 read of the proxy's files, and any file that could not be read), ``POST /v1/sync`` (read
-them again now) and ``GET /healthz`` (no key). Every route answers from the last read, and
-only an export reads a file: the text of the calls it sends.
+them again now) and ``GET /healthz`` (no key). Every route answers from the last read; none
+reads a file.
 The export is not signed here: the agreement UI signs the sealed records as it does today.
 """
 
@@ -93,12 +93,7 @@ def create_app(
         if unknown:
             raise HTTPException(404, {"error": "unknown_sessions", "sessions": unknown})
         wanted = list(dict.fromkeys(body.sessions))
-        chosen = [c for i in wanted for c in by_id[i].calls]
-        try:  # the text is read from the disk only now, for these calls
-            chosen = await run_in_threadpool(store.with_text, chosen)
-        except StoreError as error:
-            raise HTTPException(503, str(error)) from None
-        records = calls.box_records(chosen, body.offset)
+        records = calls.box_records([c for i in wanted for c in by_id[i].calls], body.offset)
         if not records:
             raise HTTPException(422, "the chosen sessions hold no text to audit")
         try:

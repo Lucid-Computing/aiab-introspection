@@ -64,7 +64,7 @@ def test_an_export_is_sealed_and_only_the_box_opens_it(client, store, fakebox):
     assert body["scheme"] == SCHEME and body["boot_id"] == fakebox.boot_id
     assert body["box"] == "box.example" and body["sessions"] == ["s-alice"]
     sealed = body["records"]
-    plain = calls.box_records(store.with_text(list(calls.sessions(list(store.calls()))[1].calls)))
+    plain = calls.box_records(list(calls.sessions(list(store.calls()))[1].calls))
     # Metadata stays readable, for the UI's scope checks; the content does not.
     for s, p in zip(sealed, plain, strict=True):
         assert {k: s[k] for k in p if k != "content"} == {k: p[k] for k in p if k != "content"}

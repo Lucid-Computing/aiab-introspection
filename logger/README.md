@@ -78,15 +78,12 @@ An export:
 }
 ```
 
-Every route answers from the last read, and only an export reads a file: the text of the
-calls it sends. Until the first read after a
+Every route answers from the last read; none reads a file. Until the first read after a
 start has finished, `/v1/sessions` is empty and `/v1/status` says `"at": null`.
 
 Errors: `401` without the key, `404` for a session id it does not hold, `422` for a body
 with any other field or sessions that hold no text, `502` when the box does not answer or
-its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot be read, and
-from `/v1/export` when a chosen call's text is no longer where the last read found it (the
-proxy's log started again, say): sync, then ask again.
+its attestation fails, `503` from `/v1/sync` when the proxy's directory cannot be read.
 
 ## What it guarantees, and what it does not
 
@@ -101,11 +98,9 @@ proxy's log started again, say): sync, then ask again.
 - **The export is not signed here.** The agreement UI signs the sealed records, as it does
   today, with the logger key the box trusts. Sealing hides the text; it does not prove where
   the records came from. Moving that key to this server is a later step and changes no format.
-- **This server reads plaintext**, from the proxy's files. It holds none of the text in
-  memory: the index keeps each call's metadata and where its line is (about 1 KB a call),
-  and an export reads the chosen calls' text from the files again, one line at a time. It
-  keeps no copy on disk and writes nothing to the proxy's volume, so it must run where the
-  proxy runs.
+- **This server reads plaintext**, from the proxy's files, and holds the parts a run needs in
+  memory. It keeps no copy on disk and writes nothing to the proxy's volume. It must run where
+  the proxy runs.
 
 ## Running it
 

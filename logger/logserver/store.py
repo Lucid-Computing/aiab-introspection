@@ -18,11 +18,7 @@ disk. A sealed or pending file is parsed once and kept by its seq range, so a pe
 that becomes its ``.zst`` is not parsed again; the live file is read on from where the last
 read stopped, up to its last complete line. A file that cannot be read is skipped and
 reported in the status, never the whole load. The index keeps one light ``Call`` per
-recorded call: its metadata, the kind and size of each part a run sends to the box, and
-where its line is (the first seq of its file, the line's offset in the file's bytes as the
-proxy wrote them, and its length). None of the text is kept: ``with_text`` reads a call's
-line again when a run exports it. The offset holds through a rotation and a compression,
-since a pending file is the live file renamed and a ``.zst`` is its bytes compressed.
+recorded call (metadata and the parts a run sends to the box), never the whole conversation.
 
 A background thread re-reads every ``SYNC_SECONDS``; requests answer from the last index.
 """
@@ -35,8 +31,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import Iterator
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import zstandard
@@ -283,9 +278,6 @@ class Store:
                 changed = True
                 call = _call(line)
                 if call is not None:
-                    call = replace(
-                        call.light(), at=(live_first, live.offset - len(line), len(line))
-                    )
                     live.calls.append((call.id or f"{live_first}:{n}", call))
                 elif line.strip():
                     live.unreadable += 1
@@ -304,57 +296,6 @@ class Store:
         for key, call in self._live.calls:
             seen[key] = call
         return tuple(seen.values())
-
-    # ---- the text, for an export --------------------------------------------------------
-
-    def with_text(self, wanted: list[Call]) -> list[Call]:
-        """The same calls with their text, each read again from its line in the proxy's
-        files. A line that is no longer where the index says (the log started again, a
-        file is gone) is a StoreError: read the files again, then ask again."""
-        by_first: dict[int, set[tuple]] = {}
-        for call in wanted:
-            by_first.setdefault(call.at[0], set()).add(call.at)
-        found: dict[tuple, Call | None] = {}
-        try:
-            listing = {c.first: c for c in self._list()}
-            for first, ats in by_first.items():
-                found.update(self._lines(listing.get(first), first, sorted(ats)))
-        except (OSError, zstandard.ZstdError) as error:
-            raise StoreError(f"a call's text cannot be read again: {error}") from None
-        out = []
-        for call in wanted:
-            read = found[call.at]
-            if read is None or read.id != call.id:
-                raise StoreError("the proxy's log changed under a call; read again and retry")
-            out.append(replace(call, parts=read.parts, sizes=read.sizes))
-        return out
-
-    def _lines(self, c: Container | None, first: int, ats: list[tuple]) -> dict[tuple, Call | None]:
-        """The calls at ``ats`` of the file whose first seq is ``first``: a sealed or pending
-        one, or the live file while it is still the one the index read. Each line is read
-        as a call and dropped before the next is read: a line holds the whole conversation
-        so far, megabytes of it, and an export asks for hundreds of them."""
-        if c is None:
-            f, compressed = (self.dir / LIVE).open("rb"), False
-            stat = os.fstat(f.fileno())
-            if self._live.identity != (first, stat.st_dev, stat.st_ino):
-                f.close()
-                raise StoreError("the proxy rotated its log; read again and retry")
-        else:
-            path, compressed = c.path, c.compressed
-            try:
-                f = path.open("rb")
-            except FileNotFoundError:
-                if compressed:
-                    raise
-                f, compressed = path.with_name(path.name + ".zst").open("rb"), True
-        with f:
-            if not compressed:
-                return {at: _call(line) for at, line in _slices(f, ats, seek=True)}
-            with _segment_lock:
-                decompressor = zstandard.ZstdDecompressor(max_window_size=1 << WINDOW_LOG)
-                reader = io.BufferedReader(decompressor.stream_reader(f, closefd=False))
-                return {at: _call(line) for at, line in _slices(reader, ats, seek=False)}
 
 
 def _same_file(handle, path: Path) -> bool:
@@ -391,7 +332,7 @@ def _parse(c: Container) -> tuple[Parsed | None, str | None]:
     name = f"{SEGMENTS}/{path.name}"
     with f:
         try:
-            found, lines, unreadable = _read(f, compressed, c.first)
+            found, lines, unreadable = _read(f, compressed)
         except (zstandard.ZstdError, OSError) as error:
             failed = Parsed(name, (), 0, f"cannot be read, skipped: {error}")
             return failed, failed.error
@@ -403,48 +344,24 @@ def _parse(c: Container) -> tuple[Parsed | None, str | None]:
     return Parsed(name, keyed, unreadable), None
 
 
-def _read(f, compressed: bool, first: int) -> tuple[list[tuple[int, Call]], int, int]:
+def _read(f, compressed: bool) -> tuple[list[tuple[int, Call]], int, int]:
     """([(line number, call)], lines, unreadable lines) of one opened file."""
     if not compressed:
-        return _calls(f, first)
+        return _calls(f)
     with _segment_lock:
         decompressor = zstandard.ZstdDecompressor(max_window_size=1 << WINDOW_LOG)
-        return _calls(io.BufferedReader(decompressor.stream_reader(f, closefd=False)), first)
+        return _calls(io.BufferedReader(decompressor.stream_reader(f, closefd=False)))
 
 
-def _calls(lines, first: int) -> tuple[list[tuple[int, Call]], int, int]:
-    """Each call light, with where its line is: (the file's first seq, offset, length)."""
-    found, n, unreadable, offset = [], 0, 0, 0
+def _calls(lines) -> tuple[list[tuple[int, Call]], int, int]:
+    found, n, unreadable = [], 0, 0
     for n, line in enumerate(lines, 1):  # noqa: B007 - n is the line count after the loop
         call = _call(line)
         if call is not None:
-            found.append((n - 1, replace(call.light(), at=(first, offset, len(line)))))
+            found.append((n - 1, call))
         elif line.strip():
             unreadable += 1
-        offset += len(line)
     return found, n, unreadable
-
-
-def _slices(reader, ats: list[tuple], seek: bool) -> Iterator[tuple[tuple, bytes]]:
-    """(at, the bytes there) for each (first, offset, length), in the order of the offsets,
-    one at a time. A compressed file cannot seek, so what lies between two lines is read
-    and dropped."""
-    position = 0
-    for at in ats:
-        _, offset, length = at
-        if seek:
-            reader.seek(offset)
-        else:
-            while position < offset:
-                skipped = reader.read(min(1 << 20, offset - position))
-                if not skipped:
-                    raise StoreError("a file is shorter than when it was read; read again")
-                position += len(skipped)
-        line = reader.read(length)
-        if len(line) != length:
-            raise StoreError("a file is shorter than when it was read; read again")
-        position = offset + length
-        yield at, line
 
 
 def _call(line: bytes) -> Call | None:
