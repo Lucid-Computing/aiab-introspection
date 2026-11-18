@@ -252,7 +252,7 @@ def load_plan_view(settings: Settings) -> PlanView:
     ) < len(PARTIES):
         for entry in signatures.values():
             entry["status"], entry["detail"] = "invalid", "the same signing key for both parties"
-    # "auto": the lab signature was made with the server's own lab key (Lab Sign). It
+    # "auto": the lab signature was made with the server's own lab key (Sign on the lab card). It
     # freezes the plan like any other signature; only the wording differs.
     server_lab = server_public_key(settings, "lab")
     lab = signatures["lab"]
