@@ -645,7 +645,38 @@ def _run_source(request: Request, folder: Path | None, form: Any = None) -> tupl
     return _log_source(request, form), False
 
 
-def _named_elsewhere(source: LogSource, named: set[str]) -> list[tuple[LogSource, Any]]:
+def _senders(user: dict[str, str]) -> set[str]:
+    """The sender names an account owns: its username and what AIAB_LOG_OWNERS adds."""
+    name = user["username"].lower()
+    return {name, *(w.lower() for w in settings.log_owners.get(name, ()))}
+
+
+def _sees(user: dict[str, str], source: LogSource, session: Any) -> bool:
+    """Whether this user may see a session. The lab sees every session. An auditor sees
+    an agent log's sessions only when they were sent as them, a Slack thread only when they
+    wrote in it (the login's email, as WorkOS gives it, or a name AIAB_LOG_OWNERS maps),
+    and a GitHub thread only when a mapped login posted in it. The plant's export is
+    shared: its senders are agents, not people."""
+    if user["party"] == "lab" or source.kind == "plant":
+        return True
+    names = _senders(user)
+    if source.kind == "slack":
+        email = (user.get("email") or "").lower()
+        return any(
+            (email and r.email.lower() == email) or r.who.lower() in names for r in session.records
+        )
+    if source.kind == "github":
+        return any(r.who.lower() in names for r in session.records)
+    return session.who.lower() in names
+
+
+def visible_sessions(user: dict[str, str], source: LogSource, sessions: list) -> list:
+    return [s for s in sessions if _sees(user, source, s)]
+
+
+def _named_elsewhere(
+    source: LogSource, named: set[str], user: dict[str, str]
+) -> list[tuple[LogSource, Any]]:
     """Sessions the agreement names that live in another log source than its own: an
     agreement may name sessions of several sources, and a run sends them all. A source
     that cannot be read here is skipped."""
@@ -659,7 +690,7 @@ def _named_elsewhere(source: LogSource, named: set[str]) -> list[tuple[LogSource
             sessions = proxylogs.sessions(proxylogs.load_index(settings, other))
         except (OSError, ValueError):
             continue
-        found.extend((other, s) for s in sessions if s.id in named)
+        found.extend((other, s) for s in sessions if s.id in named and _sees(user, other, s))
     return found
 
 
@@ -673,11 +704,14 @@ def _log_source(request: Request, form: Any = None) -> LogSource:
 @app.get("/logs/sessions.json")
 async def logs_sessions(request: Request) -> Response:
     """The sessions of one log source, by metadata only, for the Log Source's picker."""
-    if user_of(request) is None:
+    user = user_of(request)
+    if user is None:
         return JSONResponse({"error": "sign in"}, status_code=401)
     source = _log_source(request)
     out = []
-    for s in proxylogs.sessions(proxylogs.load_index(settings, source)):
+    for s in visible_sessions(
+        user, source, proxylogs.sessions(proxylogs.load_index(settings, source))
+    ):
         records = len(proxylogs.box_records(s.records))
         if records:
             out.append(
@@ -694,7 +728,8 @@ async def logs_sessions(request: Request) -> Response:
 
 @app.get("/logs")
 async def logs_page(request: Request) -> Response:
-    if user_of(request) is None:
+    user = user_of(request)
+    if user is None:
         return to_login(request)
     source = _log_source(request)
     q = request.query_params.get("q", "").strip()
@@ -702,7 +737,9 @@ async def logs_page(request: Request) -> Response:
     wanted = request.query_params.get("session", "")
     wanted_req = request.query_params.get("req", "")
     records = proxylogs.load_index(settings, source)
-    all_sessions = proxylogs.sessions(records)
+    all_sessions = visible_sessions(user, source, proxylogs.sessions(records))
+    # An auditor's page says whose sessions it holds, and counts only those.
+    mine = sorted(_senders(user)) if user["party"] != "lab" and source.kind != "plant" else []
     whos = sorted({s.who for s in all_sessions})
     show_empty = request.query_params.get("empty") == "1"
     matched = [s for s in all_sessions if not who or s.who == who]
@@ -750,7 +787,8 @@ async def logs_page(request: Request) -> Response:
         matched=len(matched),
         empty=empty,
         show_empty=show_empty,
-        total_requests=len(records),
+        mine=mine,
+        total_requests=sum(len(s.records) for s in all_sessions) if mine else len(records),
         fetch=proxylogs.status(source),
         plant=(
             plantlogs.timeline(source.path(settings), current.records)
@@ -1085,7 +1123,8 @@ def _past_runs(qp: Any, chosen: str, logs: str) -> dict:
 
 @app.get("/runs")
 async def runs_index(request: Request) -> Response:
-    if user_of(request) is None:
+    user = user_of(request)
+    if user is None:
         return to_login(request)
     qp = request.query_params
     choices = _runnable(pv.list_agreements(settings))
@@ -1097,7 +1136,9 @@ async def runs_index(request: Request) -> Response:
         pre["missing"].insert(0, f"no agreement called {chosen}")
         pre["ok"] = False
     source, source_fixed = _run_source(request, folder)
-    all_sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
+    all_sessions = visible_sessions(
+        user, source, proxylogs.sessions(proxylogs.load_index(settings, source))
+    )
     # The agreement's Log Source decides what is sent: sessions it takes, sessions outside
     # its scope (the box would refuse them), and sessions with nothing to send.
     fits, outside, empty = [], [], []
@@ -1116,7 +1157,7 @@ async def runs_index(request: Request) -> Response:
         }
         (outside if item["notes"] else empty if not recs else fits).append(item)
     labels = [source.label]
-    for other, s in _named_elsewhere(source, named):
+    for other, s in _named_elsewhere(source, named, user):
         recs = proxylogs.box_records(s.records)
         item = {
             "session": s,
@@ -1175,11 +1216,13 @@ async def runs_start(request: Request) -> Response:
         chosen_sessions = set(form.getlist("session"))
         picked = [
             s
-            for s in proxylogs.sessions(proxylogs.load_index(settings, source))
+            for s in visible_sessions(
+                user, source, proxylogs.sessions(proxylogs.load_index(settings, source))
+            )
             if s.id in chosen_sessions
         ]
         named = runs.plan_sessions(target.plan_dir) & chosen_sessions
-        elsewhere = _named_elsewhere(source, named)
+        elsewhere = _named_elsewhere(source, named, user)
         picks = [(source, s) for s in picked] + elsewhere
         picked += [s for _, s in elsewhere]
         if not picked:
@@ -1341,6 +1384,8 @@ async def plan_document(request: Request, aid: str) -> Response:
             and holder["user"] == actor.get("username"),
             "issues": list(view.issues),
             "issue": view.issue,
+            # The log sources this server offers, for the Input filter's choice.
+            "sources": [{"id": s.id, "label": s.label} for s in settings.log_sources],
         }
     )
 
