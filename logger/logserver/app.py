@@ -18,14 +18,18 @@ from __future__ import annotations
 
 import hmac
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from logserver import calls, config
 from logserver.box import Box, BoxError
 from logserver.config import Settings, Target
 from logserver.store import ChangedError, GoneError, Store, StoreError
+
+PER_PAGE = 50  # sessions on a page of /v1/sessions, unless the caller asks otherwise
+MAX_PER_PAGE = 500
 
 
 class ExportRequest(BaseModel):
@@ -79,12 +83,45 @@ def create_app(
             raise HTTPException(503, str(error)) from None
 
     @app.get("/v1/sessions", dependencies=[Depends(key)])
-    def sessions(who: str = ""):
+    def sessions(
+        who: str = "",
+        since: str = "",
+        until: str = "",
+        page: int = Query(default=0, ge=0),
+        per_page: int = Query(default=PER_PAGE, ge=1, le=MAX_PER_PAGE),
+    ):
+        """Newest first. With ``page`` (from 1), that page of session summaries, without
+        their calls, and how many there are in all; a session's calls are asked of
+        ``/v1/sessions/{id}``. Without it, every session with its calls, as before.
+        ``since`` and ``until`` (as ``2027-01-15T08:00:00Z``) keep the sessions that have a
+        call in that time."""
         found = calls.sessions(store.calls())
         whos = sorted({s.who for s in found})
         if who:
             found = [s for s in found if s.who == who]
-        return {"whos": whos, "sessions": [s.metadata() for s in found]}
+        if since:
+            found = [s for s in found if s.calls[-1].time >= _time(since, "since")]
+        if until:
+            found = [s for s in found if s.calls[0].time <= _time(until, "until")]
+        if not page:
+            return {"whos": whos, "sessions": [s.metadata() for s in found]}
+        shown = found[(page - 1) * per_page : page * per_page]
+        return {
+            "whos": whos,
+            "total": len(found),
+            "page": page,
+            "per_page": per_page,
+            "pages": -(-len(found) // per_page),
+            "sessions": [s.summary() for s in shown],
+        }
+
+    @app.get("/v1/sessions/{session_id}", dependencies=[Depends(key)])
+    def session(session_id: str):
+        """One session with its calls, as metadata."""
+        for s in calls.sessions(store.calls()):
+            if s.id == session_id:
+                return s.metadata()
+        raise HTTPException(404, {"error": "unknown_sessions", "sessions": [session_id]})
 
     # A plain def: FastAPI runs it in its threadpool, so neither the selection (every call is
     # grouped) nor the reading and sealing ever runs on the event loop.
@@ -127,6 +164,14 @@ def _sessions_of(gone: list, by_id: dict) -> list[str]:
     """The sessions holding these calls, as listed."""
     where = {c.where for c in gone}
     return [i for i, s in by_id.items() if any(c.where in where for c in s.calls)]
+
+
+def _time(text: str, name: str) -> float:
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(422, f"{name} is not a time like 2027-01-15T08:00:00Z") from None
+    return (when if when.tzinfo else when.replace(tzinfo=UTC)).timestamp()
 
 
 def main() -> FastAPI:

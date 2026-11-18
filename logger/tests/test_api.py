@@ -321,3 +321,38 @@ def test_a_live_file_that_will_not_open_on_every_look_is_a_503(client, store, mo
     monkeypatch.setattr(type(store), "_snapshot", no_live_file)
     response = client.post("/v1/export", json={"sessions": ["bob-1800000500"]})
     assert response.status_code == 503 and "cannot be opened: denied" in response.json()["detail"]
+
+
+def test_sessions_come_a_page_at_a_time_without_their_calls(client):
+    every = client.get("/v1/sessions").json()["sessions"]  # as before: all, with their calls
+    assert [s["id"] for s in every] == ["bob-1800000500", "s-alice"] and "calls" in every[0]
+    first = client.get("/v1/sessions?page=1&per_page=1").json()
+    assert (first["total"], first["pages"], first["page"], first["per_page"]) == (2, 2, 1, 1)
+    assert first["whos"] == ["alice", "bob"]
+    (bob,) = first["sessions"]
+    assert bob["id"] == "bob-1800000500" and "calls" not in bob and bob["n_calls"] == 1
+    assert SECRET not in client.get("/v1/sessions?page=1").text
+    second = client.get("/v1/sessions?page=2&per_page=1").json()["sessions"]
+    assert [s["id"] for s in second] == ["s-alice"] and second[0]["n_calls"] == 2
+    assert client.get("/v1/sessions?page=3&per_page=1").json()["sessions"] == []
+    assert client.get("/v1/sessions?page=1").json()["per_page"] == 50
+    assert client.get("/v1/sessions?page=1&per_page=501").status_code == 422
+
+
+def test_a_page_keeps_to_a_person_and_a_time_range(client):
+    def ids(query):
+        return [s["id"] for s in client.get(f"/v1/sessions?page=1&{query}").json()["sessions"]]
+
+    assert ids("who=alice") == ["s-alice"]
+    assert ids("until=2027-01-15T08:02:00Z") == ["s-alice"]  # alice: 08:00 and 08:01
+    assert ids("since=2027-01-15T08:05:00Z") == ["bob-1800000500"]  # bob: 08:08:20
+    assert ids("since=2027-01-15T08:01:00Z&until=2027-01-15T08:01:30Z") == ["s-alice"]
+    assert ids("since=2027-01-15T09:00:00Z") == []
+    assert client.get("/v1/sessions?page=1&since=yesterday").status_code == 422
+
+
+def test_one_session_is_asked_for_with_its_calls(client):
+    alice = client.get("/v1/sessions/s-alice").json()
+    assert [c["id"] for c in alice["calls"]] == ["a1", "a2"] and SECRET not in str(alice)
+    assert client.get("/v1/sessions/s-nobody").status_code == 404
+    assert client.get("/v1/sessions/s-alice", headers={"x-log-key": "wrong"}).status_code == 401

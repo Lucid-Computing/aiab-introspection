@@ -92,6 +92,13 @@ class Session:
             "calls": [c.metadata() for c in self.calls],
         }
 
+    def summary(self) -> dict:
+        """The session as one line of a page: the same without its calls, which are counted."""
+        return {
+            **{k: v for k, v in self.metadata().items() if k != "calls"},
+            "n_calls": len(self.calls),
+        }
+
 
 Parts = tuple[tuple[str, str], ...]  # (kind, content), in order: what a run sends for a call
 
