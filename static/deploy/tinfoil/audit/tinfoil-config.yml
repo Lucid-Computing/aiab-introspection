@@ -10,7 +10,7 @@
   "containers": [
     {
       "name": "aiab",
-      "image": "ghcr.io/lucid-computing/aiab-introspection-enclave@sha256:26160cc0c0cbe0bd04523dc56ac08a9caff3f12e7831ea0ea3aee823d0d624df",
+      "image": "ghcr.io/lucid-computing/aiab-introspection-enclave@sha256:6bd14e463e7acbc3c1aa9581356f65119ff8c46ef7f21d125f592c7511f5fc88",
       "command": [
         "python",
         "-m",
@@ -32,7 +32,7 @@
           "LISTEN_PORT": "8080"
         },
         {
-          "AIAB_AUDIT_TRUST_JSON": "{\"auditor_key\":\"5qE4zsiWWeDnqCZhEbOihncQsXYbeStL0Hbqe8m8Fns=\",\"lab_key\":\"9RWibUJxhAsEssU1LFdcOPrBr+Op46uAZX8m/E2EwEQ=\",\"logger_key\":\"HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg=\",\"model\":{\"artifact_digest\":\"sha256:7a279c6d7739f7ded0cf859f1bf83893543a94a455e9b27e5cbcb1abe5d893a6\",\"context_tokens\":131072,\"host\":\"inference.tinfoil.sh\",\"id\":\"gpt-oss-safeguard-120b\",\"max_output_tokens\":512,\"release_digest\":\"sha256:28993b6de54ae31936dfb8dddda06d3f71e84f33840c3cfadf8f33abfeb5aedd\",\"repo\":\"tinfoilsh/confidential-gpt-oss-safeguard-120b\",\"temperature\":0},\"runtime_digest\":\"sha256:26160cc0c0cbe0bd04523dc56ac08a9caff3f12e7831ea0ea3aee823d0d624df\"}"
+          "AIAB_AUDIT_TRUST_JSON": "{\"auditor_key\":\"5qE4zsiWWeDnqCZhEbOihncQsXYbeStL0Hbqe8m8Fns=\",\"lab_key\":\"a5uPRtAlIu5OqkXUc7cBk4TD5osG7vktQzOMDCrF2S4=\",\"logger_key\":\"HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg=\",\"model\":{\"artifact_digest\":\"sha256:7a279c6d7739f7ded0cf859f1bf83893543a94a455e9b27e5cbcb1abe5d893a6\",\"context_tokens\":131072,\"host\":\"inference.tinfoil.sh\",\"id\":\"gpt-oss-safeguard-120b\",\"max_output_tokens\":512,\"release_digest\":\"sha256:28993b6de54ae31936dfb8dddda06d3f71e84f33840c3cfadf8f33abfeb5aedd\",\"repo\":\"tinfoilsh/confidential-gpt-oss-safeguard-120b\",\"temperature\":0},\"runtime_digest\":\"sha256:6bd14e463e7acbc3c1aa9581356f65119ff8c46ef7f21d125f592c7511f5fc88\"}"
         },
         {
           "XDG_CACHE_HOME": "/tmp/aiab-cache"
@@ -41,7 +41,7 @@
           "XDG_DATA_HOME": "/tmp/aiab-data"
         },
         {
-          "AIAB_RELEASE_TAG": "v0.2.26"
+          "AIAB_RELEASE_TAG": "v0.2.27"
         }
       ],
       "secrets": [
