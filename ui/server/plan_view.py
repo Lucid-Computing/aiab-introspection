@@ -261,6 +261,7 @@ def load_plan_view(settings: Settings) -> PlanView:
         and lab["status"] == "ok"
         and key_bytes(lab.get("signing_key") or "") == key_bytes(server_lab)
     )
+    lab["pressed_by"] = _lab_sign_presser(plan_dir, plan_digest) if lab["auto"] else None
     frozen = any(s["status"] == "ok" for s in signatures.values())
     stale = [r for r, s in signatures.items() if s["status"] == "invalid"]
     state, badge = agreement_state(signatures, frozen, issue)
@@ -715,6 +716,17 @@ def issue_certificate(
     with log.open("a", encoding="utf-8") as out:
         out.write(json.dumps(record, sort_keys=True) + "\n")
     return "ok", certificate
+
+
+def _lab_sign_presser(plan_dir: Path, plan_digest: str) -> str | None:
+    """Who pressed Sign on the lab card for this version, from the change log lab_sign
+    wrote. None when the log has no such line (a signature made before it was recorded)."""
+    marker = f"signed version {plan_digest[7:19]} with the server's lab key; Sign pressed by "
+    for entry in load_history(plan_dir):
+        detail = str(entry.get("detail", ""))
+        if entry.get("where") == "signature: lab" and detail.startswith(marker):
+            return detail[len(marker):].split(";", 1)[0] or None
+    return None
 
 
 def lab_sign(

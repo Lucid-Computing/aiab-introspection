@@ -23,7 +23,7 @@
   <div class="card" id="sign-{{ party }}">
     <div class="card-header">{{ party }}</div>
     <div class="card-body sign-card">
-      <p class="sign-state {% if s.status == 'ok' %}ok{% elif s.status == 'invalid' %}bad{% endif %}">{% if s.auto %}Signed by the server{% elif s.status == 'ok' %}Signed{% elif s.status == 'missing' %}Not signed{% else %}Signed an older version, sign again{% endif %}</p>
+      <p class="sign-state {% if s.status == 'ok' %}ok{% elif s.status == 'invalid' %}bad{% endif %}">{% if s.auto %}Signed for the lab{% if s.pressed_by %} by {{ s.pressed_by }}{% endif %}{% if settings.lab_signer_authorized_by %}, authorized by {{ settings.lab_signer_authorized_by }}{% endif %}{% elif s.status == 'ok' %}Signed{% elif s.status == 'missing' %}Not signed{% else %}Signed an older version, sign again{% endif %}</p>
 
       {# 1. Sign: one click when this server certifies the party's browser key; otherwise the
             key is set up in this browser once. #}
