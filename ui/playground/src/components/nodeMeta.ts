@@ -10,8 +10,8 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
     blurb: "Fixes which logs the box may read before anything runs, so the audit cannot reach beyond what both parties agreed to.",
   },
   filter_logs: {
-    label: "Filter",
-    blurb: "Keeps only the records that match its rules, or that the model answers yes for.",
+    label: "Query",
+    blurb: "Keeps only the records that match its rules.",
   },
   combine_logs: {
     label: "AND / OR",
@@ -30,7 +30,7 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
     blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
   },
   final_report: {
-    label: "Report (old)",
+    label: "Audit result",
     blurb: "Names the few numbers that leave the box and the rules that stop one person's session from being singled out.",
   },
   records_report: {
@@ -40,16 +40,21 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
 };
 
 /**
- * A kind as a person sees it: the node types, plus Query format (a Code block the builder
- * writes, see plan/query.ts), and AND and OR (one node type, combine_logs, by its op).
+ * A kind as a person sees it: the node types, plus Group records (a Code block the builder
+ * writes, see plan/query.ts), AND and OR (one node type, combine_logs, by its op), and
+ * Filter (filter_logs asking the model; filter_logs by rules is Query).
  */
-export type BlockKind = NodeType | "query" | "and" | "or";
+export type BlockKind = NodeType | "query" | "and" | "or" | "filter_llm";
 
 export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
   ...NODE_META,
   query: {
-    label: "Query format",
+    label: "Group records",
     blurb: "Decides what one model question covers.",
+  },
+  filter_llm: {
+    label: "Filter",
+    blurb: "Asks the model one yes or no question about each record or session; yes keeps it.",
   },
   and: {
     label: "AND",
@@ -62,7 +67,13 @@ export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
 };
 
 export const kindOf = (n: PlanNode): BlockKind =>
-  n.type === "combine_logs" ? n.config.op : parseQuery(n) ? "query" : n.type;
+  n.type === "combine_logs"
+    ? n.config.op
+    : n.type === "filter_logs" && n.config.mode === "llm"
+      ? "filter_llm"
+      : parseQuery(n)
+        ? "query"
+        : n.type;
 
 /** The log sources a Log Source can name: the ids the agreement UI reads (server/config.py). */
 export const SOURCE_OPTIONS: { id: string; label: string }[] = [

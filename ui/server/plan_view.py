@@ -48,12 +48,12 @@ ISSUE_WHERE = {
 }
 NODE_LABELS = {
     "input_logs": "Log Source",
-    "filter_logs": "Filter",
+    "filter_logs": "Query",
     "combine_logs": "AND / OR",
     "classifier": "Classifier",
-    "run_python": "Run Python",
-    "run_llm": "Run LLM",
-    "final_report": "Report (old)",
+    "run_python": "Code",
+    "run_llm": "LLM",
+    "final_report": "Audit result",
     "records_report": "Report",
 }
 RECORD_FIELD_NAMES = {
@@ -190,6 +190,8 @@ def node_views(plan: Any) -> tuple[NodeView, ...]:
         if kind == "combine_logs":
             op = (n.get("config") or {}).get("op")
             label = op.upper() if op in ("and", "or") else label
+        if kind == "filter_logs" and (n.get("config") or {}).get("mode") == "llm":
+            label = "Filter"
         out.append(
             NodeView(
                 id=n["id"],

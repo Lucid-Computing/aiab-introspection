@@ -3,7 +3,7 @@
  * plan (or a reason for refusing), so the IR never leaves the structural tier.
  */
 import { accepts, INPUT_RULES, nodeById, outputPort, splitRef } from "./ports";
-import { isReport, type MetadataField, type NodeType, type Plan, type PlanNode, type RecordsReport } from "./types";
+import { type FilterLlm, type FilterRules, isReport, type MetadataField, type NodeType, type Plan, type PlanNode, type RecordsReport } from "./types";
 import { validatePlan, wouldCycle } from "./validate";
 import { NEW_INPUT } from "./graph";
 
@@ -151,6 +151,35 @@ export function addCombine(plan: Plan, op: "and" | "or"): { plan: Plan; id: stri
   const same = plan.nodes.filter((n) => n.type === "combine_logs" && n.config.op === op).length;
   const title = op.toUpperCase();
   const node: PlanNode = { id, type: "combine_logs", title: same ? `${title} ${same + 1}` : title, inputs: {}, config: { op } };
+  return { plan: { ...plan, nodes: [...plan.nodes, node] }, id };
+}
+
+/** The settings a new Query (rules) or Filter (model) block starts with. */
+const RULES_DEFAULT: FilterRules = { mode: "rules", match: "all", exclude: false, rules: [] };
+const LLM_DEFAULT: FilterLlm = {
+  mode: "llm",
+  llm: {
+    model: { ...DEFAULT_MODEL },
+    question: "",
+    judge: "record",
+    yes_examples: [],
+    no_examples: [],
+    threshold: 0.7,
+    unsure: "drop",
+  },
+};
+
+/**
+ * Add a Query (filter_logs by rules) or a Filter (filter_logs asking the model): one node
+ * type, two blocks, so the box runs both unchanged. Titled "Query", then "Query 2".
+ */
+export function addFilter(plan: Plan, mode: "rules" | "llm"): { plan: Plan; id: string } {
+  const base = mode === "rules" ? "query" : "filter";
+  const title = mode === "rules" ? "Query" : "Filter";
+  const id = freshId(plan, base);
+  const same = plan.nodes.filter((n) => n.type === "filter_logs" && n.config.mode === mode).length;
+  const config = structuredClone(mode === "rules" ? RULES_DEFAULT : LLM_DEFAULT);
+  const node: PlanNode = { id, type: "filter_logs", title: same ? `${title} ${same + 1}` : title, inputs: {}, config };
   return { plan: { ...plan, nodes: [...plan.nodes, node] }, id };
 }
 

@@ -2,7 +2,7 @@ import { useReactFlow } from "@xyflow/react";
 import type { Dispatch } from "react";
 import { READONLY } from "../agreement";
 import { NODE_H, NODE_W } from "../plan/layout";
-import { addCombine, addNode, cannotAdd } from "../plan/ops";
+import { addCombine, addFilter, addNode, cannotAdd } from "../plan/ops";
 import { addQuery } from "../plan/query";
 import type { Plan } from "../plan/types";
 import type { Action, State } from "../state/store";
@@ -12,10 +12,21 @@ import { BLOCK_META, type BlockKind } from "./nodeMeta";
 export const BLOCK_DRAG = "application/x-aiab-block";
 
 /** The kinds shown at the top of the rail, in the order a plan usually runs them. */
-export const MAIN: BlockKind[] = ["input_logs", "filter_logs", "and", "or", "records_report"];
+export const MAIN: BlockKind[] = [
+  "input_logs",
+  "filter_logs",
+  "filter_llm",
+  "and",
+  "or",
+  "classifier",
+  "run_llm",
+  "run_python",
+  "records_report",
+  "final_report",
+];
 
 /** The kinds kept under the collapsed "Deprecated" section at the bottom of the rail. */
-export const DEPRECATED: BlockKind[] = ["query", "classifier", "run_llm", "run_python", "final_report"];
+export const DEPRECATED: BlockKind[] = ["query"];
 
 /** Every kind a person adds by hand: the diagram accepts a drop of any of these. */
 export const OFFERED: BlockKind[] = [...MAIN, ...DEPRECATED];
@@ -33,7 +44,9 @@ export function placeBlock(
       ? addQuery(plan)
       : type === "and" || type === "or"
         ? addCombine(plan, type)
-        : addNode(plan, type);
+        : type === "filter_logs" || type === "filter_llm"
+          ? addFilter(plan, type === "filter_logs" ? "rules" : "llm")
+          : addNode(plan, type);
   const p = { x: at.x - NODE_W / 2, y: at.y - NODE_H / 2 };
   const taken = Object.values(layout);
   while (taken.some((q) => Math.abs(q.x - p.x) < NODE_W && Math.abs(q.y - p.y) < NODE_H)) p.y += NODE_H + 30;

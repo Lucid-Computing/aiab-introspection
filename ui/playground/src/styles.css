@@ -187,6 +187,7 @@ details.f > summary { cursor: pointer; }
 /* Report: a page with a folded corner. Report (old) keeps the circle. */
 .sym--records_report { clip-path: polygon(0 0, 62% 0, 100% 38%, 100% 100%, 0 100%); }
 /* Filter: a funnel. AND and OR: the set signs ∩ and ∪, drawn with the same bar weight. */
+.sym--filter_llm { clip-path: polygon(0 0, 100% 0, 50% 50%, 100% 100%, 0 100%, 50% 50%); }
 .sym--filter_logs { clip-path: polygon(0 0, 100% 0, 62% 50%, 62% 100%, 38% 100%, 38% 50%); }
 .sym--and { clip-path: polygon(0 100%, 0 0, 100% 0, 100% 100%, 68% 100%, 68% 32%, 32% 32%, 32% 100%); }
 .sym--or { clip-path: polygon(0 0, 32% 0, 32% 68%, 68% 68%, 68% 0, 100% 0, 100% 100%, 0 100%); }
