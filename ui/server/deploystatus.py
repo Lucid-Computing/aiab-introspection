@@ -166,9 +166,11 @@ def _run(run: dict) -> dict[str, Any]:
 
 
 async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) -> dict | None:
-    """The newest pull request whose head branch satisfies ``matches``, with its check run
-    (the pull_request or pull_request_target workflow on its head) and, once merged, the
-    release run that followed on the base branch."""
+    """The newest pull request into this server's deploy branch whose head branch satisfies
+    ``matches``, with its check run (the pull_request or pull_request_target workflow on its
+    head) and, once merged, the release run that followed on the base branch. A key pull
+    request into another environment's branch (dev's, seen from production) is not this
+    server's and would read as a key on its way that never comes."""
     prs = (
         await _get(
             client,
@@ -177,7 +179,14 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
         )
         or []
     )
-    pr = next((p for p in prs if matches(p["head"]["ref"])), None)
+    pr = next(
+        (
+            p
+            for p in prs
+            if matches(p["head"]["ref"]) and p["base"]["ref"] == settings.deploy_base
+        ),
+        None,
+    )
     if pr is None:
         return None
     merged_at = pr.get("merged_at")
