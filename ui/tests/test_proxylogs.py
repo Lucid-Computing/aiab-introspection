@@ -898,8 +898,8 @@ def test_an_auditor_sees_only_the_slack_threads_they_wrote_in(tmp_path, monkeypa
 
 
 def test_the_pages_offer_only_the_log_sources_named(monkeypatch):
-    """AIAB_LOG_SOURCES picks the sources in selector order; Dev Agent Logs and GitHub Logs
-    are off by default; unknown ids are ignored, and none known means every source."""
+    """AIAB_LOG_SOURCES picks the sources in selector order; Dev, Slack and GitHub Logs are
+    off by default; unknown ids are ignored, and none known means every source."""
     from server.config import load_settings, log_sources_from_env
 
     env = {"AIAB_PROXY_KEY": "k", "AIAB_LOG_KEY": "p"}
@@ -909,7 +909,7 @@ def test_the_pages_offer_only_the_log_sources_named(monkeypatch):
     assert ids(log_sources_from_env(env, "nope")) == ["prod", "dev", "slack", "github", "plant"]
     monkeypatch.delenv("AIAB_LOG_SOURCES", raising=False)
     settings = load_settings()
-    assert ids(settings.log_sources) == ["prod", "slack", "plant"]
+    assert ids(settings.log_sources) == ["prod", "plant"]
     assert settings.log_source(None).id == "prod"  # the default, Dev Agent Logs, is not offered
     monkeypatch.setenv("AIAB_LOG_SOURCES", "dev")
     assert ids(load_settings().log_sources) == ["dev"]

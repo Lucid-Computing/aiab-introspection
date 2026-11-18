@@ -19,7 +19,7 @@ TEST_PROXY_URL = (
 PROD_PROXY_URL = "https://llm-proxy.lucidcompute.com"
 DEFAULT_LOG_SOURCE = "dev"
 # AIAB_LOG_SOURCES: the sources the pages offer, a comma list of ids; the rest stay unread.
-DEFAULT_LOG_SOURCES = "prod,slack,plant"
+DEFAULT_LOG_SOURCES = "prod,plant"
 
 
 @dataclass(frozen=True)
