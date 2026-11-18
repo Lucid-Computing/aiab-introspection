@@ -2,13 +2,23 @@ import { describe, expect, it, vi } from "vitest";
 import { flowToPlan, planToFlow } from "./graph";
 import { completeLayout } from "./layout";
 import { lintPlan, pythonIssues } from "./lint";
-import { addNode, connect, deleteNodes, renameInput, renameNode, renameOutput } from "./ops";
+import {
+  addFilter,
+  addNode,
+  connect,
+  deleteNodes,
+  newNode,
+  renameInput,
+  renameNode,
+  renameOutput,
+  replaceNode,
+} from "./ops";
 import { blockPython } from "./python";
 import { addQuery, isQuery, parseQuery, QUERY_OUTPUT, queryCode, queryLine } from "./query";
 import { SAMPLE_SOURCES, deployedSample, samplePlan } from "./samples";
 import deployedPlan from "../../../../plan/plan.json";
 import { classificationShape, describeNode, describeOutput, reportShape } from "./shape";
-import type { Plan } from "./types";
+import type { Plan, PlanNode } from "./types";
 import { validatePlan } from "./validate";
 import { exportJson, jsonToPlan, linesOf, planToJson } from "./json";
 
@@ -573,6 +583,26 @@ describe("the wrapper as Python", () => {
     expect(text).toContain(`results = ${ids[1]}(items=records)`);
     expect(text).toContain(`${ids[2]}(result=results)`);
     expect(text).not.toContain("SETTINGS");
+  });
+});
+
+describe("one block, two modes", () => {
+  it("adds Query and Filter as filter_logs by rules and by the model", () => {
+    const q = addFilter(simple(), "rules");
+    const f = addFilter(q.plan, "llm");
+    const byId = (id: string) => f.plan.nodes.find((n) => n.id === id);
+    expect(byId(q.id)).toMatchObject({ type: "filter_logs", title: "Query", config: { mode: "rules" } });
+    expect(byId(f.id)).toMatchObject({ type: "filter_logs", title: "Filter", config: { mode: "llm" } });
+  });
+
+  it("switching an Audit block points its readers at the new output", () => {
+    const audit = { ...newNode("classifier", "audit"), inputs: { items: "logs.records" } } as PlanNode;
+    const reader = { ...newNode("final_report", "report"), inputs: { result: "audit.results" } } as PlanNode;
+    const plan = { ...simple(), nodes: [audit, reader] };
+    const llm = { ...newNode("run_llm", "audit"), inputs: { input: "logs.records" } } as PlanNode;
+    const next = replaceNode(plan, llm);
+    expect(next.nodes[0].type).toBe("run_llm");
+    expect(next.nodes[1].inputs).toEqual({ result: "audit.result" });
   });
 });
 

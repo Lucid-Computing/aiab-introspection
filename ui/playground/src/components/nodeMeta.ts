@@ -18,16 +18,16 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
     blurb: "Joins two sets of records by record id.",
   },
   classifier: {
-    label: "Classifier",
-    blurb: "Asks the model one fixed question about each item and keeps only a label and a score, so nothing the model writes can leave the box.",
+    label: "Audit",
+    blurb: "Asks the model about each item. Labels: it picks one of your labels, with a score. Free answer: your own prompt and a declared output.",
   },
   run_python: {
     label: "Code",
     blurb: "Anything plain Python can compute between blocks, in code both parties read and signed; it runs sealed, with no files, network or model.",
   },
   run_llm: {
-    label: "LLM",
-    blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
+    label: "Audit",
+    blurb: "Asks the model about each item. Labels: it picks one of your labels, with a score. Free answer: your own prompt and a declared output.",
   },
   final_report: {
     label: "Report",

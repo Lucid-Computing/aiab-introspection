@@ -50,9 +50,9 @@ NODE_LABELS = {
     "input_logs": "Log Source",
     "filter_logs": "Query",
     "combine_logs": "AND / OR",
-    "classifier": "Classifier",
+    "classifier": "Audit",
     "run_python": "Code",
-    "run_llm": "LLM",
+    "run_llm": "Audit",
     "final_report": "Report",
     "records_report": "Report",
 }

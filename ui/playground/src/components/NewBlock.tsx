@@ -16,12 +16,11 @@ export const MAIN: BlockKind[] = [
   "input_logs",
   "filter_logs",
   "filter_llm",
+  "classifier",
   "and",
   "or",
-  "classifier",
-  "run_llm",
-  "run_python",
   "final_report",
+  "run_python",
 ];
 
 /** The kinds kept under the collapsed "Deprecated" section at the bottom of the rail. */

@@ -183,6 +183,26 @@ export function addFilter(plan: Plan, mode: "rules" | "llm"): { plan: Plan; id: 
   return { plan: { ...plan, nodes: [...plan.nodes, node] }, id };
 }
 
+/**
+ * Put `next` in place of the node with the same id (a block switched to its other mode or
+ * format) and point every block that read the old output at the new one. A consumer that
+ * does not accept the new type keeps the binding, and lint says so.
+ */
+export function replaceNode(plan: Plan, next: PlanNode): Plan {
+  const old = plan.nodes.find((n) => n.id === next.id);
+  const from = old ? outputPort(old)?.name : undefined;
+  const to = outputPort(next)?.name;
+  const moved = from && to && from !== to ? { [`${next.id}.${from}`]: `${next.id}.${to}` } : {};
+  return {
+    ...plan,
+    nodes: plan.nodes.map((n) =>
+      n.id === next.id
+        ? next
+        : { ...n, inputs: Object.fromEntries(Object.entries(n.inputs).map(([k, r]) => [k, moved[r] ?? r])) },
+    ),
+  };
+}
+
 /** Why the builder will not add a block of this kind to `plan` now, or null when it will. */
 export function cannotAdd(plan: Plan, type: string): string | null {
   if ((type === "final_report" || type === "records_report") && plan.nodes.some(isReport)) return "A plan has one report";

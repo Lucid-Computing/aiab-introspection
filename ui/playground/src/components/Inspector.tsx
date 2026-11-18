@@ -7,6 +7,7 @@ import {
   disconnect,
   newNode,
   renameInput,
+  replaceNode,
   renameOutput,
   updateNode,
 } from "../plan/ops";
@@ -100,6 +101,13 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
       {node.type === "input_logs" && <InputLogsForm node={node} set={set} />}
       {node.type === "filter_logs" && <FilterForm key={node.id} plan={plan} node={node} set={set} op={op} />}
       {node.type === "combine_logs" && <CombineForm plan={plan} node={node} set={set} op={op} />}
+      {(node.type === "classifier" || node.type === "run_llm") && (
+        <AuditMode
+          key={node.id}
+          node={node}
+          swap={(next) => dispatch({ type: "update", f: (p) => replaceNode(p, next) })}
+        />
+      )}
       {node.type === "classifier" && (
         <ClassifierForm node={node} set={set} fromItems={inputType(plan, node, "items") === "Items"} />
       )}
@@ -155,6 +163,35 @@ function ReportFormat({ node, set }: { node: FinalReport | RecordsReport; set: (
       options={[
         { value: "final_report", label: "Numbers" },
         { value: "records_report", label: "Records" },
+      ]}
+      onChange={pick}
+    />
+  );
+}
+
+/**
+ * One Audit block, two modes: Labels (classifier: the model sorts each item into your
+ * labels, with a score) and Free answer (run_llm: your own prompt, a declared output). The
+ * box runs both node types. Switching keeps the id, the title and what the block reads.
+ */
+function AuditMode({ node, swap }: { node: Classifier | RunLlm; swap: (n: PlanNode) => void }) {
+  const stash = useRef<Partial<Record<"classifier" | "run_llm", PlanNode>>>({});
+  const pick = (t: "classifier" | "run_llm") => {
+    if (t === node.type) return;
+    stash.current[node.type] = node;
+    const source = Object.values(node.inputs)[0];
+    const kept = stash.current[t];
+    const base = kept ?? ({ ...newNode(t, node.id), title: node.title } as PlanNode);
+    const inputs = source ? (t === "classifier" ? { items: source } : { input: source }) : {};
+    swap({ ...base, inputs: kept ? kept.inputs : inputs } as PlanNode);
+  };
+  return (
+    <Segmented
+      label="Mode"
+      value={node.type}
+      options={[
+        { value: "classifier", label: "Labels" },
+        { value: "run_llm", label: "Free answer" },
       ]}
       onChange={pick}
     />
