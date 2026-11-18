@@ -205,10 +205,15 @@ def _server_calls(session: dict) -> list[Request]:
 def sync(settings: Settings, source: LogSource) -> dict:
     """Fetch the listing, download missing segments, refresh the live part.
 
-    Returns {"new": n, "segments": total, "live_entries": m}.
+    Returns {"new": n, "segments": total, "live_entries": m}. Plant Logs is fetched from
+    the hub instead (``planthub``), which says what it did in "said".
     """
     if source.kind == "logger":
         return _sync_server(source)
+    if source.kind == "plant":
+        from server import planthub  # it uses this module's parser
+
+        return planthub.sync(settings, source)
     out = source.path(settings)
     out.mkdir(parents=True, exist_ok=True)
     body, _ = _get(source, "/_logs")
@@ -499,7 +504,8 @@ def load_index(settings: Settings, source: LogSource) -> list[Record]:
     with state["index_lock"]:
         index = state["index"]
         paths = _paths(settings, source)
-        stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
+        stamped = paths + plantlogs.table_files(paths) if source.kind == "plant" else paths
+        stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in stamped)
         if index["stamp"] == stamp:
             return index["requests"]
         if source.kind == "slack":

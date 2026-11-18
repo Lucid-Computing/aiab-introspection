@@ -805,7 +805,8 @@ async def logs_sync(request: Request) -> Response:
         return back(here, err=str(exc))
     return back(
         here,
-        msg=f"{source.label}: fetched {result['new']} new segment(s); {result['segments']} on "
+        msg=result.get("said")
+        or f"{source.label}: fetched {result['new']} new segment(s); {result['segments']} on "
         f"disk, {result['live_entries']} live request(s) not sealed yet.",
     )
 

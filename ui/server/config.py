@@ -36,7 +36,7 @@ class LogSource:
     kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack", "github": an export;
     # "logger": the proxy's log server (metadata here, sealed records for a run; ``url`` and
     # ``key`` are then the log server's);
-    # "plant": the RSI plant's exports (server.plantlogs)
+    # "plant": the RSI plant's exports (server.plantlogs), a folder or fetched from the hub
     root: Path | None = None  # a folder kept elsewhere (the Slack export, a static copy)
 
     def path(self, settings: Settings) -> Path:
@@ -55,8 +55,12 @@ class LogSource:
 
     @property
     def fetches(self) -> bool:
-        """Whether this server downloads the source itself (Refresh, the prefetch thread)."""
-        return self.kind in ("proxy", "logger") and bool(self.key)
+        """Whether this server downloads the source itself (Refresh, the prefetch thread):
+        a proxy or its log server with its key, or Plant Logs with a hub to ask
+        (server.planthub)."""
+        return bool(self.key) and (
+            self.kind in ("proxy", "logger") or (self.kind == "plant" and bool(self.url))
+        )
 
 
 @dataclass(frozen=True)
@@ -251,9 +255,10 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
     AIAB_SLACK_EXPORT names, or, without one, opened from the committed bundle with
     AIAB_SLACK_EXPORT_KEY into AIAB_LOGS_DIR/slack at start (server.slackexport). GitHub
     Logs, the organisation's public repositories, works the same way with AIAB_GITHUB_EXPORT
-    and AIAB_GITHUB_EXPORT_KEY (server.githubexport). Plant Logs, the RSI plant's exports,
-    is read in place from the folder AIAB_PLANT_EXPORT names (server.plantlogs), never
-    from git.
+    and AIAB_GITHUB_EXPORT_KEY (server.githubexport). Plant Logs, the RSI plant's runs, is
+    fetched from the hub at AIAB_PLANT_HUB_URL with the reader's token AIAB_PLANT_HUB_KEY
+    into AIAB_LOGS_DIR/plant (server.planthub); without both, it is an export read in place
+    from the folder AIAB_PLANT_EXPORT names (server.plantlogs). Never from git.
 
     A proxy is read through its log server instead when both of that source's log server
     settings are set: AIAB_LOG_SERVER_URL and AIAB_LOG_SERVER_KEY for production's,
@@ -265,6 +270,9 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
     github = env.get("AIAB_GITHUB_EXPORT", "").strip()
     github_key = env.get("AIAB_GITHUB_EXPORT_KEY", "").strip() or None
     plant = env.get("AIAB_PLANT_EXPORT", "").strip()
+    hub = env.get("AIAB_PLANT_HUB_URL", "").strip().rstrip("/")
+    hub_key = env.get("AIAB_PLANT_HUB_KEY", "").strip() or None
+    from_hub = bool(hub and hub_key)
     return (
         _log_server(env, "prod", "Prod Agent Logs", "AIAB_LOG_SERVER")
         or LogSource(
@@ -311,13 +319,13 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
         LogSource(
             id="plant",
             label="Plant Logs",
-            url="",
-            header="",
-            key=None,
-            key_env="AIAB_PLANT_EXPORT",
+            url=hub if from_hub else "",
+            header="authorization" if from_hub else "",
+            key=hub_key if from_hub else None,
+            key_env="AIAB_PLANT_HUB_KEY" if from_hub else "AIAB_PLANT_EXPORT",
             folder="plant",
             kind="plant",
-            root=Path(plant).resolve() if plant else None,
+            root=None if from_hub else (Path(plant).resolve() if plant else None),
         ),
     )
 
