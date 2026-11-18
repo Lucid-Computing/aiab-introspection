@@ -235,7 +235,7 @@ def test_the_export_step_seals_only_what_is_not_sealed_and_stops_on_a_restarted_
     arrived = seal_record(plain[0], box.public_key, "boot-1")
     fixture = tmp_path / "records.jsonl"
     fixture.write_text("".join(json.dumps(r) + "\n" for r in (arrived, plain[1])))
-    assert runs._seal_here(fixture, identity) == 1
+    assert runs._seal_here(fixture, identity) == (1, 2)  # one came sealed, of two
     written = [json.loads(line) for line in fixture.read_text().splitlines()]
     assert written[0] == arrived and "enc" in written[1]  # the sealed one is left as it came
     assert ANSWER not in fixture.read_text()
@@ -244,7 +244,7 @@ def test_the_export_step_seals_only_what_is_not_sealed_and_stops_on_a_restarted_
         runs._seal_here(fixture, {**identity, "boot_id": "boot-2"})
     # A box before MAC-377 publishes no key: plain records stay plain.
     fixture.write_text(json.dumps(plain[1]) + "\n")
-    assert runs._seal_here(fixture, {"boot_id": "boot-1"}) == 0
+    assert runs._seal_here(fixture, {"boot_id": "boot-1"}) == (0, 1)
     assert json.loads(fixture.read_text()) == plain[1]
 
 

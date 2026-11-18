@@ -26,6 +26,7 @@ from server import (
     feedback,
     githubexport,
     plan_chat,
+    planthub,
     plantlogs,
     proxylogs,
     publish,
@@ -678,8 +679,9 @@ async def logs_sessions(request: Request) -> Response:
     source = _log_source(request)
     out = []
     for s in proxylogs.sessions(proxylogs.load_index(settings, source)):
-        records = len(proxylogs.box_records(s.records))
-        if records:
+        # A part of a plant's run on its hub has no count: its records are fetched by a run.
+        records = None if proxylogs.on_hub(s.records) else len(proxylogs.box_records(s.records))
+        if records is None or records:
             out.append(
                 {
                     "id": s.id,
@@ -707,9 +709,9 @@ async def logs_page(request: Request) -> Response:
     show_empty = request.query_params.get("empty") == "1"
     matched = [s for s in all_sessions if not who or s.who == who]
     # A session with nothing the box could read (no text in any record) is hidden by default.
-    empty = sum(1 for s in matched if not proxylogs.box_records(s.records))
+    empty = sum(1 for s in matched if not proxylogs.sendable(s.records))
     if not show_empty and empty:
-        matched = [s for s in matched if proxylogs.box_records(s.records)]
+        matched = [s for s in matched if proxylogs.sendable(s.records)]
     if q:
         needle = q.lower()
         matched = [s for s in matched if needle in s.title.lower()]
@@ -754,7 +756,16 @@ async def logs_page(request: Request) -> Response:
         fetch=proxylogs.status(source),
         plant=(
             plantlogs.timeline(source.path(settings), current.records)
-            if current and source.kind == "plant"
+            if current and source.kind == "plant" and not source.hub
+            else None
+        ),
+        # Plant Logs on the hub: how many runs the list on disk holds, and those unread.
+        hub=(
+            {
+                "runs": len({r.run for r in records}),
+                "unread": planthub.unread(source.path(settings)),
+            }
+            if source.hub
             else None
         ),
     )
@@ -1104,9 +1115,13 @@ async def runs_index(request: Request) -> Response:
     fits, outside, empty = [], [], []
     named = runs.plan_sessions(folder) if folder else set()
     for s in all_sessions:
-        times = [r.time for r in s.records]
+        on_hub = proxylogs.on_hub(s.records)
+        # A part of a plant's run is on its hub: its agents are known only to the run that
+        # fetches it, and it lasted from the run's start to its stop.
+        times = [t for r in s.records for t in ((r.time, r.end) if on_hub else (r.time,))]
         recs = proxylogs.box_records(s.records)
-        notes = runs.scope_notes(folder, s.who, min(times), max(times)) if folder else []
+        who = None if on_hub else s.who
+        notes = runs.scope_notes(folder, who, min(times), max(times)) if folder else []
         if named and s.id not in named:
             notes = [*notes, "not one of the sessions the agreement names"]
         item = {
@@ -1115,7 +1130,7 @@ async def runs_index(request: Request) -> Response:
             "records": len(recs),
             "kb": proxylogs.sent_kb(s.records, recs),
         }
-        (outside if item["notes"] else empty if not recs else fits).append(item)
+        (outside if item["notes"] else fits if recs or on_hub else empty).append(item)
     labels = [source.label]
     for other, s in _named_elsewhere(source, named):
         recs = proxylogs.box_records(s.records)
@@ -1125,12 +1140,15 @@ async def runs_index(request: Request) -> Response:
             "records": len(recs),
             "kb": proxylogs.sent_kb(s.records, recs),
         }
-        (fits if recs else empty).append(item)
-        if recs and other.label not in labels:
+        sends = bool(recs) or proxylogs.on_hub(s.records)
+        (fits if sends else empty).append(item)
+        if sends and other.label not in labels:
             labels.append(other.label)
     totals = {
         "records": sum(i["records"] for i in fits),
         "kb": round(sum(i["kb"] for i in fits), 1),
+        # Sessions whose records a run fetches from a plant's hub: counted only then.
+        "on_hub": sum(1 for i in fits if proxylogs.on_hub(i["session"].records)),
     }
     return render(
         request,
@@ -1185,31 +1203,37 @@ async def runs_start(request: Request) -> Response:
         picked += [s for _, s in elsewhere]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
-        # A log server's sessions arrive sealed to the box; the rest are built here.
-        records = proxylogs.run_records(picks)
-        if not records:
-            return back(here, err="The chosen sessions hold no text to audit.")
-        label = (
-            f"{chosen} · {len(picked)} recorded session(s) from "
-            f"{', '.join(dict.fromkeys([source.label, *(o.label for o, _ in elsewhere)]))}, "
-            f"{len(records)} records"
-        )
-        sent = runs.sent_sessions(
-            target.plan_dir,
-            source.id,
-            [{"id": s.id, "title": s.title} for s in picked],
-            records,
-        )
-        run_id = runs.start_run(
-            settings, user, chosen, target.plan_dir, records, label=label, sent=sent
-        )
+        # A log server's sessions arrive sealed to the box, the parts of a plant's runs are
+        # fetched from its hub, and the rest are built here: all written to one file, a
+        # record at a time, which becomes the run's. Off the event loop: a long run on the
+        # hub takes a while, and the other pages go on meanwhile.
+        settings.runs_dir.mkdir(parents=True, exist_ok=True)
+        incoming = settings.runs_dir / f".incoming-{secrets.token_hex(6)}.jsonl"
+        try:
+            count = await asyncio.to_thread(proxylogs.write_run_records, picks, incoming)
+            if not count:
+                return back(here, err="The chosen sessions hold no text to audit.")
+            label = (
+                f"{chosen} · {len(picked)} recorded session(s) from "
+                f"{', '.join(dict.fromkeys([source.label, *(o.label for o, _ in elsewhere)]))}, "
+                f"{count} records"
+            )
+            sent = runs.sent_sessions(
+                target.plan_dir,
+                source.id,
+                [{"id": s.id, "title": s.title} for s in picked],
+                incoming,
+            )
+            run_id = runs.start_run(
+                settings, user, chosen, target.plan_dir, incoming, label=label, sent=sent
+            )
+        finally:
+            incoming.unlink(missing_ok=True)  # the run took it, or nothing is to be kept
     except (ValueError, OSError, proxylogs.ProxyError) as exc:
         return back(here, err=str(exc))
     plan = (runs.load_run(settings, run_id) or {}).get("plan") or {}
     version = f", version {plan['digest'][7:19]}" if plan.get("digest") else ""
-    pv.record_change(
-        target, user, "run", "run", f"run {run_id} started ({len(records)} records{version})"
-    )
+    pv.record_change(target, user, "run", "run", f"run {run_id} started ({count} records{version})")
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
 

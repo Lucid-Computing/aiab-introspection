@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import secrets
 import shutil
@@ -20,7 +21,10 @@ import subprocess
 import sys
 import threading
 import uuid
+from collections import Counter
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from itertools import batched
 from pathlib import Path
 
 from aiab.audit.protocol import AuditError
@@ -127,14 +131,15 @@ def plan_scope(folder: Path) -> dict | None:
     return scope
 
 
-def scope_notes(folder: Path, who: str, first: float, last: float) -> list[str]:
-    """Why the agreement's input scope would make the box refuse these records."""
+def scope_notes(folder: Path, who: str | None, first: float, last: float) -> list[str]:
+    """Why the agreement's input scope would make the box refuse these records. ``who`` is
+    None when the records' agents are not known here; the box still checks them."""
     scope = plan_scope(folder)
     if not scope:
         return []
     notes = []
     agents = scope.get("agents", [])
-    if agents and who not in agents:
+    if agents and who is not None and who not in agents:
         notes.append(f"agent '{who}' is not in the plan's scope ({', '.join(agents)})")
     try:
         start = datetime.fromisoformat(scope["window_start"]).timestamp()
@@ -307,7 +312,7 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
             # its end so this server never holds the text at all.
             identity = json.loads(files["anchor"].read_text()).get("identity", {})
             sealed = "encryption_key" in identity
-            from_server = _seal_here(fixture, identity)
+            from_server, count = _seal_here(fixture, identity)
             _cli(
                 settings,
                 plan,
@@ -322,11 +327,10 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
                 str(files["submission"]),
                 timeout=None,  # as long as the records need
             )
-            submission = json.loads(files["submission"].read_text())
             fixture.unlink(missing_ok=True)
             return {
-                "records": len(submission["records"]),
-                "input_scope": submission["input_scope"],
+                "records": count,
+                "input_scope": _input_scope(files["submission"]),
                 "sealed": sealed,
                 "sealed_by_log_server": from_server,
                 "boot_id": identity.get("boot_id"),
@@ -405,24 +409,60 @@ def _execute(settings: Settings, folder: Path, state: dict) -> None:
     _write(folder, state)
 
 
-def _seal_here(fixture: Path, identity: dict) -> int:
+def _lines(path: Path) -> Iterator[dict]:
+    """The records of a run's file, one at a time."""
+    with path.open("rb") as f:
+        for line in f:
+            if line.strip():
+                yield json.loads(line)
+
+
+def _seal_here(fixture: Path, identity: dict) -> tuple[int, int]:
     """Seal the run's records that are not sealed yet to the box's key, in place, when the
     box publishes one. Records from a log server arrive sealed and are left as they are;
-    returns how many those were. A record sealed for another start of the box cannot be
-    opened by this one, so the run stops here with the reason."""
-    records = [json.loads(line) for line in fixture.read_text().splitlines() if line.strip()]
-    arrived = [r for r in records if "enc" in r]
-    stale = {r.get("boot_id") for r in arrived} - {identity.get("boot_id")}
+    returns how many those were, and how many records there are. A record sealed for
+    another start of the box cannot be opened by this one, so the run stops here with the
+    reason. One record is held at a time: the file is read twice and written once, never
+    loaded (MAC-528)."""
+    arrived, count, stale = 0, 0, False
+    for r in _lines(fixture):
+        count += 1
+        if "enc" in r:
+            arrived += 1
+            stale = stale or r.get("boot_id") != identity.get("boot_id")
     if stale:
         raise RuntimeError(
             "the box restarted after the log server sealed the records, so it can no longer"
             " open them; start the run again"
         )
-    if "encryption_key" in identity and len(arrived) < len(records):
+    if "encryption_key" in identity and arrived < count:
         key, boot = identity["encryption_key"], identity["boot_id"]
-        records = [r if "enc" in r else seal_record(r, key, boot) for r in records]
-        fixture.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
-    return len(arrived)
+        sealed = fixture.with_name(fixture.name + ".sealed")
+        try:
+            with sealed.open("w", encoding="utf-8") as out:
+                for r in _lines(fixture):
+                    out.write(json.dumps(r if "enc" in r else seal_record(r, key, boot)) + "\n")
+            os.replace(sealed, fixture)
+        finally:
+            sealed.unlink(missing_ok=True)
+    return arrived, count
+
+
+def _input_scope(submission: Path) -> dict:
+    """The scope the export was signed for, read from the head of the submission. The file
+    holds every record; it is canonical JSON, whose keys are in order, so the scope is the
+    first thing in it and the records are never read here."""
+    lead = b'{"input_scope":'
+    with submission.open("rb") as f:
+        head = f.read(1 << 16)
+    if head.startswith(lead):
+        try:
+            scope, _ = json.JSONDecoder().raw_decode(head[len(lead) :].decode("utf-8", "replace"))
+            if isinstance(scope, dict):
+                return scope
+        except ValueError:
+            pass
+    return json.loads(submission.read_text())["input_scope"]
 
 
 def start_run(
@@ -430,17 +470,18 @@ def start_run(
     actor: dict[str, str],
     agreement: str,
     folder: Path,
-    records: list[dict],
+    records: list[dict] | Path,
     label: str | None = None,
     sent: dict | None = None,
 ) -> str:
-    """Start a run of the agreement in ``folder`` on records chosen from the Logs page.
+    """Start a run of the agreement in ``folder`` on records chosen from the Logs page:
+    a list of them, or a file that holds one a line, which becomes the run's own.
 
     The agreement is copied into the run folder first, signatures included: that copy is
     what is sent, so an edit made while the run is going changes nothing, and the report
     can always be verified again against exactly the plan it names. ``sent`` lists the
     sessions sent (``sent_sessions``) for the run page."""
-    if not records:
+    if not records or (isinstance(records, Path) and not records.stat().st_size):
         raise ValueError("no records chosen")
     run_id = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(3)}"
     target = settings.runs_dir / run_id
@@ -450,9 +491,12 @@ def start_run(
         target / "plan",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "history.jsonl"),
     )
-    (target / "records.jsonl").write_text(
-        "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
-    )
+    if isinstance(records, Path):
+        os.replace(records, target / "records.jsonl")
+    else:
+        (target / "records.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+        )
     state = {
         "id": run_id,
         "started": _now(),
@@ -673,12 +717,16 @@ def outcome(state: dict) -> dict:
     }
 
 
-def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list[dict]) -> dict:
+def sent_sessions(
+    folder: Path, source: str, sessions: list[dict], records: list[dict] | Path
+) -> dict:
     """What a run sends, by session: id, title, the records sent, and how many of them
     the agreement's Log Source keeps. The filter is the box's own (``select_records``) run
     on the records' metadata only: kind, agent, session. When the filter also matches
     keywords, ``kept`` is None: that reads the text, and which records pass is the box's
-    to know. Written into the run's state at start; the records themselves are deleted."""
+    to know. Written into the run's state at start; the records themselves are deleted.
+    ``records`` is a list or the run's file; either way they are counted a few at a time
+    and their text is dropped first, so a long run is never held whole."""
     plan = _plan(folder)
     node = None
     try:
@@ -686,20 +734,24 @@ def sent_sessions(folder: Path, source: str, sessions: list[dict], records: list
     except (TypeError, KeyError, StopIteration):
         pass
     keywords = bool(node and any(node["config"]["filter"].get("keywords") or ()))
-    kept: list[dict] | None = None
+    meta = None
     if node is not None and not keywords:
         meta = copy.deepcopy(node)
         meta["config"]["filter"]["keywords"] = []
-        meta["config"]["max_records"] = len(records)  # over the limit is a failure, not a drop
-        try:
-            kept = select_records(meta, records)
-        except (KeyError, TypeError, ValueError):
-            kept = None
+    sent: Counter[str] = Counter()
+    kept: Counter[str] | None = Counter() if meta is not None else None
+    lines = _lines(records) if isinstance(records, Path) else iter(records)
+    for some in batched(({**r, "content": ""} for r in lines), 2000):
+        sent.update(r.get("session_id") for r in some)
+        if kept is not None:
+            try:
+                kept.update(r["session_id"] for r in select_records(meta, list(some)))
+            except (KeyError, TypeError, ValueError):
+                kept = None
     out = []
     for s in sessions:
-        sent = sum(1 for r in records if r.get("session_id") == s["id"])
-        keeps = None if kept is None else sum(1 for r in kept if r["session_id"] == s["id"])
-        out.append({**s, "records": sent, "kept": keeps})
+        keeps = None if kept is None else kept[s["id"]]
+        out.append({**s, "records": sent[s["id"]], "kept": keeps})
     return {
         "source": source,
         "sessions": out,

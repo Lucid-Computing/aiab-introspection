@@ -33,6 +33,12 @@ proxy's machine): a ``LogSource`` of kind "logger". Then nothing readable is dow
 for the chosen sessions' records, each sealed to the box's key (``run_records``). This
 server signs and forwards them and never holds what was said (MAC-377).
 
+Plant Logs with a hub to ask (``server.planthub``) is read the same way as a log server:
+the hub's runs are listed by metadata, each part of a run a session with no text
+(``PlantPart``), and a run fetches the chosen parts from the hub and writes them to the
+run's file a record at a time (``write_run_records``), so a run of any length costs the
+memory of one call (MAC-528).
+
 The pages work from a light index (``load_index``): one ``Request`` per call with the
 listing fields, the message count, the first user text, the parts a run sends to the box,
 and where the line sits on disk, but no conversation. A call's full conversation is parsed
@@ -59,7 +65,7 @@ from pathlib import Path
 from server import githublogs, plantlogs, slacklogs
 from server.config import LogSource, Settings
 from server.githublogs import GitHubPost
-from server.plantlogs import PlantRecord
+from server.plantlogs import PlantPart, PlantRecord
 from server.slacklogs import SlackMessage
 
 SESSION_GAP_SECONDS = 30 * 60  # records from one person this close together form one session
@@ -417,7 +423,8 @@ class Request:
         return f"{self.size / 1024:.1f} KB"
 
 
-Record = Request | SlackMessage | GitHubPost | PlantRecord  # calls, posts or plant records
+# Calls, posts, a plant's records, or the parts of a plant's runs on its hub.
+Record = Request | SlackMessage | GitHubPost | PlantRecord | PlantPart
 
 
 @dataclass
@@ -434,6 +441,9 @@ class Session:
         n = len(self.records)
         if isinstance(self.records[0], Request):
             return f"{self.who} · {self.started_short} · {n} call{'s' if n != 1 else ''}"
+        if isinstance(self.records[0], PlantPart):  # on the hub: its size, not its records
+            part = self.records[0]
+            return f"{part.label} · {self.started_short} · {part.size_text}"
         if isinstance(self.records[0], PlantRecord):
             what = self.records[0].label
             return f"{what} · {self.started_short} · {n} record{'s' if n != 1 else ''}"
@@ -501,6 +511,10 @@ def load_index(settings: Settings, source: LogSource) -> list[Record]:
     state = _state(source)
     if source.kind == "logger":  # filled by each sync; nothing is on disk
         return state["index"]["requests"]
+    if source.hub:  # the hub's list of runs, read from the disk each time and not kept
+        from server import planthub
+
+        return planthub.parts(source.path(settings))
     with state["index_lock"]:
         index = state["index"]
         paths = _paths(settings, source)
@@ -721,9 +735,23 @@ def to_box_records(records: list[Record]) -> list[dict]:
     return out
 
 
+def on_hub(records: list[Record]) -> bool:
+    """Whether these are parts of a plant's runs on its hub: nothing is built from them
+    here, a run fetches them."""
+    return bool(records) and all(isinstance(r, PlantPart) for r in records)
+
+
+def sendable(records: list[Record]) -> bool:
+    """Whether a run would send anything for these records."""
+    return on_hub(records) or bool(box_records(records))
+
+
 def sent_kb(records: list[Record], built: list[dict]) -> float:
     """How much a run sends for these records, in KB. A log server's calls say it
-    themselves; anything else is measured on the records built here."""
+    themselves; a part of a plant's run is as large as the hub holds it, which is more
+    than is sent; anything else is measured on the records built here."""
+    if on_hub(records):
+        return round(sum(r.size or 0 for r in records) / 1024, 1)
     known = [r.content_bytes for r in records if isinstance(r, Request)]
     if known and all(k is not None for k in known):
         return round(sum(known) / 1024, 1)
@@ -765,6 +793,39 @@ def run_records(picks: list[tuple[LogSource, Session]]) -> list[dict]:
         if at in taken:
             r["offset"] += taken[at] + 1
     return sealed + built
+
+
+def write_run_records(picks: list[tuple[LogSource, Session]], target: Path) -> int:
+    """Write what a run sends for the chosen sessions to ``target``, one record a line, and
+    say how many. The parts of a plant's runs are fetched from its hub and written as they
+    arrive, each part in a batch of its own past the others' (the box refuses two records
+    at one position), so they are never held whole. Everything else is ``run_records``.
+    ``target`` is in place only when all of it is written."""
+    from server import planthub  # it uses this module's parser
+
+    records = run_records([(source, s) for source, s in picks if not source.hub])
+    runs: dict[tuple[str, str], tuple[LogSource, dict[str, tuple[str, int]]]] = {}
+    batch = 1 + max((r["batch"] for r in records if r["stream"] == "proxy"), default=-1)
+    for source, session in picks:
+        if source.hub:
+            for part in session.records:
+                wanted = runs.setdefault((source.id, part.run), (source, {}))[1]
+                if part.part not in wanted:
+                    wanted[part.part] = (session.id, batch)
+                    batch += 1
+    count = len(records)
+    partial = target.with_name(target.name + ".part")
+    try:
+        with partial.open("w", encoding="utf-8") as out:
+            for record in records:
+                out.write(json.dumps(record) + "\n")
+            del records
+            for (_, run), (source, wanted) in runs.items():
+                count += sum(planthub.write_records(source, run, wanted, out).values())
+        os.replace(partial, target)
+    finally:
+        partial.unlink(missing_ok=True)
+    return count
 
 
 # ---- helpers -----------------------------------------------------------------------------

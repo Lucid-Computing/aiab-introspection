@@ -54,13 +54,17 @@ class LogSource:
         return self.kind in ("slack", "github")
 
     @property
+    def hub(self) -> bool:
+        """Whether this is Plant Logs read from the plant's hub: its runs are listed by
+        metadata and fetched only when an agreement runs on them (server.planthub)."""
+        return self.kind == "plant" and bool(self.url)
+
+    @property
     def fetches(self) -> bool:
         """Whether this server downloads the source itself (Refresh, the prefetch thread):
         a proxy or its log server with its key, or Plant Logs with a hub to ask
         (server.planthub)."""
-        return bool(self.key) and (
-            self.kind in ("proxy", "logger") or (self.kind == "plant" and bool(self.url))
-        )
+        return bool(self.key) and (self.kind in ("proxy", "logger") or self.hub)
 
 
 @dataclass(frozen=True)
