@@ -40,7 +40,7 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
 };
 
 /**
- * A kind as a person sees it: the node types, plus Group records (a Code block the builder
+ * A kind as a person sees it: the node types, plus Query format (a Code block the builder
  * writes, see plan/query.ts), AND and OR (one node type, combine_logs, by its op), and
  * Filter (filter_logs asking the model; filter_logs by rules is Query).
  */
@@ -49,8 +49,8 @@ export type BlockKind = NodeType | "query" | "and" | "or" | "filter_llm";
 export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
   ...NODE_META,
   query: {
-    label: "Group records",
-    blurb: "Decides what one model question covers.",
+    label: "Query format",
+    blurb: "Decides what one model question covers: one session or one record, and how many records at most.",
   },
   filter_llm: {
     label: "Filter",

@@ -16,6 +16,7 @@ export const MAIN: BlockKind[] = [
   "input_logs",
   "filter_logs",
   "filter_llm",
+  "query",
   "classifier",
   "and",
   "or",
@@ -24,7 +25,7 @@ export const MAIN: BlockKind[] = [
 ];
 
 /** The kinds kept under the collapsed "Deprecated" section at the bottom of the rail. */
-export const DEPRECATED: BlockKind[] = ["query"];
+export const DEPRECATED: BlockKind[] = [];
 
 /** Every kind a person adds by hand: the diagram accepts a drop of any of these. */
 export const OFFERED: BlockKind[] = [...MAIN, ...DEPRECATED];
@@ -94,10 +95,12 @@ export default function NewBlock({
   return (
     <div className="newblock" role="toolbar" aria-label="Add a block">
       {MAIN.map(item)}
-      <details className="newblock-more">
-        <summary>Deprecated</summary>
-        <div className="newblock-more-items">{DEPRECATED.map(item)}</div>
-      </details>
+      {DEPRECATED.length > 0 && (
+        <details className="newblock-more">
+          <summary>Deprecated</summary>
+          <div className="newblock-more-items">{DEPRECATED.map(item)}</div>
+        </details>
+      )}
     </div>
   );
 }

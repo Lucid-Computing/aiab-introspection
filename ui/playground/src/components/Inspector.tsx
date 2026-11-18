@@ -616,22 +616,11 @@ function ClassifierForm({
   return (
     <>
       {!fromItems && (
-      <div className="f">
-        <span className="f-label">Query format</span>
-        <div className="row2">
-          <label className="f-hint">
-            one question per
-            <Select value={c.group_by} onChange={(e) => cfg({ group_by: e.target.value as Classifier["config"]["group_by"] })}>
-              <option value="session">session</option>
-              <option value="record">record</option>
-            </Select>
-          </label>
-          <label className="f-hint">
-            records per question
-            <NumberInput value={c.window} min={1} onChange={(window) => cfg({ window })} />
-          </label>
-        </div>
-      </div>
+        <p className="f-hint">
+          Reads records directly: one question per {c.group_by}
+          {c.group_by === "session" ? `, up to ${c.window} records each` : ""}. To change this, put a Query format
+          block before this one.
+        </p>
       )}
       <Field label="Prompt" hint="The question the model answers about each item. Examples go here too.">
         <textarea rows={5} value={c.instructions} onChange={(e) => cfg({ instructions: e.target.value })} />
