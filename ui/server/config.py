@@ -36,6 +36,8 @@ class LogSource:
     key_env: str  # the environment variable the key or folder comes from, for messages
     folder: str  # under settings.logs_dir, unless ``root`` names the folder outright
     kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack", "github": an export;
+    # "logger": the proxy's log server (metadata here, sealed records for a run; ``url`` and
+    # ``key`` are then the log server's);
     # "plant": the RSI plant's exports (server.plantlogs)
     root: Path | None = None  # a folder kept elsewhere (the Slack export, a static copy)
 
@@ -56,7 +58,7 @@ class LogSource:
     @property
     def fetches(self) -> bool:
         """Whether this server downloads the source itself (Refresh, the prefetch thread)."""
-        return self.kind == "proxy" and bool(self.key)
+        return self.kind in ("proxy", "logger") and bool(self.key)
 
 
 @dataclass(frozen=True)
@@ -119,6 +121,18 @@ class Settings:
     # file the plan check and the next release use; the copy on disk stands in only when
     # GitHub has not answered. Off when AIAB_TRUST_FILE names a dev trust file.
     trust_follows_production: bool = False
+    # Feedback from the site: the form's entries and the post-it notes, one JSONL file each
+    # (server.feedback). With AIAB_FEEDBACK_EMAIL_TO (a Slack channel's email address, a
+    # secret) and the AIAB_SMTP_* settings, each one is also mailed to that channel; a note
+    # only after AIAB_FEEDBACK_NOTE_DELAY seconds, so one deleted by then is never posted.
+    feedback_dir: Path = UI_ROOT / "feedback"
+    feedback_email_to: str | None = field(default=None, repr=False)
+    feedback_email_from: str | None = None
+    feedback_note_delay: float = 300.0
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = field(default=None, repr=False)
 
     @property
     def repo_url(self) -> str | None:
@@ -225,6 +239,14 @@ def load_settings() -> Settings:
         oidc_groups_claim=env.get("OIDC_GROUPS_CLAIM", "groups").strip(),
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
         admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
+        feedback_dir=Path(env.get("AIAB_FEEDBACK_DIR", UI_ROOT / "feedback")).resolve(),
+        feedback_email_to=env.get("AIAB_FEEDBACK_EMAIL_TO", "").strip() or None,
+        feedback_email_from=env.get("AIAB_FEEDBACK_EMAIL_FROM", "").strip() or None,
+        feedback_note_delay=float(env.get("AIAB_FEEDBACK_NOTE_DELAY", "300") or 300),
+        smtp_host=env.get("AIAB_SMTP_HOST", "").strip() or None,
+        smtp_port=int(env.get("AIAB_SMTP_PORT", "587") or 587),
+        smtp_user=env.get("AIAB_SMTP_USER", "").strip() or None,
+        smtp_password=env.get("AIAB_SMTP_PASSWORD", "") or None,
     )
 
 
@@ -253,14 +275,21 @@ def log_sources_from_env(
     Logs, the organisation's public repositories, works the same way with AIAB_GITHUB_EXPORT
     and AIAB_GITHUB_EXPORT_KEY (server.githubexport). Plant Logs, the RSI plant's exports,
     is read in place from the folder AIAB_PLANT_EXPORT names (server.plantlogs), never
-    from git."""
+    from git.
+
+    A proxy is read through its log server instead when both of that source's log server
+    settings are set: AIAB_LOG_SERVER_URL and AIAB_LOG_SERVER_KEY for production's,
+    AIAB_PROXY_SERVER_URL and AIAB_PROXY_SERVER_KEY for the test proxy's. This server then
+    downloads no readable log of that source: it lists sessions by metadata and gets a run's
+    records sealed to the box (MAC-377). The proxy's own address and key are then unused."""
     slack = env.get("AIAB_SLACK_EXPORT", "").strip()
     slack_key = env.get("AIAB_SLACK_EXPORT_KEY", "").strip() or None
     github = env.get("AIAB_GITHUB_EXPORT", "").strip()
     github_key = env.get("AIAB_GITHUB_EXPORT_KEY", "").strip() or None
     plant = env.get("AIAB_PLANT_EXPORT", "").strip()
     every = (
-        LogSource(
+        _log_server(env, "prod", "Prod Agent Logs", "AIAB_LOG_SERVER")
+        or LogSource(
             id="prod",
             label="Prod Agent Logs",
             url=env.get("AIAB_LOG_URL", PROD_PROXY_URL).rstrip("/"),
@@ -269,7 +298,8 @@ def log_sources_from_env(
             key_env="AIAB_LOG_KEY",
             folder="prod",
         ),
-        LogSource(
+        _log_server(env, "dev", "Dev Agent Logs", "AIAB_PROXY_SERVER")
+        or LogSource(
             id="dev",
             label="Dev Agent Logs",
             url=env.get("AIAB_PROXY_URL", TEST_PROXY_URL).rstrip("/"),
@@ -316,6 +346,24 @@ def log_sources_from_env(
         return every
     wanted = {x.strip() for x in offered.split(",") if x.strip()}
     return tuple(s for s in every if s.id in wanted) or every
+
+
+def _log_server(env: Mapping[str, str], id: str, label: str, prefix: str) -> LogSource | None:
+    """The source read through its log server, when <prefix>_URL and <prefix>_KEY are set."""
+    url = env.get(f"{prefix}_URL", "").strip().rstrip("/")
+    key = env.get(f"{prefix}_KEY", "").strip()
+    if not (url and key):
+        return None
+    return LogSource(
+        id=id,
+        label=label,
+        url=url,
+        header="x-log-key",
+        key=key,
+        key_env=f"{prefix}_KEY",
+        folder=id,
+        kind="logger",
+    )
 
 
 def _proxy_key(value: str) -> str | None:

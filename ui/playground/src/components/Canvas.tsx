@@ -21,10 +21,13 @@ import PlanNodeView from "./PlanNodeView";
 
 const nodeTypes = {
   input_logs: PlanNodeView,
+  filter_logs: PlanNodeView,
+  combine_logs: PlanNodeView,
   classifier: PlanNodeView,
   run_python: PlanNodeView,
   run_llm: PlanNodeView,
   final_report: PlanNodeView,
+  records_report: PlanNodeView,
 };
 
 

@@ -118,7 +118,7 @@ describe("Plan IR validation", () => {
     }
   });
 
-  it("rejects inputs on Input Logs and unknown classifier inputs", () => {
+  it("rejects inputs on Log Source and unknown classifier inputs", () => {
     const p = clone(simple());
     p.nodes[0].inputs = { x: "physics.results" };
     expect(validatePlan(p).ok).toBe(false);
@@ -187,9 +187,9 @@ describe("lint (soft issues)", () => {
     expect(msgs).toContain("report.wrong: declared boolean but sessions is integer");
   });
 
-  it("requires exactly one Final Report", () => {
+  it("requires exactly one report", () => {
     const p = deleteNodes(simple(), ["report"]);
-    expect(lintPlan(p).some((i) => /no Final Report/.test(i.message))).toBe(true);
+    expect(lintPlan(p).some((i) => /no report/.test(i.message))).toBe(true);
   });
 });
 

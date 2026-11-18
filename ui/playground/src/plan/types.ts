@@ -75,6 +75,84 @@ export const InputLogsNode = z.strictObject({
   }),
 });
 
+/**
+ * A Filter's rules: what each field of a record is tested with (static/aiab/baked/plan_ir.py
+ * FIELD_OPS). Values are checked further by lint (`ruleIssue`), as the box does.
+ */
+export const FIELD_OPS = {
+  content: ["contains", "not_contains", "equals", "starts_with", "ends_with", "regex"],
+  kind: ["in"],
+  agent: ["in", "not_in"],
+  session: ["in", "not_in"],
+  time: ["between", "before", "after"],
+  length: ["at_least", "at_most"],
+} as const;
+export type RuleField = keyof typeof FIELD_OPS;
+export const RULE_FIELDS = Object.keys(FIELD_OPS) as RuleField[];
+
+const TextRule = z.strictObject({
+  field: z.literal("content"),
+  op: z.enum(FIELD_OPS.content),
+  value: z.string(),
+  case_sensitive: z.boolean().default(false),
+});
+const KindRule = z.strictObject({ field: z.literal("kind"), op: z.enum(FIELD_OPS.kind), value: z.array(z.string()) });
+const AgentRule = z.strictObject({ field: z.literal("agent"), op: z.enum(FIELD_OPS.agent), value: z.array(z.string()) });
+const SessionRule = z.strictObject({
+  field: z.literal("session"),
+  op: z.enum(FIELD_OPS.session),
+  value: z.array(z.string()),
+});
+const TimeRule = z.strictObject({
+  field: z.literal("time"),
+  op: z.enum(FIELD_OPS.time),
+  /** One UTC time for before / after, two for between. */
+  value: z.union([z.string(), z.array(z.string())]),
+});
+const LengthRule = z.strictObject({
+  field: z.literal("length"),
+  op: z.enum(FIELD_OPS.length),
+  value: z.number().int(),
+});
+export const Rule = z.discriminatedUnion("field", [TextRule, KindRule, AgentRule, SessionRule, TimeRule, LengthRule]);
+export type Rule = z.infer<typeof Rule>;
+
+/** A Filter carries only the settings of its mode, so a signed plan holds nothing that does not run. */
+export const FilterRules = z.strictObject({
+  mode: z.literal("rules"),
+  match: z.enum(["all", "any"]).default("all"),
+  /** Drop the records the rules match instead of keeping them. */
+  exclude: z.boolean().default(false),
+  rules: z.array(Rule).default([]),
+});
+export const FilterLlm = z.strictObject({
+  mode: z.literal("llm"),
+  llm: z.strictObject({
+    model: Model,
+    /** One yes/no question: yes keeps the record (or the session), no drops it. */
+    question: z.string().default(""),
+    judge: z.enum(["record", "session"]).default("record"),
+    yes_examples: z.array(z.string()).default([]),
+    no_examples: z.array(z.string()).default([]),
+    /** Below this score the answer is unsure, and `unsure` decides. */
+    threshold: z.number().min(0).max(1).optional(),
+    unsure: z.enum(["drop", "keep"]).default("drop"),
+  }),
+});
+export type FilterRules = z.infer<typeof FilterRules>;
+export type FilterLlm = z.infer<typeof FilterLlm>;
+
+export const FilterLogsNode = z.strictObject({
+  ...node("filter_logs"),
+  config: z.discriminatedUnion("mode", [FilterRules, FilterLlm]),
+});
+
+/** AND and OR: the records in both inputs, or in either, by record id, in log order. */
+export const CombineLogsNode = z.strictObject({
+  ...node("combine_logs"),
+  config: z.strictObject({ op: z.enum(["and", "or"]) }),
+});
+
 export const ClassifierNode = z.strictObject({
   ...node("classifier"),
   config: z.strictObject({
@@ -152,12 +230,58 @@ export const FinalReportNode = z.strictObject({
   }),
 });
 
+/** What a Report can say about its records (static/aiab/baked/plan_ir.py METADATA). */
+export const METADATA_FIELDS = [
+  "record_count",
+  "session_count",
+  "agent_count",
+  "agent_ids",
+  "kind_counts",
+  "first_ts",
+  "last_ts",
+  "content_bytes",
+] as const;
+export type MetadataField = (typeof METADATA_FIELDS)[number];
+/** The fields of a record a Report may include. */
+export const RECORD_FIELDS = ["id", "session_id", "agent_id", "kind", "ts", "content"] as const;
+export type RecordField = (typeof RECORD_FIELDS)[number];
+/** The box's caps: the longest list it releases, the largest result, the longest string. */
+export const MAX_INCLUDED = 64;
+export const MAX_RESULT_BYTES = 4096;
+export const MAX_CONTENT_CHARS = 1024;
+
+/**
+ * The Report: facts about a list of records and, with `include_records`, the first records
+ * themselves. `records` is present exactly when they are included.
+ */
+export const RecordsReportNode = z.strictObject({
+  ...node("records_report"),
+  config: z.strictObject({
+    metadata: z.array(z.enum(METADATA_FIELDS)).default([]),
+    include_records: z.boolean().default(false),
+    records: z
+      .strictObject({
+        max_records: z.number().int().min(1).max(MAX_INCLUDED),
+        fields: z.array(z.enum(RECORD_FIELDS)).min(1),
+        /** Longer content is cut to this many characters; the record says its full length. */
+        max_content_chars: z.number().int().min(1).max(MAX_CONTENT_CHARS),
+      })
+      .optional(),
+    /** Counts below this are released as 0. */
+    min_count: z.number().int().min(1).default(1),
+    max_result_bytes: z.number().int().min(1).max(MAX_RESULT_BYTES).default(MAX_RESULT_BYTES),
+  }),
+});
+
 export const PlanNode = z.discriminatedUnion("type", [
   InputLogsNode,
+  FilterLogsNode,
+  CombineLogsNode,
   ClassifierNode,
   RunPythonNode,
   RunLlmNode,
   FinalReportNode,
+  RecordsReportNode,
 ]);
 
 /**
@@ -186,12 +310,27 @@ export type PlanNode = z.infer<typeof PlanNode>;
 export type NodeType = PlanNode["type"];
 export type NodeOf<T extends NodeType> = Extract<PlanNode, { type: T }>;
 export type InputLogs = NodeOf<"input_logs">;
+export type FilterLogs = NodeOf<"filter_logs">;
+export type CombineLogs = NodeOf<"combine_logs">;
 export type Classifier = NodeOf<"classifier">;
 export type RunPython = NodeOf<"run_python">;
 export type RunLlm = NodeOf<"run_llm">;
 export type FinalReport = NodeOf<"final_report">;
+export type RecordsReport = NodeOf<"records_report">;
 
-export const NODE_TYPES: NodeType[] = ["input_logs", "classifier", "run_python", "run_llm", "final_report"];
+/** The two report kinds; a plan has exactly one report, of either. */
+export const isReport = (n: { type: string }) => n.type === "final_report" || n.type === "records_report";
+
+export const NODE_TYPES: NodeType[] = [
+  "input_logs",
+  "filter_logs",
+  "combine_logs",
+  "classifier",
+  "run_python",
+  "run_llm",
+  "final_report",
+  "records_report",
+];
 
 /** Canvas positions by node id. Kept out of the IR: moving a box changes no semantics. */
 export const LayoutSchema = z.record(z.string(), z.object({ x: z.number(), y: z.number() }));

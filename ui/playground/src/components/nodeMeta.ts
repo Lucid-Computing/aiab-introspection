@@ -1,3 +1,4 @@
+import { combineLine, filterLine } from "../plan/filter";
 import { LOG_SOURCES } from "../plan/mockLogs";
 import { parseQuery, queryLine } from "../plan/query";
 import type { NodeType, PlanNode } from "../plan/types";
@@ -5,8 +6,16 @@ import type { NodeType, PlanNode } from "../plan/types";
 /** Each kind has a name and one sentence on why the block exists; its symbol is `.sym--<type>` in styles.css. */
 export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
   input_logs: {
-    label: "Input filter",
+    label: "Log Source",
     blurb: "Fixes which logs the box may read before anything runs, so the audit cannot reach beyond what both parties agreed to.",
+  },
+  filter_logs: {
+    label: "Filter",
+    blurb: "Keeps only the records that match its rules, or that the model answers yes for.",
+  },
+  combine_logs: {
+    label: "AND / OR",
+    blurb: "Joins two sets of records by record id.",
   },
   classifier: {
     label: "Classifier",
@@ -21,13 +30,20 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
     blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
   },
   final_report: {
-    label: "Report",
+    label: "Report (old)",
     blurb: "Names the few numbers that leave the box and the rules that stop one person's session from being singled out.",
+  },
+  records_report: {
+    label: "Report",
+    blurb: "Says how many records reached it, from how many sessions, of which kinds and when. Ticked, it also releases the records.",
   },
 };
 
-/** A kind as a person sees it: the node types, plus Query format (a Code block the builder writes, see plan/query.ts). */
-export type BlockKind = NodeType | "query";
+/**
+ * A kind as a person sees it: the node types, plus Query format (a Code block the builder
+ * writes, see plan/query.ts), and AND and OR (one node type, combine_logs, by its op).
+ */
+export type BlockKind = NodeType | "query" | "and" | "or";
 
 export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
   ...NODE_META,
@@ -35,11 +51,20 @@ export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
     label: "Query format",
     blurb: "Decides what one model question covers.",
   },
+  and: {
+    label: "AND",
+    blurb: "Keeps the records that are in both A and B.",
+  },
+  or: {
+    label: "OR",
+    blurb: "Keeps the records that are in A or in B, each once.",
+  },
 };
 
-export const kindOf = (n: PlanNode): BlockKind => (parseQuery(n) ? "query" : n.type);
+export const kindOf = (n: PlanNode): BlockKind =>
+  n.type === "combine_logs" ? n.config.op : parseQuery(n) ? "query" : n.type;
 
-/** The log sources an Input filter can name: the ids the agreement UI reads (server/config.py). */
+/** The log sources a Log Source can name: the ids the agreement UI reads (server/config.py). */
 export const SOURCE_OPTIONS: { id: string; label: string }[] = [
   { id: "prod", label: "Prod Agent Logs" },
   { id: "dev", label: "Dev Agent Logs" },
@@ -66,6 +91,10 @@ export function line(n: PlanNode): string {
       if (c.filter.keywords.length) parts.push(`${c.filter.keywords.length} keyword${c.filter.keywords.length === 1 ? "" : "s"}`);
       return parts.join(" · ");
     }
+    case "filter_logs":
+      return filterLine(n);
+    case "combine_logs":
+      return combineLine(n);
     case "classifier": {
       const c = n.config;
       const labels = c.labels.map((l) => l.name).join(", ");
@@ -82,6 +111,11 @@ export function line(n: PlanNode): string {
     case "final_report": {
       const f = n.config.fields.map((x) => x.name).join(", ");
       return f ? `releases: ${f}` : "no fields yet";
+    }
+    case "records_report": {
+      const c = n.config;
+      const facts = `${c.metadata.length} fact${c.metadata.length === 1 ? "" : "s"}`;
+      return c.records ? `${facts} · up to ${c.records.max_records} records` : facts;
     }
   }
 }

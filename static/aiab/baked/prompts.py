@@ -9,6 +9,7 @@ the parent broker validates every answer against the schema returned here.
 from __future__ import annotations
 
 from aiab.audit.protocol import canonical
+from aiab.baked.plan_ir import as_classifier
 
 FRAMING = (
     "You are the model inside a confidential audit box. The text you are given comes from "
@@ -90,6 +91,8 @@ def llm_request(node: dict, text: str) -> tuple[list[dict], dict]:
 def request(node: dict, text: str) -> tuple[list[dict], dict]:
     if node["type"] == "classifier":
         return classifier_request(node, text)
+    if node["type"] == "filter_logs":  # an LLM-mode Filter: a yes/no classifier
+        return classifier_request(as_classifier(node), text)
     return llm_request(node, text)
 
 

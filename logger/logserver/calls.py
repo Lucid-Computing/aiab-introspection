@@ -10,19 +10,33 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 SESSION_GAP_SECONDS = 30 * 60  # calls from one person this close together form one session
 REMINDER = re.compile(r"(<system-reminder>.*?</system-reminder>)", re.DOTALL)
+
+
+@dataclass(frozen=True, slots=True)
+class Where:
+    """Where the proxy's files hold a call: enough to read it back and know it is the same.
+
+    ``offset`` counts bytes in the file's uncompressed form. The proxy rotates by renaming the
+    live file whole and compresses losslessly, so the same line keeps its offset in the live,
+    pending and compressed file alike; ``seq`` says which of them holds it now."""
+
+    seq: int  # the line's place in the proxy's stream, every line counted
+    offset: int
+    sha256: bytes  # of the line as read, its newline included
+
+
 # What one record may carry. Tool results (file contents, command output) and tool inputs
 # can be enormous, and a plan allows about 100 KB per run, so they are cut, head first.
-CONTENT_LIMITS = {"request": 8000, "response": 8000, "tool_call": 2000, "tool_result": 2000}
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Call:
-    """One call without its conversation: the metadata, and the parts kept for the box."""
+    """One call as the index keeps it: its metadata, its sizes and where it is. No text: what
+    was said stays in the proxy's files and is read back only for an export."""
 
     id: str
     time: float
@@ -34,7 +48,9 @@ class Call:
     stop_reason: str | None
     size: int  # bytes of the request body
     message_count: int
-    parts: tuple[tuple[str, str], ...]  # (kind, content), in order; never served as metadata
+    kinds: tuple[str, ...] = ()  # the kind of each part a run sends, in order
+    content_bytes: int = 0  # how much text a run would send for this call: a size, never the text
+    where: Where | None = None  # set by the store, which knows the file
 
     @property
     def ts(self) -> str:
@@ -52,8 +68,9 @@ class Call:
             "stop_reason": self.stop_reason,
             "request_bytes": self.size,
             "messages": self.message_count,
-            "records": len(self.parts),
-            "kinds": [kind for kind, _ in self.parts],
+            "records": len(self.kinds),
+            "kinds": list(self.kinds),
+            "content_bytes": self.content_bytes,
         }
 
 
@@ -70,12 +87,17 @@ class Session:
             "started": self.calls[0].ts,
             "ended": self.calls[-1].ts,
             "model": next((c.model for c in self.calls if c.model), None),
-            "records": sum(len(c.parts) for c in self.calls),
+            "records": sum(len(c.kinds) for c in self.calls),
+            "content_bytes": sum(c.content_bytes for c in self.calls),
             "calls": [c.metadata() for c in self.calls],
         }
 
 
-def parse(entry: dict) -> Call:
+Parts = tuple[tuple[str, str], ...]  # (kind, content), in order: what a run sends for a call
+
+
+def parse(entry: dict) -> tuple[Call, Parts]:
+    """The call, and its parts. The index keeps the call and drops the parts."""
     body = _json_text(entry.get("request_raw"))
     reply = _json_text(entry.get("response_raw"))
     headers = {k.lower(): v for k, v in (entry.get("request_headers") or {}).items()}
@@ -94,19 +116,23 @@ def parse(entry: dict) -> Call:
     size = (
         len(raw_req.get("text") or raw_req.get("base64") or "") if isinstance(raw_req, dict) else 0
     )
-    return Call(
+    parts = tuple(_parts(messages, response_blocks))
+    # Interned: thousands of calls share one copy of each sender, model, session and kind.
+    call = Call(
         id=str(entry.get("id", "")),
         time=float(entry.get("time", 0)),
-        who=str(entry.get("who", "?")),
+        who=sys.intern(str(entry.get("who", "?"))),
         status=entry.get("status"),
         duration_s=entry.get("duration_s"),
-        session_id=session,
-        model=model if isinstance(model, str) else None,
-        stop_reason=stop,
+        session_id=sys.intern(session),
+        model=sys.intern(model) if isinstance(model, str) else None,
+        stop_reason=sys.intern(stop) if isinstance(stop, str) else stop,
         size=size,
         message_count=len(messages),
-        parts=tuple(_parts(messages, response_blocks)),
+        kinds=tuple(sys.intern(kind) for kind, _ in parts),
+        content_bytes=sum(len(content.encode()) for _, content in parts),
     )
+    return call, parts
 
 
 def _parts(messages: list[dict], response_blocks: list[dict]) -> list[tuple[str, str]]:
@@ -134,7 +160,9 @@ def _parts(messages: list[dict], response_blocks: list[dict]) -> list[tuple[str,
         if b["kind"] == "tool_use":
             name = b["label"].removeprefix("tool call: ")
             parts.append(("tool_call", f"{name} {b['text']}"))
-    return [(kind, _cut(body, CONTENT_LIMITS[kind])) for kind, body in parts if body.strip()]
+    # Whole, however long: the box splits a text longer than the model's context, and a
+    # run has no size limit, so nothing is cut here (the agreement UI's rule, PR #66).
+    return [(kind, body.strip()) for kind, body in parts if body.strip()]
 
 
 def sessions(calls: list[Call]) -> list[Session]:
@@ -157,19 +185,20 @@ def sessions(calls: list[Call]) -> list[Session]:
     return result
 
 
-def box_records(calls: list[Call]) -> list[dict]:
-    """The box's record format, one record per part of each call, oldest call first.
+def box_records(calls: list[tuple[Call, Parts]], first_offset: int = 0) -> list[dict]:
+    """The box's record format, one record per part of each (call, its parts), oldest call
+    first (calls at the same time keep their order). Offsets count on from ``first_offset``.
 
     agent_id is who sent it (the proxy's "who"), session_id the grouping above, content what
     the model saw and said. The box checks these against the plan's input scope."""
     out: list[dict] = []
-    for c in sorted(calls, key=lambda x: x.time):
-        for kind, content in c.parts:
+    for c, parts in sorted(calls, key=lambda pair: pair[0].time):
+        for kind, content in parts:
             out.append(
                 {
                     "stream": "proxy",
                     "batch": 0,
-                    "offset": len(out),
+                    "offset": first_offset + len(out),
                     "agent_id": c.who,
                     "session_id": c.session_id,
                     "ts": c.ts,
@@ -178,13 +207,6 @@ def box_records(calls: list[Call]) -> list[dict]:
                 }
             )
     return out
-
-
-def _cut(text: str, limit: int) -> str:
-    text = text.strip()
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip() + f"\n… [cut here; {len(text):,} characters in all]"
 
 
 # ---- helpers -----------------------------------------------------------------------------

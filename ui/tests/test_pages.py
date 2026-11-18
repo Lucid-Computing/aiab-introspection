@@ -271,7 +271,8 @@ def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_
     assert '<script src="/assets/sign.js" defer></script>' in listing
     assert 'quick-sign" href="/a/bio/sign" data-party="lab"' in listing
     assert 'data-upload="/a/bio/sign/upload" data-next="/agreements"' in listing
-    assert "Waiting for the lab · Signed by the auditor" in listing
+    assert 'aria-label="Waiting for the lab"' in listing
+    assert 'aria-label="Signed by the auditor"' in listing
     assert 'disabled title="needs both signatures">Run' in listing
     assert '<code class="hash" title="sha256:' in listing
     fallback = client.get("/a/bio/sign?why=none").text
@@ -342,7 +343,7 @@ def test_a_new_agreement_can_copy_another_plan(client, tmp_path):
 
 
 def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, monkeypatch):
-    """When the agreement's Input filter names one of the server's log sources, the Runs page
+    """When the agreement's Log Source names one of the server's log sources, the Runs page
     offers no selector and a run reads that source, whatever the form says."""
     import server.app as ui
 
@@ -375,7 +376,7 @@ def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, mon
 
 
 def test_the_input_filter_can_name_sessions_and_the_runs_page_follows(client, tmp_path):
-    """Sessions named in the agreement's Input filter are the only ones a run takes; the
+    """Sessions named in the agreement's Log Source are the only ones a run takes; the
     builder reads the list of sessions from /logs/sessions.json."""
     logs = tmp_path / "logs" / "dev"
     logs.mkdir(parents=True, exist_ok=True)
