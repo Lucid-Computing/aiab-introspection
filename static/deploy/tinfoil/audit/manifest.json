@@ -1,7 +1,7 @@
 {
   "schema": "aiab-baked-manifest/v1",
   "aiab_id": "aiab-baked-audit",
-  "image_digest": "sha256:6bd14e463e7acbc3c1aa9581356f65119ff8c46ef7f21d125f592c7511f5fc88",
+  "image_digest": "sha256:4ab9811f47536e64d3ba5ca05fc40ccd9c05804a81d29ae0a946c81e2480a7c8",
   "restrictions": {
     "version": "0.2.0",
     "plan_format": "aiab-plan-ir/v0",
@@ -47,7 +47,7 @@
     "temperature": 0
   },
   "parties": {
-    "lab_key": "a5uPRtAlIu5OqkXUc7cBk4TD5osG7vktQzOMDCrF2S4=",
+    "lab_key": "EtHVuJOb3vqBZoeH0fnBQOJpUMkfOhcxK/V1Qvj2VVs=",
     "auditor_key": "5qE4zsiWWeDnqCZhEbOihncQsXYbeStL0Hbqe8m8Fns=",
     "logger_key": "HrDE+18eKbvS620XlyFIKlHnxBGHSvaZADAFCTkYYhg="
   },
