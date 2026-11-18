@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% set active = "runs" %}
-{% block title %}Run {{ run.id }} · AIAB agreement{% endblock %}
 {% block head %}{% if run.status == "running" %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/runs" class="link">← Runs</a></p>

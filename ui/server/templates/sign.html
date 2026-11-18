@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% set active = "agreements" %}
-{% block title %}Sign · AIAB agreement{% endblock %}
 {% block head %}{% if keys and keys.busy and not key_wait %}<meta http-equiv="refresh" content="20">{% endif %}<script src="/assets/sign.js" defer></script>{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/agreements" class="link">← Agreements</a>{% if view %} · <a href="{{ base }}/plan" class="link">{{ view.plan_id }}</a>{% endif %}</p>

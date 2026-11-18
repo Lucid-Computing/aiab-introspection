@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% from "_icons.html" import signature_mark %}
-{% block title %}Agreements · AIAB agreement{% endblock %}
 {% block head %}{% if keys and keys.busy %}<meta http-equiv="refresh" content="20">{% endif %}<script src="/assets/sign.js" defer></script>{% endblock %}
 {% block content %}
 <div class="row" style="justify-content: space-between; margin-bottom: var(--space-6)"><h1 style="margin: 0">Agreements</h1><a class="btn btn--primary" href="/agreements/new">New agreement</a></div>
