@@ -1,10 +1,12 @@
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from aiab.baked import records as box_records
 from aiab.baked.sealing import SCHEME
-from conftest import ANSWER, PROD_KEY, SECRET, entry
+from conftest import ANSWER, LIVE, PROD_KEY, SEALED, SECRET, compress, entry, lines
 
 from logserver import calls
 
@@ -64,7 +66,8 @@ def test_an_export_is_sealed_and_only_the_box_opens_it(client, store, fakebox):
     assert body["scheme"] == SCHEME and body["boot_id"] == fakebox.boot_id
     assert body["box"] == "box.example" and body["sessions"] == ["s-alice"]
     sealed = body["records"]
-    plain = calls.box_records(list(calls.sessions(list(store.calls()))[1].calls))
+    alice = list(calls.sessions(list(store.calls()))[1].calls)
+    plain = calls.box_records(list(zip(alice, store.texts(alice), strict=True)))
     # Metadata stays readable, for the UI's scope checks; the content does not.
     for s, p in zip(sealed, plain, strict=True):
         assert {k: s[k] for k in p if k != "content"} == {k: p[k] for k in p if k != "content"}
@@ -192,3 +195,129 @@ def test_a_long_record_is_sealed_whole(client, proxy, fakebox):
     client.post("/v1/sync")
     sealed = client.post("/v1/export", json={"sessions": ["s-long"]}).json()["records"]
     assert fakebox.decryptor.unseal(sealed, fakebox.boot_id)[0]["content"] == long
+
+
+# ---- the index keeps no text; an export reads it back ------------------------------------
+
+
+def all_sessions(client):
+    return [s["id"] for s in client.get("/v1/sessions").json()["sessions"]]
+
+
+def test_the_index_holds_no_text(store):
+    for call in store.calls():
+        assert not hasattr(call, "parts") and not hasattr(call, "__dict__")  # slots, no text
+        assert SECRET not in repr(call) and ANSWER not in repr(call)
+
+
+def test_an_export_equals_the_records_built_straight_from_what_the_proxy_wrote(
+    client, proxy, fakebox
+):
+    """Sealed, pending and live sessions, decrypted, against records built from the entries
+    themselves without the store."""
+    pending = [entry("p1", "dan", 1_800_000_700.0, "pending question", "pending answer", "s-dan")]
+    proxy.append(pending)
+    proxy.rotate()
+    live = [entry("l1", "dan", 1_800_000_800.0, "live question", "live answer", "s-dan")]
+    proxy.append(live)
+    client.post("/v1/sync")
+    wanted = all_sessions(client)
+    sealed = client.post("/v1/export", json={"sessions": wanted}).json()["records"]
+    written = SEALED + LIVE + pending + live
+    parsed = {c.id: (c, parts) for c, parts in map(calls.parse, written)}
+    grouped = {s.id: s for s in calls.sessions([c for c, _ in parsed.values()])}
+    expected = calls.box_records([(c, parsed[c.id][1]) for i in wanted for c in grouped[i].calls])
+    assert fakebox.decryptor.unseal(sealed, fakebox.boot_id) == expected
+
+
+def test_a_session_whose_file_is_gone_is_listed_but_not_exported(client, proxy):
+    (proxy.segments / "requests-000000001-000000002.jsonl.zst").unlink()
+    client.post("/v1/sync")
+    assert "s-alice" in all_sessions(client)
+    response = client.post("/v1/export", json={"sessions": ["s-alice", "bob-1800000500"]})
+    assert response.status_code == 410
+    assert response.json()["detail"].startswith("s-alice: no file holds seq 1 (call a1)")
+    assert client.post("/v1/export", json={"sessions": ["bob-1800000500"]}).status_code == 200
+
+
+def test_a_changed_file_is_refused_until_it_is_listed_again(client, proxy, fakebox):
+    zst = proxy.segments / "requests-000000001-000000002.jsonl.zst"
+    changed = [
+        entry("a1", "alice", 1_800_000_000.0, "rewritten", "after listing", "s-alice"),
+        SEALED[1],
+    ]
+    zst.write_bytes(compress(lines(changed)))
+    response = client.post("/v1/export", json={"sessions": ["s-alice"]})
+    assert response.status_code == 409 and "list again" in response.json()["detail"]
+    assert "rewritten" not in response.text
+    client.post("/v1/sync")  # listing again parses the changed file again
+    sealed = client.post("/v1/export", json={"sessions": ["s-alice"]}).json()["records"]
+    assert fakebox.decryptor.unseal(sealed, fakebox.boot_id)[0]["content"] == "rewritten"
+
+
+def test_nothing_is_read_for_a_session_with_no_text_or_a_box_that_is_down(
+    client, proxy, store, fakebox, monkeypatch
+):
+    reads = []
+    real = store.texts
+    monkeypatch.setattr(store, "texts", lambda chosen: reads.append(chosen) or real(chosen))
+    proxy.append([entry("e1", "erin", 1_800_000_900.0, "", "", "s-empty")])
+    client.post("/v1/sync")
+    assert client.post("/v1/export", json={"sessions": ["s-empty"]}).status_code == 422
+    fakebox.down = True
+    assert client.post("/v1/export", json={"sessions": ["s-alice"]}).status_code == 502
+    assert reads == []
+
+
+def test_an_export_does_not_wait_for_a_refresh(client, store):
+    codes = []
+    with store._refresh_lock:
+        export = threading.Thread(
+            target=lambda: codes.append(
+                client.post("/v1/export", json={"sessions": ["s-alice"]}).status_code
+            )
+        )
+        export.start()
+        export.join(timeout=10)
+    assert codes == [200], "the export waited for the refresh lock"
+
+
+def test_a_disk_error_during_an_export_is_a_503(client, store, monkeypatch):
+    def denied(self, problems):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(type(store), "_snapshot", denied)
+    response = client.post("/v1/export", json={"sessions": ["s-alice"]})
+    assert response.status_code == 503 and "denied" in response.json()["detail"]
+
+
+def test_two_exports_at_once_both_get_the_same_records(client, fakebox):
+    with ThreadPoolExecutor(2) as pool:
+        answers = list(
+            pool.map(lambda _: client.post("/v1/export", json={"sessions": ["s-alice"]}), (1, 2))
+        )
+    assert [a.status_code for a in answers] == [200, 200]
+    opened = [fakebox.decryptor.unseal(a.json()["records"], fakebox.boot_id) for a in answers]
+    assert opened[0] == opened[1] and opened[0][0]["content"] == SECRET
+
+
+def test_calls_at_the_same_time_keep_their_order():
+    first, _ = calls.parse(entry("t1", "tia", 1_800_005_000.0, "first", "one"))
+    second, _ = calls.parse(entry("t2", "tia", 1_800_005_000.0, "second", "two"))
+    pairs = [(first, (("request", "first"),)), (second, (("request", "second"),))]
+    assert [r["content"] for r in calls.box_records(pairs)] == ["first", "second"]
+    assert [r["content"] for r in calls.box_records(pairs[::-1])] == ["second", "first"]
+
+
+def test_a_live_file_that_will_not_open_on_every_look_is_a_503(client, store, monkeypatch):
+    real = type(store)._snapshot
+
+    def no_live_file(self, problems):
+        handle, listing = real(self, problems)
+        handle.close()
+        problems.append({"file": "requests.jsonl", "problem": "cannot be opened: denied"})
+        return None, listing
+
+    monkeypatch.setattr(type(store), "_snapshot", no_live_file)
+    response = client.post("/v1/export", json={"sessions": ["bob-1800000500"]})
+    assert response.status_code == 503 and "cannot be opened: denied" in response.json()["detail"]

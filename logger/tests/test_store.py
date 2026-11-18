@@ -1,8 +1,23 @@
+import gc
 import hashlib
+import json
 import os
+import threading
+import tracemalloc
 
 import pytest
-from conftest import ANSWER, API_KEY, LIVE, SECRET, ProxyDir, entry, lines
+import zstandard
+from conftest import (
+    ANSWER,
+    API_KEY,
+    LIVE,
+    SEALED,
+    SECRET,
+    ProxyDir,
+    compress,
+    entry,
+    lines,
+)
 
 from logserver import calls, config
 from logserver import store as store_module
@@ -24,9 +39,9 @@ def reads(monkeypatch):
     seen = []
     original = store_module._read
 
-    def spy(f, compressed):
+    def spy(f, compressed, first):
         seen.append(os.path.basename(f.name))
-        return original(f, compressed)
+        return original(f, compressed, first)
 
     monkeypatch.setattr(store_module, "_read", spy)
     return seen
@@ -44,6 +59,27 @@ def parsed(monkeypatch):
 
     monkeypatch.setattr(calls, "parse", spy)
     return seen
+
+
+def by_hand(proxy, where) -> bytes:
+    """The line a call's ``Where`` names, read without the store: the file whose name holds
+    its seq (or the live file), uncompressed whole, from the offset to the next newline."""
+    data = None
+    for path in sorted(proxy.segments.glob("requests-*")) if proxy.segments.exists() else ():
+        m = store_module.NAME_RE.match(path.name)
+        if m and int(m[1]) <= where.seq <= int(m[2]):
+            raw = path.read_bytes()
+            data = zstandard.ZstdDecompressor().decompress(raw) if m[3] else raw
+    if data is None:
+        data = proxy.live.read_bytes()
+    line = data[where.offset : data.index(b"\n", where.offset) + 1]
+    assert hashlib.sha256(line).digest() == where.sha256
+    return line
+
+
+def located(store, proxy) -> dict[str, tuple[int, str]]:
+    """Each call's seq, and the id of the line its ``Where`` names, read by hand."""
+    return {c.id: (c.where.seq, json.loads(by_hand(proxy, c.where))["id"]) for c in store.calls()}
 
 
 def problems(store):
@@ -286,6 +322,8 @@ def test_a_new_empty_live_file_with_no_segments_drops_the_old_calls(tmp_path):
     held = proxy.live.with_name("held")  # renamed, not deleted: its inode is not reused
     os.replace(proxy.live, held)
     proxy.live.touch()
+    store.refresh()  # a first look keeps what was read: it could be a rotation not listed yet
+    assert ids(store) == ["b1"] and "requests.jsonl" in problems(store)
     assert store.refresh() == {"new": 0, "segments": 0, "live": 0, "calls": 0}
     assert ids(store) == []
 
@@ -297,7 +335,7 @@ def test_a_zst_being_written_is_ignored(settings, proxy):
     assert ids(store) == ["a1", "a2", "b1"] and store.status["problems"] == []
 
 
-def test_a_segment_missing_from_a_later_listing_keeps_its_calls(settings, proxy):
+def test_a_segment_missing_from_a_later_listing_keeps_its_calls_listed(settings, proxy):
     proxy.seal(batch("c", 1))  # seq 4, so the first segment is not the last
     store = Store(settings)
     store.refresh()
@@ -305,7 +343,9 @@ def test_a_segment_missing_from_a_later_listing_keeps_its_calls(settings, proxy)
     first.rename(proxy.root / "elsewhere")
     store.refresh()
     assert ids(store) == ["a1", "a2", "b1", "c0"]
-    assert problems(store) == {f"segments/{first.name}": "gone; its calls are kept"}
+    assert problems(store) == {
+        f"segments/{first.name}": "gone; its calls are still listed but can no longer be exported"
+    }
 
 
 def test_a_log_that_starts_again_is_read_afresh_after_a_second_look(settings, proxy):
@@ -368,7 +408,8 @@ def test_calls_group_into_sessions_and_become_box_records(store):
         ("bob-1800000500", "bob", 1),  # no session header: who and a 30-minute gap
         ("s-alice", "alice", 2),
     ]
-    records = calls.box_records(list(found[1].calls))
+    alice = list(found[1].calls)
+    records = calls.box_records(list(zip(alice, store.texts(alice), strict=True)))
     assert [(r["offset"], r["kind"], r["content"]) for r in records] == [
         (0, "request", SECRET),
         (1, "response", ANSWER),
@@ -423,3 +464,369 @@ def test_several_boxes_each_with_its_own_key():
         config.load({**env, "BOXES": "dev,pr-od"})
     with pytest.raises(config.ConfigError, match="not both"):
         config.load({**env, "API_KEY": "a"})
+
+
+def test_each_call_knows_where_its_line_is(store, proxy):
+    assert located(store, proxy) == {"a1": (1, "a1"), "a2": (2, "a2"), "b1": (3, "b1")}
+    assert [c.where.offset for c in store.calls()] == [0, len(lines(SEALED[:1])), 0]
+
+
+def test_a_call_is_found_at_the_same_place_after_its_file_moves(settings, proxy):
+    proxy.append(batch("c", 2))
+    store = Store(settings)
+    store.refresh()
+    before = located(store, proxy)
+    pending = proxy.rotate()  # the live file, b1 c0 c1, is now pending: same bytes, same offsets
+    assert located(store, proxy) == before
+    proxy.compress(pending)  # and now compressed
+    assert located(store, proxy) == before
+    assert before == {
+        "a1": (1, "a1"),
+        "a2": (2, "a2"),
+        "b1": (3, "b1"),
+        "c0": (4, "c0"),
+        "c1": (5, "c1"),
+    }
+
+
+def test_every_line_counts_for_seq_and_offset(settings, proxy):
+    """Blank, unreadable and restart-ended torn lines take a seq and bytes too; a call after
+    them, or with multi-byte text, is still found."""
+    accents = entry("u1", "zoë", 1_800_003_000.0, "ça va ? 日本語 🙂", "très bien")
+    proxy.append(raw=b"\n")
+    proxy.append(raw=b"not json\n")
+    proxy.append(raw=b'{"id": "cut sho' + b"\n")  # a torn line the proxy ended on restart
+    proxy.append([accents, *batch("c", 1)])
+    store = Store(settings)
+    store.refresh()
+    assert located(store, proxy)["u1"] == (7, "u1")
+    assert located(store, proxy)["c0"] == (8, "c0")
+    proxy.seal([])
+    store.refresh()
+    assert located(store, proxy)["c0"] == (8, "c0")
+
+
+# ---- reading chosen calls back -------------------------------------------------------------
+
+
+def chosen(store, *wanted):
+    """The indexed calls with these ids, in the order given."""
+    by_id = {c.id: c for c in store.calls()}
+    return [by_id[i] for i in wanted]
+
+
+def read_back(store, *wanted):
+    """Each call's parts read back by the store, checked against the same lines read by hand
+    and parsed straight from the proxy's files."""
+    picked = chosen(store, *wanted)
+    got = store.texts(picked)
+    files = ProxyFiles(store.dir)
+    assert got == [calls.parse(json.loads(by_hand(files, c.where)))[1] for c in picked]
+    return got
+
+
+class ProxyFiles:
+    """The two paths ``by_hand`` reads, for a store's directory."""
+
+    def __init__(self, root):
+        self.segments, self.live = root / "segments", root / "requests.jsonl"
+
+
+def test_chosen_calls_are_read_back_in_the_order_given(store):
+    got = read_back(store, "b1", "a1")
+    assert got[1] == (("request", SECRET), ("response", ANSWER))
+
+
+def test_a_call_moved_live_then_pending_then_compressed_is_read_back(settings, proxy):
+    proxy.append(batch("c", 2))
+    store = Store(settings)
+    store.refresh()
+    pending = proxy.rotate()
+    read_back(store, "b1", "c1")
+    proxy.compress(pending)
+    read_back(store, "a1", "b1", "c0", "c1")
+
+
+def test_two_rotations_between_the_index_and_the_read(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    proxy.compress(proxy.rotate())
+    proxy.append(batch("c", 2))
+    proxy.rotate()  # left pending
+    proxy.append(batch("d", 1))
+    read_back(store, "a1", "a2", "b1")
+
+
+def test_a_session_across_a_segment_cut_and_the_live_file(settings, proxy):
+    proxy.seal([entry("a3", "alice", 1_800_000_100.0, "q3", "r3", "s-alice")])
+    proxy.append([entry("a4", "alice", 1_800_000_200.0, "q4", "r4", "s-alice")])
+    store = Store(settings)
+    store.refresh()
+    session = next(s for s in calls.sessions(store.calls()) if s.id == "s-alice")
+    assert [c.id for c in session.calls] == ["a1", "a2", "a3", "a4"]
+    assert store.texts(list(session.calls)) == read_back(store, "a1", "a2", "a3", "a4")
+
+
+def test_with_no_live_file_between_the_two_renames_the_pending_file_is_read(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    proxy.segments.mkdir(exist_ok=True)
+    os.replace(proxy.live, proxy.segments / "requests-000000003-000000003.jsonl")
+    read_back(store, "b1")
+
+
+def test_a_pending_file_compressed_between_the_listing_and_the_open(settings, proxy, monkeypatch):
+    proxy.append(batch("c", 1))
+    pending = proxy.rotate()
+    store = Store(settings)
+    store.refresh()
+    real_list = Store._list
+
+    def list_then_compress(self):
+        listing = real_list(self)
+        if pending.exists():
+            proxy.compress(pending)
+        return listing
+
+    monkeypatch.setattr(Store, "_list", list_then_compress)
+    read_back(store, "b1", "c0")
+
+
+def test_a_listing_that_misses_a_file_once_is_looked_at_again(settings, proxy, monkeypatch):
+    store = Store(settings)
+    store.refresh()
+    real_list, looks = Store._list, []
+
+    def misses_once(self):
+        looks.append(1)
+        listing = real_list(self)
+        return listing[1:] if len(looks) == 1 else listing  # a1 a2's file not seen once
+
+    monkeypatch.setattr(Store, "_list", misses_once)
+    read_back(store, "a1")
+    assert len(looks) == 2
+
+
+def test_a_file_gone_for_good_is_gone(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    (proxy.segments / "requests-000000001-000000002.jsonl.zst").unlink()
+    with pytest.raises(store_module.GoneError, match=r"seq 1 \(call a1\)") as gone:
+        store.texts(chosen(store, "a1", "b1"))
+    assert [c.id for c in gone.value.calls] == ["a1"]
+
+
+def test_a_log_that_started_again_is_refused_and_the_next_read_takes_the_new_one(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    zst = proxy.segments / "requests-000000001-000000002.jsonl.zst"
+    other = [entry("x1", "mallory", 1_900_000_000.0, "another", "call"), SEALED[1]]
+    zst.write_bytes(compress(lines(other)))  # seq 1 now names another call
+    with pytest.raises(store_module.ChangedError, match=r"seq 1 \(call a1\) no longer reads"):
+        store.texts(chosen(store, "a1"))
+    store.refresh()  # the changed file is parsed again
+    assert ids(store) == ["x1", "a2", "b1"]
+    assert read_back(store, "x1")[0][0] == ("request", "another")
+
+
+def test_a_file_that_no_longer_decompresses_is_refused(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    zst = proxy.segments / "requests-000000001-000000002.jsonl.zst"
+    zst.write_bytes(zst.read_bytes()[:20])
+    with pytest.raises(store_module.ChangedError, match="no longer reads"):
+        store.texts(chosen(store, "a2"))
+
+
+def test_a_disk_error_is_a_store_error(store, monkeypatch):
+    def denied(c):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(store_module, "_open", denied)
+    with pytest.raises(StoreError, match="cannot be read: denied"):
+        store.texts(chosen(store, "a1"))
+
+
+def test_a_call_after_a_gap_or_a_failed_segment_is_read_back(settings, proxy):
+    bad = proxy.seal(batch("c", 2))
+    bad.write_bytes(bad.read_bytes()[:20])  # its calls are never indexed
+    proxy.seal(batch("d", 1))
+    store = Store(settings)
+    store.refresh()
+    assert "c0" not in ids(store) and "b1" not in ids(store)  # b1 was sealed with them
+    read_back(store, "a2", "d0")
+
+
+def test_a_repeated_id_reads_back_its_latest_copy(settings, proxy):
+    proxy.append([entry("a1", "alice", 1_800_000_000.0, "a1 again, changed", "and answered")])
+    store = Store(settings)
+    store.refresh()
+    assert read_back(store, "a1")[0][0] == ("request", "a1 again, changed")
+
+
+def test_calls_left_from_the_old_live_file_are_read_from_its_pending_file(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    proxy.segments.mkdir(exist_ok=True)
+    os.replace(proxy.live, proxy.segments / "requests-000000003-000000003.jsonl")
+    store.refresh()  # no live file: the old live calls stay next to the pending file's
+    assert chosen(store, "b1")[0].where.seq == 3
+    read_back(store, "a1", "b1")
+
+
+def test_a_read_back_does_not_wait_for_a_refresh(store):
+    done = []
+    with store._refresh_lock:
+        reader = threading.Thread(target=lambda: done.append(store.texts(chosen(store, "a1"))))
+        reader.start()
+        reader.join(timeout=5)
+    assert done, "texts() waited for the refresh lock"
+
+
+# ---- memory -------------------------------------------------------------------------------
+
+
+def tool_call(i, size):
+    """A call whose newest turn carries a tool result of ``size`` characters."""
+    e = entry(f"m{i}", "mia", 1_800_010_000.0 + i, "", f"answer {i}", "s-mem")
+    result = [{"type": "tool_result", "tool_use_id": "t", "content": f"{i} " + "x" * size}]
+    e["request_raw"] = {
+        "text": json.dumps({"model": "m", "messages": [{"role": "user", "content": result}]})
+    }
+    return e
+
+
+def held_after_refresh(root, size, n=200) -> int:
+    """Bytes still allocated once a store has indexed ``n`` calls with ``size``-character tool
+    results: half sealed, half live."""
+    proxy = ProxyDir(root)
+    proxy.seal([tool_call(i, size) for i in range(n // 2)])
+    proxy.append([tool_call(i, size) for i in range(n // 2, n)])
+    store = Store(
+        Settings(proxy_dir=root, boxes=(Target("dev", API_KEY, "b", "r"),), sync_seconds=300)
+    )
+    gc.collect()
+    tracemalloc.start()
+    try:
+        store.refresh()
+        gc.collect()
+        held, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert len(store.calls()) == n and store.calls()[0].content_bytes > size
+    return held
+
+
+def test_memory_held_does_not_grow_with_the_text(tmp_path):
+    held_after_refresh(tmp_path / "warm", 10)  # imports and caches, once
+    small = held_after_refresh(tmp_path / "small", 1_000)  # 200 KB of text
+    large = held_after_refresh(tmp_path / "large", 50_000)  # 10 MB of text
+    assert large < small * 1.1 + 20_000, (small, large)
+    assert large / 200 < 2_000, f"{large / 200:.0f} bytes per call"
+
+
+def test_a_read_back_holds_one_line_at_a_time(tmp_path):
+    """Each proxy line resends the whole conversation: an export keeps the parts, never all
+    the lines at once."""
+    history = [{"role": "user", "content": "h" * 400_000}, {"role": "assistant", "content": "ok"}]
+    written = []
+    for i in range(30):
+        e = entry(f"h{i}", "hal", 1_800_020_000.0 + i, "", f"short answer {i}", "s-hist")
+        msgs = [*history, {"role": "user", "content": f"short question {i}"}]
+        e["request_raw"] = {"text": json.dumps({"model": "m", "messages": msgs})}
+        written.append(e)
+    proxy = ProxyDir(tmp_path / "p")
+    proxy.seal(written[:15])
+    proxy.append(written[15:])  # 12 MB of lines, half compressed, half live
+    store = Store(
+        Settings(proxy_dir=proxy.root, boxes=(Target("dev", API_KEY, "b", "r"),), sync_seconds=300)
+    )
+    store.refresh()
+    tracemalloc.start()
+    try:
+        got = store.texts(list(store.calls()))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert got[0] == (("request", "short question 0"), ("response", "short answer 0"))
+    assert peak < 4_000_000, f"peak {peak:,} bytes for 12 MB of lines"
+
+
+def test_a_live_call_is_looked_for_again_if_a_listing_misses_the_newest_file(
+    settings, proxy, monkeypatch
+):
+    store = Store(settings)
+    store.refresh()
+    proxy.compress(proxy.rotate())  # b1, indexed live, is now in the newest segment
+    proxy.append(batch("c", 1))
+    real_list, looks = Store._list, []
+
+    def misses_newest_once(self):
+        looks.append(1)
+        listing = real_list(self)
+        return listing[:-1] if len(looks) == 1 else listing
+
+    monkeypatch.setattr(Store, "_list", misses_newest_once)
+    read_back(store, "b1")
+    assert len(looks) == 2 and store._stale == set()
+
+
+def test_a_live_file_that_changed_is_refused_then_read_again(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    proxy.live.write_bytes(lines([entry("z1", "zed", 1_800_000_501.0, "replaced", "live")]))
+    with pytest.raises(store_module.ChangedError, match=r"seq 3 \(call b1\)"):
+        store.texts(chosen(store, "b1"))
+    store.refresh()  # the live file is read again from its start
+    assert ids(store) == ["a1", "a2", "z1"]
+
+
+def test_a_changed_file_that_is_then_gone_keeps_its_calls_listed(settings, proxy):
+    store = Store(settings)
+    store.refresh()
+    zst = proxy.segments / "requests-000000001-000000002.jsonl.zst"
+    zst.write_bytes(compress(lines([SEALED[1], SEALED[0]])))  # same lines, swapped
+    with pytest.raises(store_module.ChangedError):
+        store.texts(chosen(store, "a1"))
+    zst.unlink()
+    store.refresh()
+    assert ids(store) == ["a1", "a2", "b1"]  # still listed; an export says 410
+    with pytest.raises(store_module.GoneError):
+        store.texts(chosen(store, "a1"))
+
+
+def test_a_long_list_of_gone_calls_is_cut_short(settings, proxy):
+    proxy.seal(batch("c", 8))
+    store = Store(settings)
+    store.refresh()
+    (proxy.segments / "requests-000000003-000000011.jsonl.zst").unlink()
+    with pytest.raises(store_module.GoneError, match=r"seq 7 \(call c3\) and 4 more$") as gone:
+        store.texts(chosen(store, "b1", *[f"c{i}" for i in range(8)]))
+    assert len(gone.value.calls) == 9
+
+
+def test_a_refresh_whose_listing_misses_the_rotated_file_waits_for_a_second_look(
+    settings, proxy, monkeypatch
+):
+    store = Store(settings)
+    store.refresh()
+    proxy.compress(proxy.rotate())  # b1's live file is now requests-3-3
+    proxy.append(batch("c", 1))  # c0 is seq 4 in the new live file
+    real_list, looks = Store._list, []
+
+    def misses_newest_once(self):
+        looks.append(1)
+        listing = real_list(self)
+        return listing[:-1] if len(looks) == 1 else listing
+
+    monkeypatch.setattr(Store, "_list", misses_newest_once)
+    store.refresh()  # the new live file is not read as if it started at seq 3
+    assert ids(store) == ["a1", "a2", "b1"] and "requests.jsonl" in problems(store)
+    store.refresh()
+    assert located(store, proxy) == {
+        "a1": (1, "a1"),
+        "a2": (2, "a2"),
+        "b1": (3, "b1"),
+        "c0": (4, "c0"),
+    }
+    read_back(store, "b1", "c0")
