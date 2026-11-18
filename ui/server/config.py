@@ -91,14 +91,22 @@ class Settings:
     log_owners: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     anthropic_api_key: str | None = field(default=None, repr=False)
-    # AIAB_LAB_KEY: the lab's signing key (base64 raw Ed25519, the format of lab.key from
-    # make dev-keys) and AIAB_LAB_CERTIFICATE: the certificate the lab's root gave it (the
-    # JSON line in lab.cert). Both set, the Sign screen offers Lab Sign, a demo-only button
-    # that signs the shown version as the lab with this key, and every page says DEV MODE;
-    # anyone logged in can then sign as the lab. The lab's root stays with the lab.
-    # Prototype only.
+    # AIAB_LAB_KEY: the server's lab signing key (base64 raw Ed25519, the format of lab.key
+    # from make dev-keys). Its certificate comes from AIAB_LAB_ROOT_KEY when the server holds
+    # the lab root, otherwise from AIAB_LAB_CERTIFICATE (the JSON line in lab.cert). With a
+    # working key, the lab card on the Sign screen offers Sign to everyone who is not a lab
+    # member, which signs the shown version as the lab with this key. Prototype only.
     lab_signing_key: str | None = field(default=None, repr=False)
     lab_signing_certificate: str | None = None
+    # AIAB_LAB_ROOT_KEY: the lab root's private key (base64 raw Ed25519). Set, the server
+    # certifies the signing key each lab member's browser makes on their first Sign, the way
+    # AIAB_AUDITOR_ROOT_KEY does for auditors, and certifies AIAB_LAB_KEY itself. Prototype
+    # only: whoever controls the server can sign as the lab (THREAT_MODEL.md).
+    lab_root_key: str | None = field(default=None, repr=False)
+    # AIAB_LAB_SIGNER_AUTHORIZED_BY: who allowed the server to sign as the lab, shown as
+    # "Authorized by" on the lab card's Sign. The certificate names no issuer, so this is
+    # the only place the name comes from.
+    lab_signer_authorized_by: str | None = None
     # AIAB_AUDITOR_ROOT_KEY: the auditor root's private key (base64 raw Ed25519). Set, the
     # server certifies the signing key each logged-in auditor's browser makes on its first
     # Sign, so every auditor has a key of their own and nobody sets anything up. Prototype
@@ -230,6 +238,8 @@ def load_settings() -> Settings:
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
         lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
         lab_signing_certificate=env.get("AIAB_LAB_CERTIFICATE", "").strip() or None,
+        lab_root_key=env.get("AIAB_LAB_ROOT_KEY", "").strip() or None,
+        lab_signer_authorized_by=env.get("AIAB_LAB_SIGNER_AUTHORIZED_BY", "").strip() or None,
         auditor_root_key=env.get("AIAB_AUDITOR_ROOT_KEY", "").strip() or None,
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
         oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,

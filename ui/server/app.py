@@ -262,8 +262,8 @@ def render(request: Request, template: str, **context: Any) -> Response:
     context.setdefault(
         "server_certifies", bool(who) and pv.server_certifies(settings, who["party"])
     )
-    # Prototype: the server holds a working lab key, so the Sign screen offers Lab Sign to
-    # anyone logged in and every page says DEV MODE.
+    # Prototype: the server holds a working lab key, so the lab card on the Sign screen
+    # offers Sign to those who are not lab members.
     context.setdefault("lab_sign", pv.server_signs(settings, "lab"))
     # A short word shown beside the name, so nobody mistakes dev for the demo (AIAB_ENV_TAG).
     context.setdefault("env_tag", os.environ.get("AIAB_ENV_TAG", "").strip()[:12])
@@ -1666,8 +1666,9 @@ async def sign_upload(
 
 @app.post("/a/{aid}/sign/lab")
 async def sign_as_lab(request: Request, aid: str, digest: Annotated[str, Form()] = "") -> Response:
-    """Lab Sign, for the demo (prototype): anyone logged in, the auditor included, signs the
-    version they were shown as the lab with the server's lab key (AIAB_LAB_KEY)."""
+    """Sign on the lab card (prototype): someone who is not a lab member signs the version
+    they were shown as the lab with the server's lab key (AIAB_LAB_KEY), certified by the
+    lab root the server holds (AIAB_LAB_ROOT_KEY) or by AIAB_LAB_CERTIFICATE."""
     target, redirect = agreement(request, aid, write=True)
     if redirect:
         return redirect
@@ -1677,7 +1678,7 @@ async def sign_as_lab(request: Request, aid: str, digest: Annotated[str, Form()]
         return back(here, err="Log in first.")
     status, detail = pv.lab_sign(target, user, digest)
     if status != "ok":
-        return back(here, err=f"Lab Sign did not sign: {detail}.")
+        return back(here, err=f"Not signed as the lab: {detail}.")
     editing.clear(aid)  # a signature locks the plan, so no edit session is open any more
     saved(user)
     return back(here, msg="Signed as the lab with the server's lab key.")
@@ -1686,8 +1687,9 @@ async def sign_as_lab(request: Request, aid: str, digest: Annotated[str, Form()]
 @app.post("/sign/certificate")
 async def sign_certificate(request: Request) -> Response:
     """Certify the public key a logged-in member's browser just made, with the party root
-    this server holds (prototype: AIAB_AUDITOR_ROOT_KEY). JSON in and out; a form post from
-    another site cannot reach it (SameSite cookies, and a cross-site JSON post needs CORS)."""
+    this server holds (prototype: AIAB_LAB_ROOT_KEY, AIAB_AUDITOR_ROOT_KEY). JSON in and
+    out; a form post from another site cannot reach it (SameSite cookies, and a cross-site
+    JSON post needs CORS)."""
     user = user_of(request)
     if user is None:
         return JSONResponse({"error": "Log in first."}, status_code=401)
@@ -1738,8 +1740,12 @@ async def set_key(
     here = f"/a/{aid}/sign"
     if user is None or party != user["party"]:
         return back(here, err="You can only replace your own party's root key.")
-    if pv.server_signs(settings, party) or pv.server_certifies(settings, party):
-        held = pv.SERVER_KEY_ENV.get(party) or (pv.ROOT_KEY_ENV[party],)
+    # The lab may replace its root even while this server holds it (the red button in the
+    # collapsed section of the lab card); the server then stops signing and certifying for
+    # the lab until its variables match the new root. The auditor may not.
+    held_here = pv.server_signs(settings, party) or pv.server_certifies(settings, party)
+    if held_here and party != "lab":
+        held = (pv.ROOT_KEY_ENV[party],)
         return back(
             here,
             err=f"This server signs for the {party} under the current root; a new root would "
@@ -1758,10 +1764,16 @@ async def set_key(
     pv.record_change(target, user, "key", f"root key: {party}", f"submitted {public_key}")
     where = pushed.pr_url or pushed.compare_url or f"branch {pushed.branch}"
     _remember_key(party, public_key, user, pushed.pr_url)  # every page blocks until the box has it
+    stops = (
+        f" After that this server no longer signs or certifies for the {party} until"
+        " its keys match the new root."
+        if held_here
+        else ""
+    )
     return back(
         here,
         msg=f"The {party} root key is submitted ({where}). The check merges it within a minute"
-        " and the box is released with it; every page waits until the box trusts it.",
+        " and the box is released with it; every page waits until the box trusts it." + stops,
     )
 
 
