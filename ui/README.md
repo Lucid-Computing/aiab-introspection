@@ -66,8 +66,9 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 | [`server/publish.py`](server/publish.py) | The git side: a key change as a branch and pull request with `gh`, draft backups, the checkout following its branch. |
 | [`server/runs.py`](server/runs.py) | The Runs screen's steps: each one a call of the static part's `auditor.baked` CLI, results on disk. |
 | [`server/proxylogs.py`](server/proxylogs.py) | The Logs screen: fetches the logging proxy's segments (every 5 minutes in the background), groups requests into sessions, converts them to box records. |
+| [`server/feedback.py`](server/feedback.py) | The Feedback form's entries and the post-it notes: one append-only JSONL file each in `AIAB_FEEDBACK_DIR`, and an optional email to a Slack channel (`AIAB_FEEDBACK_EMAIL_TO`, `AIAB_SMTP_*`). |
 | [`server/app.py`](server/app.py) | The routes, one per screen or form. |
-| [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm dialog, the chat panel and browser signing (`assets/sign.js`); the builder is its own bundle in an iframe. |
+| [`server/templates/`](server/templates/) | One HTML file per screen. The only scripts: the confirm and Feedback dialogs, the chat panel, browser signing (`assets/sign.js`) and post-it notes (`assets/notes.js`); the builder is its own bundle in an iframe. |
 | [`server/template/`](server/template/) | The minimal valid agreement that "New agreement" starts from. |
 | [`server/devkeys.py`](server/devkeys.py) | Development keys in the box's format: a root and a certified signing key per party, and a trust file pinning the roots. |
 | [`assets/sign.js`](assets/sign.js) | Browser signing: makes, backs up, imports and stores the party's key in the browser and signs the digest there; the signed bytes are the protocol's, checked against the Python verifier by `tests/test_browser_signing.py` under Node. |
@@ -78,7 +79,7 @@ The UI calls the static part's own functions, so it cannot disagree with the box
 ## The plan builder
 
 `playground/` is the plan builder: a React app that edits the plan as a graph of five block
-types (Input Logs, Classifier, Run Python, Run LLM, Final Report) or as `plan.json` text, with every
+types (Log Source, Classifier, Run Python, Run LLM, Final Report) or as `plan.json` text, with every
 step showing what it reads and what it produces. The plan page embeds it in an iframe at
 `/audit-plan-playground/?agreement=<id>`; it loads the agreement's `plan.json` from
 `GET /a/<id>/plan.json` and saves with `PUT`, which runs the box's loader
@@ -99,9 +100,9 @@ longer runs that format.
 
 ## What this first version does and does not do
 
-Does: login per party; the Runs screen that drives the auditor CLI against the live box; the how-it-works screen; agreements as folders, create, delete; the plan builder (graph and YAML) saving through the box's loader; a change log with lab/auditor attribution; the box's own loader check on every load; the plan digest, a standalone signing tool and signature paste verified against the trust file; lock on a valid signature; Run, which sends the signed agreement with the records; reading the box manifest and health.
+Does: login per party; the Runs screen that drives the auditor CLI against the live box; the how-it-works screen; agreements as folders, create, delete; the plan builder (graph and YAML) saving through the box's loader; a change log with lab/auditor attribution; the box's own loader check on every load; the plan digest, a standalone signing tool and signature paste verified against the trust file; lock on a valid signature; Run, which sends the signed agreement with the records; reading the box manifest and health; feedback from any page, as the Feedback form (text and an optional name) or a post-it note left on the page, which the lab reads at `/feedback` (`docs/FEEDBACK_FORM_PLAN.md`).
 
-Does not yet: the dry run (deferred; the static part's `python -m aiab.dryrun` works from the terminal), merging (people and CI do that), GitHub login, comments, the attestation verifier, run submission. The state lives in the agreement folders and the box; the server keeps only login sessions, no database.
+Does not yet: the dry run (deferred; the static part's `python -m aiab.dryrun` works from the terminal), merging (people and CI do that), GitHub login, comments, the attestation verifier, run submission. The state lives in the agreement folders and the box; the server keeps only login sessions and the feedback files, no database.
 
 ## Plan chat
 
@@ -166,6 +167,7 @@ The UI is one Docker container with a persistent disk. [`../render.yaml`](../ren
    - `LAB_TOKEN`, `LOGGER_KEY`: optional, only for the Runs screen; from the box operator.
    - `AIAB_LOG_KEY`: optional, only for the Logs screen; production's log reader key from 1Password.
    - `AIAB_PROXY_KEY`: optional, only for the Logs screen; the test proxy's shared key from 1Password. Both keys can be set: the Logs screen then offers both sources.
+   - `AIAB_LOG_SERVER_URL` and `AIAB_LOG_SERVER_KEY`: optional; read Prod Agent Logs through the proxy's log server (`logger/`) instead of downloading them. `AIAB_PROXY_SERVER_URL` and `AIAB_PROXY_SERVER_KEY` do the same for Dev Agent Logs. With both of a pair set, this server lists that source's sessions by metadata, gets a run's records already sealed to the box, and downloads no readable log of it; that proxy's own key is then unused. The key is the one the log server holds for this environment's box.
    - `AIAB_SLACK_EXPORT_KEY`: optional, only for the Logs screen; the key that opens the committed Slack export bundle (`slack-export-bundle` in 1Password). Slack Logs is then read from the bundle, opened at every start.
    - `AIAB_SLACK_EXPORT`: optional; a folder of the Slack export read in place instead of the bundle (a laptop setting).
    - `AIAB_GITHUB_EXPORT_KEY`: optional, only for the Logs screen; the key that opens the committed GitHub export bundle (`github-export-bundle` in 1Password). `AIAB_GITHUB_EXPORT` names a folder to read in place instead.

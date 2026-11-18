@@ -159,7 +159,7 @@ export function sourceAgents(source: string): string[] {
   return [...new Set(sourceRecords(source).map((r) => r.agent_id))];
 }
 
-/** The records an Input Logs node admits, in source order. */
+/** The records a Log Source node admits, in source order. */
 export function selectRecords(node: InputLogs): LogRecord[] {
   const { input_scope, filter } = node.config;
   const keywords = filter.keywords.map((k) => k.toLowerCase()).filter(Boolean);

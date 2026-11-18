@@ -10,14 +10,18 @@ import resource
 import sys
 
 from aiab.baked import graph
+from aiab.baked.plan_ir import is_model_node
 
 # The fixed code a failure in each kind of node is reported as; nothing else leaves.
 STAGES = {
     "input_logs": "plan_query_failed",
+    "filter_logs": "plan_query_failed",
+    "combine_logs": "plan_query_failed",
     "run_python": "plan_metric_failed",
     "classifier": "plan_classify_failed",
     "run_llm": "plan_classify_failed",
     "final_report": "plan_report_failed",
+    "records_report": "plan_report_failed",
 }
 
 
@@ -101,6 +105,7 @@ def main():
     }
     for module in ("re", "math", "collections", "itertools", "statistics", "json"):
         __import__(module)
+    regexes = graph.patterns(plan)
     budgets = request["budgets"]
     isolate(request["cpu_seconds"])
 
@@ -118,9 +123,10 @@ def main():
 
     def progress(node):
         global stage
-        stage = STAGES[node["type"]]
+        # A Filter asking the model fails as a model step does.
+        stage = "plan_classify_failed" if is_model_node(node) else STAGES[node["type"]]
 
-    result = graph.run_plan(plan, order, records, llm, compiled, progress, budgets)
+    result = graph.run_plan(plan, order, records, llm, compiled, progress, budgets, regexes)
     stage = "plan_report_failed"
     send({"kind": "result", "result": result})
 

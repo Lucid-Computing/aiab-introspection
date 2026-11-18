@@ -26,6 +26,13 @@ organisation's public repositories, is read the same way by ``server.githublogs`
 (or per repository and day for commits). The session layer below
 (``Session``, ``sessions``, ``to_box_records``) takes either kind of record.
 
+A proxy can also be read through its log server (``logger/`` in this repository, run on the
+proxy's machine): a ``LogSource`` of kind "logger". Then nothing readable is downloaded.
+``GET /v1/sessions`` gives the sessions and calls as metadata, which become light
+``Request``s holding the kind of each record but no text, and a run asks ``POST /v1/export``
+for the chosen sessions' records, each sealed to the box's key (``run_records``). This
+server signs and forwards them and never holds what was said (MAC-377).
+
 The pages work from a light index (``load_index``): one ``Request`` per call with the
 listing fields, the message count, the first user text, the parts a run sends to the box,
 and where the line sits on disk, but no conversation. A call's full conversation is parsed
@@ -114,11 +121,94 @@ def _http_error(error: urllib.error.HTTPError, path: str) -> ProxyError:
     return ProxyError(f"the proxy answered HTTP {error.code} for {path}")
 
 
+def _server(source: LogSource, method: str, path: str, body: dict | None = None) -> dict:
+    """One call to the source's log server, answered as JSON."""
+    request = _request(source, path)
+    request.method = method
+    if body is not None:
+        request.data = json.dumps(body).encode()
+        request.add_header("content-type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        try:
+            detail = json.loads(error.read()).get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+        if error.code in (401, 403):
+            raise ProxyError("the log server refused the key; it may have changed") from None
+        if isinstance(detail, dict) and detail.get("error") == "unknown_sessions":
+            raise ProxyError(
+                "the log server no longer holds these sessions: "
+                + ", ".join(map(str, detail.get("sessions") or ()))
+            ) from None
+        raise ProxyError(
+            f"the log server answered HTTP {error.code} for {path}"
+            + (f": {detail}" if isinstance(detail, str) else "")
+        ) from None
+    except (urllib.error.URLError, TimeoutError, ValueError) as error:
+        raise ProxyError(f"the log server is not answering: {error}") from None
+
+
+def _sync_server(source: LogSource) -> dict:
+    """Ask the log server to read the proxy's files again, then take its sessions as the
+    index: metadata only, so there is nothing to keep on disk."""
+    result = _server(source, "POST", "/v1/sync")
+    listed = _server(source, "GET", "/v1/sessions").get("sessions") or []
+    requests = sorted((r for s in listed for r in _server_calls(s)), key=lambda r: r.time)
+    state = _state(source)
+    with state["index_lock"]:
+        state["index"].update(stamp=("logger", time.time()), requests=requests, by_line={})
+    return {
+        "new": result.get("new", 0),
+        "segments": result.get("segments", 0),
+        "live_entries": result.get("live", 0),
+        "live_first": None,
+    }
+
+
+def _server_calls(session: dict) -> list[Request]:
+    """One light ``Request`` per call of a log server's session. ``parts`` names the kind of
+    each record the box will get, with no text: enough to count and to check a Log
+    Source's filter, never something to send (``run_records`` asks the log server)."""
+    out = []
+    for c in session.get("calls") or ():
+        try:
+            when = datetime.fromisoformat(str(c["ts"]).replace("Z", "+00:00")).timestamp()
+        except (KeyError, ValueError):
+            continue
+        out.append(
+            Request(
+                id=str(c.get("id", "")),
+                time=when,
+                who=str(c.get("who", session.get("who", "?"))),
+                status=c.get("status"),
+                duration_s=c.get("duration_s"),
+                session_id=str(session.get("id", "")),
+                model=c.get("model"),
+                system_text="",
+                tool_names=[],
+                messages=[],
+                response_blocks=[],
+                stop_reason=c.get("stop_reason"),
+                size=int(c.get("request_bytes") or 0),
+                raw={},
+                message_count=int(c.get("messages") or 0),
+                parts=[(str(kind), "") for kind in c.get("kinds") or ()],
+                content_bytes=int(c.get("content_bytes") or 0),
+            )
+        )
+    return out
+
+
 def sync(settings: Settings, source: LogSource) -> dict:
     """Fetch the listing, download missing segments, refresh the live part.
 
     Returns {"new": n, "segments": total, "live_entries": m}.
     """
+    if source.kind == "logger":
+        return _sync_server(source)
     out = source.path(settings)
     out.mkdir(parents=True, exist_ok=True)
     body, _ = _get(source, "/_logs")
@@ -290,6 +380,9 @@ class Request:
     parts: list[tuple[str, str]] | None = None  # call_parts, kept by the light index
     file: str = ""  # the file the line is in, and where: set by the light index
     offset: int = -1
+    # A call read through a log server: how much text a run sends for it. Its ``parts``
+    # then hold the kinds only, with no text.
+    content_bytes: int | None = None
 
     @property
     def when(self) -> str:
@@ -401,6 +494,8 @@ def load_index(settings: Settings, source: LogSource) -> list[Record]:
     indexed is not parsed again, since the live part is re-downloaded whole on every sync.
     A Slack or GitHub source gives its posts instead (``slacklogs``, ``githublogs``)."""
     state = _state(source)
+    if source.kind == "logger":  # filled by each sync; nothing is on disk
+        return state["index"]["requests"]
     with state["index_lock"]:
         index = state["index"]
         paths = _paths(settings, source)
@@ -618,6 +713,52 @@ def to_box_records(records: list[Record]) -> list[dict]:
                 }
             )
     return out
+
+
+def sent_kb(records: list[Record], built: list[dict]) -> float:
+    """How much a run sends for these records, in KB. A log server's calls say it
+    themselves; anything else is measured on the records built here."""
+    known = [r.content_bytes for r in records if isinstance(r, Request)]
+    if known and all(k is not None for k in known):
+        return round(sum(known) / 1024, 1)
+    return round(len(json.dumps(built).encode("utf-8")) / 1024, 1)
+
+
+def run_records(picks: list[tuple[LogSource, Session]]) -> list[dict]:
+    """What a run sends for the chosen sessions, each with the source it came from.
+
+    A log server's sessions come from that server, already sealed to the box: this server
+    never sees their text. Each server's export gets its own range of record numbers, and
+    the records built here (Slack, GitHub, a plant, a proxy read directly) are numbered
+    past them, since the box refuses two records at one position."""
+    servers: dict[str, tuple[LogSource, list[str]]] = {}
+    local: list[Record] = []
+    for source, session in picks:
+        if source.kind == "logger":
+            servers.setdefault(source.id, (source, []))[1].append(session.id)
+        else:
+            local.extend(session.records)
+    sealed: list[dict] = []
+    for source, ids in servers.values():
+        answer = _server(source, "POST", "/v1/export", {"sessions": ids, "offset": len(sealed)})
+        records = answer.get("records")
+        if not isinstance(records, list) or not all(
+            isinstance(r, dict) and r.get("enc") and r.get("boot_id") for r in records
+        ):
+            raise ProxyError(f"{source.label}: the log server's export is not sealed records")
+        sealed.extend(records)
+    if len({r["boot_id"] for r in sealed}) > 1:
+        raise ProxyError("the log servers sealed to different boxes; one run goes to one box")
+    built = box_records(local)
+    taken: dict[tuple, int] = {}
+    for r in sealed:
+        at = (r["stream"], r["batch"])
+        taken[at] = max(taken.get(at, -1), r["offset"])
+    for r in built:
+        at = (r["stream"], r["batch"])
+        if at in taken:
+            r["offset"] += taken[at] + 1
+    return sealed + built
 
 
 # ---- helpers -----------------------------------------------------------------------------

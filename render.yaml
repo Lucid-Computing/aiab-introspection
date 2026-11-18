@@ -46,7 +46,23 @@ services:
         sync: false
       - key: AIAB_PROXY_KEY     # optional, for the Logs screen: the test proxy's shared key ("tester:<key>" or the key alone); Dev Agent Logs
         sync: false
+      - key: AIAB_LOG_SERVER_URL   # optional, with AIAB_LOG_SERVER_KEY: read Prod Agent Logs through the proxy's log server (logger/), metadata here and sealed records for a run; nothing readable is downloaded
+        sync: false
+      - key: AIAB_LOG_SERVER_KEY   # this environment's key on that log server (it decides the box the records are sealed to)
+        sync: false
+      - key: AIAB_PROXY_SERVER_URL # optional, with AIAB_PROXY_SERVER_KEY: the same for Dev Agent Logs
+        sync: false
+      - key: AIAB_PROXY_SERVER_KEY
+        sync: false
       - key: AIAB_SLACK_EXPORT_KEY  # optional, for the Logs screen: opens the committed Slack export bundle (slack-export-bundle in 1Password); Slack Logs
         sync: false
       - key: AIAB_GITHUB_EXPORT_KEY  # optional, for the Logs screen: opens the committed GitHub export bundle (github-export-bundle in 1Password); GitHub Logs
+        sync: false
+      - key: AIAB_FEEDBACK_EMAIL_TO  # optional, a secret: the #amber-feedback Slack channel's email address; each Feedback entry and post-it note is also mailed there
+        sync: false
+      - key: AIAB_SMTP_HOST  # with AIAB_FEEDBACK_EMAIL_TO: the mail server, e.g. smtp.gmail.com (port AIAB_SMTP_PORT, default 587, STARTTLS)
+        sync: false
+      - key: AIAB_SMTP_USER  # the Workspace account the feedback email is sent from
+        sync: false
+      - key: AIAB_SMTP_PASSWORD  # that account's app password
         sync: false

@@ -1,6 +1,7 @@
 """The box records are sealed to, and its current key.
 
-Which box is this server's own setting (BOX_HOST, BOX_REPO), never the caller's choice: a
+Which box is this server's own setting, one per caller's key (``logserver.config``), never
+the caller's choice: a
 caller who could name the key could have the logs sealed to a key of its own and read them.
 The key is fetched the only way it can be trusted: the Tinfoil SDK checks the chip's report
 against the config repo, pins the connection to the TLS key that report names, and

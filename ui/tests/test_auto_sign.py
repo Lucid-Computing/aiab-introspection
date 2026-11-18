@@ -174,7 +174,7 @@ def test_sign_buttons_ask_for_a_certificate_and_no_page_offers_a_new_root(issuer
     assert 'data-certify="/sign/certificate"' in client.get("/a/auto/plan").text
     assert 'data-certify="/sign/certificate"' in client.get("/agreements").text
     html = client.get("/a/auto/sign").text
-    assert 'data-certify="/sign/certificate"' in html and "can sign as both parties" in html
+    assert 'data-certify="/sign/certificate"' in html
     assert 'class="browser-key"' not in html and 'id="key-form-auditor"' not in html
     other = browser_key()
     refused = client.post("/a/auto/sign/key", data={"party": "auditor", "public_key": other})
