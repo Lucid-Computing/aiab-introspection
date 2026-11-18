@@ -5,6 +5,7 @@ import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
 import { blockPython, narrowing, planPython } from "../plan/python";
 import { isQuery, parseQuery, type Query, queryCode } from "../plan/query";
+import { pageCount, pageOf, pageTicked, toggleOne, togglePage } from "../plan/sessionPick";
 import { describeNode } from "../plan/shape";
 import { outputSpec } from "../plan/spec";
 import {
@@ -387,13 +388,15 @@ interface SessionRow {
   title: string;
   who: string;
   started: string;
-  records: number;
+  /** null for a part of a plant's run on its hub: its records are fetched by a run. */
+  records: number | null;
 }
 
 /**
  * Which sessions of the log source the agreement reads: none ticked means all of them.
  * The list comes from the agreement UI by metadata only; without a server (the standalone
- * playground) the ids are typed one per line.
+ * playground) the ids are typed one per line. Ticking has three layers: all, the sessions
+ * of the page shown (50 a page), and one session (plan/sessionPick.ts).
  */
 function SessionPicker({
   source,
@@ -411,6 +414,7 @@ function SessionPicker({
   // Unticking Select all clears the ticks on screen. The plan itself cannot name "no
   // session": none named means every session of the log source, which Selected says.
   const [cleared, setCleared] = useState(false);
+  const [page, setPage] = useState(0);
   useEffect(() => {
     let live = true;
     if (!AGREEMENT) return;
@@ -427,6 +431,7 @@ function SessionPicker({
     };
   }, []);
   useEffect(() => setCleared(false), [source]);
+  useEffect(() => setPage(0), [source, q]);
   const rows = bySource ? (bySource[source] ?? []) : null;
   const ids = (rows ?? []).map((r) => r.id);
   const here = new Set(ids);
@@ -440,9 +445,17 @@ function SessionPicker({
   // each of its sessions is named.
   const implicit = value.length === 0 && !cleared;
   const all = implicit || (ids.length > 0 && ids.every((id) => chosen.has(id)));
+  const pages = pageCount(shown.length);
+  const at = Math.min(page, pages - 1);
+  const onPage = pageOf(shown, at);
+  const pageIds = onPage.map((r) => r.id);
   const toggle = (id: string) => {
     setCleared(false);
-    onChange(implicit ? ids.filter((x) => x !== id) : chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+    onChange(toggleOne(value, ids, id, implicit));
+  };
+  const toggleThisPage = () => {
+    setCleared(false);
+    onChange(togglePage(value, ids, pageIds, implicit));
   };
   const toggleAll = () => {
     if (all) {
@@ -473,12 +486,18 @@ function SessionPicker({
                 <span>Select all</span>
               </label>
             )}
-            {shown.map((r) => (
+            {pages > 1 && (
+              <label className="sess-page">
+                <input type="checkbox" checked={pageTicked(value, pageIds, implicit)} onChange={toggleThisPage} />
+                <span>Select this page</span>
+              </label>
+            )}
+            {onPage.map((r) => (
               <label key={r.id}>
                 <input type="checkbox" checked={implicit || chosen.has(r.id)} onChange={() => toggle(r.id)} />
                 <span>
                   {r.title}
-                  <span className="muted"> · {r.records} records</span>
+                  {r.records != null && <span className="muted"> · {r.records} records</span>}
                 </span>
               </label>
             ))}
@@ -488,6 +507,19 @@ function SessionPicker({
               </span>
             )}
           </div>
+          {pages > 1 && (
+            <div className="sess-pager">
+              <button type="button" className="btn btn--ghost btn--sm" disabled={at === 0} onClick={() => setPage(at - 1)}>
+                ← newer
+              </button>
+              <span className="f-hint">
+                page {at + 1} of {pages}
+              </span>
+              <button type="button" className="btn btn--ghost btn--sm" disabled={at >= pages - 1} onClick={() => setPage(at + 1)}>
+                older →
+              </button>
+            </div>
+          )}
           <span className="f-label">Selected</span>
           {implicit ? (
             <span className="f-hint">
