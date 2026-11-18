@@ -30,12 +30,12 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
     blurb: "A free model call with your own prompt, for a question the fixed audit cannot ask; its output shape is declared and checked.",
   },
   final_report: {
-    label: "Audit result",
-    blurb: "Names the few numbers that leave the box and the rules that stop one person's session from being singled out.",
+    label: "Report",
+    blurb: "What leaves the box. Numbers: the results of Audit or Code you name. Records: facts about the records that reach it, and the records if ticked.",
   },
   records_report: {
     label: "Report",
-    blurb: "Says how many records reached it, from how many sessions, of which kinds and when. Ticked, it also releases the records.",
+    blurb: "What leaves the box. Numbers: the results of Audit or Code you name. Records: facts about the records that reach it, and the records if ticked.",
   },
 };
 

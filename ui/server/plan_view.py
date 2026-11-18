@@ -53,7 +53,7 @@ NODE_LABELS = {
     "classifier": "Classifier",
     "run_python": "Code",
     "run_llm": "LLM",
-    "final_report": "Audit result",
+    "final_report": "Report",
     "records_report": "Report",
 }
 RECORD_FIELD_NAMES = {

@@ -183,7 +183,7 @@ details.f > summary { cursor: pointer; }
 .sym--classifier { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 .sym--run_python { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
 .sym--run_llm { clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
-.sym--final_report { clip-path: circle(50%); }
+.sym--final_report { clip-path: polygon(0 0, 62% 0, 100% 38%, 100% 100%, 0 100%); }
 /* Report: a page with a folded corner. Report (old) keeps the circle. */
 .sym--records_report { clip-path: polygon(0 0, 62% 0, 100% 38%, 100% 100%, 0 100%); }
 /* Filter: a funnel. AND and OR: the set signs ∩ and ∪, drawn with the same bar weight. */

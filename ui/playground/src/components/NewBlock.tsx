@@ -21,7 +21,6 @@ export const MAIN: BlockKind[] = [
   "classifier",
   "run_llm",
   "run_python",
-  "records_report",
   "final_report",
 ];
 

@@ -1,6 +1,15 @@
-import { type Dispatch, useEffect, useState } from "react";
+import { type Dispatch, useEffect, useRef, useState } from "react";
 import { AGREEMENT } from "../agreement";
-import { connect, DEFAULT_INCLUDED, deleteNodes, disconnect, renameInput, renameOutput, updateNode } from "../plan/ops";
+import {
+  connect,
+  DEFAULT_INCLUDED,
+  deleteNodes,
+  disconnect,
+  newNode,
+  renameInput,
+  renameOutput,
+  updateNode,
+} from "../plan/ops";
 import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
 import { blockPython, narrowing, planPython } from "../plan/python";
@@ -32,7 +41,7 @@ import {
 } from "../plan/types";
 import { wouldCycle } from "../plan/validate";
 import type { Action } from "../state/store";
-import { CommitInput, Field, LinesInput, NumberInput, PythonEditor, Select } from "./fields";
+import { CommitInput, Field, LinesInput, NumberInput, PythonEditor, Segmented, Select } from "./fields";
 import { CombineForm, FilterForm, PortPicker } from "./FilterForms";
 import { BLOCK_META, kindOf, SOURCE_OPTIONS, sourceLabel } from "./nodeMeta";
 import { TypeBadge } from "./PlanNodeView";
@@ -99,6 +108,9 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
       )}
       {node.type === "run_python" && !query && <RunPythonForm plan={plan} node={node} set={set} op={op} />}
       {node.type === "run_llm" && <RunLlmForm plan={plan} node={node} set={set} op={op} />}
+      {(node.type === "final_report" || node.type === "records_report") && (
+        <ReportFormat key={node.id} node={node} set={set} />
+      )}
       {node.type === "final_report" && <ReportForm plan={plan} node={node} set={set} />}
       {node.type === "records_report" && <RecordsReportForm plan={plan} node={node} set={set} op={op} />}
 
@@ -119,6 +131,33 @@ export default function Inspector({ plan, selected, issues, dispatch, onClose }:
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * One Report block, two formats: Numbers (final_report: what Audit or Code worked out) and
+ * Records (records_report: facts about the records, and the records if ticked). The box runs
+ * both node types; switching keeps the id and title and starts the other format's settings
+ * fresh, or as they were if switched back while this pane is open.
+ */
+function ReportFormat({ node, set }: { node: FinalReport | RecordsReport; set: (n: PlanNode) => void }) {
+  const stash = useRef<Partial<Record<"final_report" | "records_report", PlanNode>>>({});
+  const pick = (t: "final_report" | "records_report") => {
+    if (t === node.type) return;
+    stash.current[node.type] = node;
+    const fresh = { ...newNode(t, node.id), title: node.title } as PlanNode;
+    set(stash.current[t] ?? fresh);
+  };
+  return (
+    <Segmented
+      label="Format"
+      value={node.type}
+      options={[
+        { value: "final_report", label: "Numbers" },
+        { value: "records_report", label: "Records" },
+      ]}
+      onChange={pick}
+    />
   );
 }
 
