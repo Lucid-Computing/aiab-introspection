@@ -500,15 +500,27 @@ def _senders(user: dict[str, str]) -> set[str]:
     return {name, *(w.lower() for w in settings.log_owners.get(name, ()))}
 
 
-def _sees(user: dict[str, str], source: LogSource, who: str) -> bool:
-    """Whether this user may see a session sent as ``who``. The lab sees every session.
-    An auditor sees an agent log's sessions only when they were sent as them. The exports
-    (Slack, GitHub, the plant) are shared."""
-    return user["party"] == "lab" or source.kind != "proxy" or who.lower() in _senders(user)
+def _sees(user: dict[str, str], source: LogSource, session: Any) -> bool:
+    """Whether this user may see a session. The lab sees every session. An auditor sees
+    an agent log's sessions only when they were sent as them, a Slack thread only when they
+    wrote in it (the login's email, as WorkOS gives it, or a name AIAB_LOG_OWNERS maps),
+    and a GitHub thread only when a mapped login posted in it. The plant's export is
+    shared: its senders are agents, not people."""
+    if user["party"] == "lab" or source.kind == "plant":
+        return True
+    names = _senders(user)
+    if source.kind == "slack":
+        email = (user.get("email") or "").lower()
+        return any(
+            (email and r.email.lower() == email) or r.who.lower() in names for r in session.records
+        )
+    if source.kind == "github":
+        return any(r.who.lower() in names for r in session.records)
+    return session.who.lower() in names
 
 
 def visible_sessions(user: dict[str, str], source: LogSource, sessions: list) -> list:
-    return [s for s in sessions if _sees(user, source, s.who)]
+    return [s for s in sessions if _sees(user, source, s)]
 
 
 def _named_elsewhere(
@@ -527,7 +539,7 @@ def _named_elsewhere(
             sessions = proxylogs.sessions(proxylogs.load_index(settings, other))
         except (OSError, ValueError):
             continue
-        found.extend((other, s) for s in sessions if s.id in named and _sees(user, other, s.who))
+        found.extend((other, s) for s in sessions if s.id in named and _sees(user, other, s))
     return found
 
 
@@ -576,7 +588,7 @@ async def logs_page(request: Request) -> Response:
     records = proxylogs.load_index(settings, source)
     all_sessions = visible_sessions(user, source, proxylogs.sessions(records))
     # An auditor's page says whose sessions it holds, and counts only those.
-    mine = sorted(_senders(user)) if user["party"] != "lab" and source.kind == "proxy" else []
+    mine = sorted(_senders(user)) if user["party"] != "lab" and source.kind != "plant" else []
     whos = sorted({s.who for s in all_sessions})
     show_empty = request.query_params.get("empty") == "1"
     matched = [s for s in all_sessions if not who or s.who == who]

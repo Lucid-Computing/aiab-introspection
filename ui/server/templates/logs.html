@@ -56,7 +56,7 @@
   </form>
   <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><input type="hidden" name="logs" value="{{ source.id }}"><button class="btn btn--ghost" {% if not source.fetches %}disabled{% endif %}>Refresh</button></form>
 </div>
-<p class="logs-status">{{ source.label }} · {{ total_requests }} {% if source.kind == "github" %}posts{% elif chat %}messages{% elif source.kind == "plant" %}records{% else %}requests{% endif %} on disk{% if mine %}, sent as {{ mine | join(", ") }}{% endif %} ·
+<p class="logs-status">{{ source.label }} · {{ total_requests }} {% if source.kind == "github" %}posts{% elif chat %}messages{% elif source.kind == "plant" %}records{% else %}requests{% endif %} on disk{% if mine %}{% if chat %}, the threads you wrote in{% else %}, sent as {{ mine | join(", ") }}{% endif %}{% endif %} ·
     {% if chat or source.kind == "plant" %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
     {% elif not source.configured %}no proxy key configured (<span class="mono">{{ source.key_env }}</span>), nothing is fetched
     {% elif fetch.running %}fetching now

@@ -159,7 +159,12 @@ def test_the_whole_flow_issues_the_ui_cookie_with_the_party_from_the_group(okta,
     response = client.get("/login/callback", params={"code": "good-code", "state": q["state"]})
     assert response.status_code == 303 and response.headers["location"] == "/a/bio/plan"
     user = web.signer.read(response.cookies[web.COOKIE])
-    assert user == {"username": "teddy", "party": "lab", "display_name": "Teddy Lab"}
+    assert user == {
+        "username": "teddy",
+        "party": "lab",
+        "display_name": "Teddy Lab",
+        "email": "teddy@lucid.example",
+    }
     assert response.cookies.get(web.ID_TOKEN_COOKIE)
     # The code went to the token endpoint with PKCE and the client secret, not in the URL.
     [asked] = okta.issued

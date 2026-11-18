@@ -863,3 +863,35 @@ def test_github_fetch_reads_only_public_repositories(tmp_path, monkeypatch):
     monkeypatch.setattr(G, "_gh", lambda path: {"private": True} if path == "repos/o/b" else [])
     with pytest.raises(G.FetchError, match="not public"):
         G.repo_rows(repos[0])
+
+
+def test_an_auditor_sees_only_the_slack_threads_they_wrote_in(tmp_path, monkeypatch):
+    """A Slack thread shows to an auditor when a message in it is theirs: by the email the
+    login carries (WorkOS), or by a name AIAB_LOG_OWNERS maps to them. The lab sees all."""
+    from dataclasses import replace
+
+    from server import app as web
+    from server.auth import Account
+
+    settings = _slack_settings(tmp_path)
+    _slack_export(settings.log_source("slack").path(settings))
+    assert (
+        len(_client(monkeypatch, settings).get("/logs/sessions.json?logs=slack").json()["sessions"])
+        == 3
+    )
+
+    client = _client(monkeypatch, settings)
+    bob = Account("bob", "auditor", "Bob", "unused", email="Bob@x.ai")
+    client.cookies.set(web.COOKIE, web.signer.issue(bob))
+    assert web.signer.read(web.signer.issue(bob))["email"] == "Bob@x.ai"
+    ids = [s["id"] for s in client.get("/logs/sessions.json?logs=slack").json()["sessions"]]
+    assert ids == ["#eng · 1700000000.1"]  # Ada's thread, which Bob answered in
+    page = client.get("/logs?logs=slack").text
+    assert "2 messages on disk, the threads you wrote in" in page and "next day" not in page
+
+    rob = Account("robert", "auditor", "Robert", "unused")  # no email, no matching name
+    client.cookies.set(web.COOKIE, web.signer.issue(rob))
+    assert client.get("/logs/sessions.json?logs=slack").json()["sessions"] == []
+    monkeypatch.setattr(web, "settings", replace(settings, log_owners={"robert": ("Cy",)}))
+    ids = [s["id"] for s in client.get("/logs/sessions.json?logs=slack").json()["sessions"]]
+    assert len(ids) == 1 and "1700000000.1" not in ids[0]  # Cy's day, by the mapped name
