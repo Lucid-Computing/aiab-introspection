@@ -81,6 +81,10 @@ class Settings:
     # The GitHub export (server.githubexport), the same way: AIAB_GITHUB_EXPORT_KEY opens it
     # into logs_dir/github unless AIAB_GITHUB_EXPORT names a folder.
     github_bundle: Path = UI_ROOT / "data" / "github-export.enc"
+    # AIAB_LOG_OWNERS="auditor1=tester+alex-test3,auditor2=caleb": the sender names an
+    # auditor's account owns besides its own username. The lab sees every session of an
+    # agent log; an auditor only the sessions sent as one of their names (server.app).
+    log_owners: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     anthropic_api_key: str | None = field(default=None, repr=False)
     # AIAB_LAB_KEY: the lab's signing key (base64 raw Ed25519, the format of lab.key from
@@ -200,6 +204,7 @@ def load_settings() -> Settings:
         auto_pull=env.get("AIAB_AUTO_PULL", "").lower() in {"1", "true", "yes"},
         logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
         log_sources=log_sources_from_env(env),
+        log_owners=log_owners_from_env(env),
         slack_bundle=Path(
             env.get("AIAB_SLACK_BUNDLE", UI_ROOT / "data" / "slack-export.enc")
         ).resolve(),
@@ -219,6 +224,17 @@ def load_settings() -> Settings:
         oidc_scopes=env.get("OIDC_SCOPES", "openid profile email").strip(),
         admins_file=Path(env.get("UI_ADMINS_FILE", UI_ROOT / "admins.json")).resolve(),
     )
+
+
+def log_owners_from_env(env: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    """AIAB_LOG_OWNERS, ``user=sender+sender,user=sender``, as a map of lower-cased
+    username to the sender names it owns. A malformed entry is skipped."""
+    owners: dict[str, tuple[str, ...]] = {}
+    for entry in env.get("AIAB_LOG_OWNERS", "").split(","):
+        user, _, names = entry.partition("=")
+        if user.strip() and names.strip():
+            owners[user.strip().lower()] = tuple(n.strip() for n in names.split("+") if n.strip())
+    return owners
 
 
 def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
