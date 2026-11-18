@@ -26,9 +26,7 @@ COPY logger/pyproject.toml logger/uv.lock /app/logger/
 WORKDIR /app/logger
 RUN uv sync --locked --no-dev
 COPY logger/logserver /app/logger/logserver
-# /data is written only with the RSI plant as the source (the hub's files, DATA_DIR): a
-# volume mounted there starts out owned by the user below.
-RUN useradd --uid 10001 --create-home logger && mkdir /data && chown logger /data
+RUN useradd --uid 10001 --create-home logger
 USER logger
 ENV PATH="/app/logger/.venv/bin:$PATH" XDG_CACHE_HOME=/tmp/cache XDG_DATA_HOME=/tmp/data
 EXPOSE 8080

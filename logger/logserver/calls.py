@@ -37,14 +37,8 @@ class Call:
     size: int  # bytes of the request body
     message_count: int
     parts: tuple[tuple[str, str], ...]  # (kind, content), in order; never served as metadata
-    run: str = ""  # the plant run it came from (logserver.plant); empty for a proxy's call
     sizes: tuple[tuple[str, int], ...] = ()  # (kind, bytes of content) of each part
-    at: tuple = ()  # where its store finds the text again; the store's own business
-
-    @property
-    def source(self) -> str:
-        """Which kind of store holds it: "plant" or "proxy"."""
-        return "plant" if self.run else "proxy"
+    at: tuple = ()  # where the store finds the text again; the store's own business
 
     def light(self) -> Call:
         """The call as an index keeps it: every part's kind and size, none of its text."""
@@ -84,11 +78,9 @@ class Session:
     calls: tuple[Call, ...]  # oldest first
 
     def metadata(self) -> dict:
-        run = {"run": self.calls[0].run} if self.calls[0].run else {}
         return {
             "id": self.id,
             "who": self.who,
-            **run,
             "started": self.calls[0].ts,
             "ended": self.calls[-1].ts,
             "model": next((c.model for c in self.calls if c.model), None),

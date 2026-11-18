@@ -10,9 +10,6 @@ which box an export is sealed to (``logserver.config``). Also ``GET /v1/status``
 read of the proxy's files, and any file that could not be read), ``POST /v1/sync`` (read
 them again now) and ``GET /healthz`` (no key). Every route answers from the last read, and
 only an export reads a file: the text of the calls it sends.
-With ``PLANT_HUB_URL`` and ``PLANT_HUB_KEY`` set, the RSI plant's hub is a source too
-(``logserver.plant``), next to the proxy's directory or alone; the routes are the same, and a
-box can be kept to some of the sources (``<NAME>_SOURCES``).
 The export is not signed here: the agreement UI signs the sealed records as it does today.
 """
 
@@ -28,8 +25,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from logserver import calls, config
 from logserver.box import Box, BoxError
 from logserver.config import Settings, Target
-from logserver.plant import PlantStore
-from logserver.sources import Sources
 from logserver.store import Store, StoreError
 
 
@@ -43,11 +38,11 @@ class ExportRequest(BaseModel):
 
 def create_app(
     settings: Settings,
-    store: Store | PlantStore | Sources | None = None,
+    store: Store | None = None,
     boxes: dict[str, Box] | None = None,
     background: bool = True,
 ) -> FastAPI:
-    store = store or _store(settings)
+    store = store or Store(settings)
     boxes = boxes or {t.name: Box(t.box_host, t.box_repo) for t in settings.boxes}
 
     @asynccontextmanager
@@ -72,18 +67,9 @@ def create_app(
     def healthz():
         return {"ok": True}
 
-    def seen(target: Target) -> list:
-        """The calls this caller may see: those of the sources its box is given."""
-        return [c for c in store.calls() if c.source in target.sources]
-
     @app.get("/v1/status")
     def status(target: Target = Depends(key)):  # noqa: B008 - FastAPI's way to ask for it
-        return {
-            **store.status,
-            "calls": len(seen(target)),
-            "box": target.box_host,
-            "sources": [s for s in settings.sources if s in target.sources],
-        }
+        return {**store.status, "calls": len(store.calls()), "box": target.box_host}
 
     @app.post("/v1/sync", dependencies=[Depends(key)])
     def sync():
@@ -92,9 +78,9 @@ def create_app(
         except StoreError as error:
             raise HTTPException(503, str(error)) from None
 
-    @app.get("/v1/sessions")
-    def sessions(who: str = "", target: Target = Depends(key)):  # noqa: B008
-        found = calls.sessions(seen(target))
+    @app.get("/v1/sessions", dependencies=[Depends(key)])
+    def sessions(who: str = ""):
+        found = calls.sessions(store.calls())
         whos = sorted({s.who for s in found})
         if who:
             found = [s for s in found if s.who == who]
@@ -102,7 +88,7 @@ def create_app(
 
     @app.post("/v1/export")
     async def export(body: ExportRequest, target: Target = Depends(key)):  # noqa: B008
-        by_id = {s.id: s for s in calls.sessions(seen(target))}
+        by_id = {s.id: s for s in calls.sessions(store.calls())}
         unknown = [i for i in body.sessions if i not in by_id]
         if unknown:
             raise HTTPException(404, {"error": "unknown_sessions", "sessions": unknown})
@@ -122,13 +108,6 @@ def create_app(
         return {**sealed, "sessions": wanted}
 
     return app
-
-
-def _store(settings: Settings) -> Store | PlantStore | Sources:
-    """The store for the sources this server reads: the one, or the two joined."""
-    made = {"proxy": Store, "plant": PlantStore}
-    stores = {name: made[name](settings) for name in settings.sources}
-    return next(iter(stores.values())) if len(stores) == 1 else Sources(stores)
 
 
 def main() -> FastAPI:
