@@ -18,6 +18,8 @@ TEST_PROXY_URL = (
 )
 PROD_PROXY_URL = "https://llm-proxy.lucidcompute.com"
 DEFAULT_LOG_SOURCE = "dev"
+# AIAB_LOG_SOURCES: the sources the pages offer, a comma list of ids; the rest stay unread.
+DEFAULT_LOG_SOURCES = "prod,slack,plant"
 
 
 @dataclass(frozen=True)
@@ -203,7 +205,7 @@ def load_settings() -> Settings:
         push_drafts=env.get("AIAB_PUSH_DRAFTS", "").lower() in {"1", "true", "yes"},
         auto_pull=env.get("AIAB_AUTO_PULL", "").lower() in {"1", "true", "yes"},
         logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
-        log_sources=log_sources_from_env(env),
+        log_sources=log_sources_from_env(env, env.get("AIAB_LOG_SOURCES", DEFAULT_LOG_SOURCES)),
         log_owners=log_owners_from_env(env),
         slack_bundle=Path(
             env.get("AIAB_SLACK_BUNDLE", UI_ROOT / "data" / "slack-export.enc")
@@ -237,8 +239,12 @@ def log_owners_from_env(env: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
     return owners
 
 
-def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
-    """The log sources this server reads, all at once when all are set. Production takes
+def log_sources_from_env(
+    env: Mapping[str, str], offered: str | None = None
+) -> tuple[LogSource, ...]:
+    """The log sources this server reads: all of them, or only the ids ``offered`` names
+    (AIAB_LOG_SOURCES, a comma list; unknown ids are ignored, none known means all), in
+    selector order. Production takes
     its reader key as x-log-key (AIAB_LOG_KEY); the test proxy takes its shared key as
     x-proxy-key (AIAB_PROXY_KEY); each has its own folder under AIAB_LOGS_DIR. Slack Logs
     is the public-channel export, a static copy: read in place from the folder
@@ -253,7 +259,7 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
     github = env.get("AIAB_GITHUB_EXPORT", "").strip()
     github_key = env.get("AIAB_GITHUB_EXPORT_KEY", "").strip() or None
     plant = env.get("AIAB_PLANT_EXPORT", "").strip()
-    return (
+    every = (
         LogSource(
             id="prod",
             label="Prod Agent Logs",
@@ -306,6 +312,10 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
             root=Path(plant).resolve() if plant else None,
         ),
     )
+    if offered is None:
+        return every
+    wanted = {x.strip() for x in offered.split(",") if x.strip()}
+    return tuple(s for s in every if s.id in wanted) or every
 
 
 def _proxy_key(value: str) -> str | None:

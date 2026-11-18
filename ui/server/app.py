@@ -1231,6 +1231,8 @@ async def plan_document(request: Request, aid: str) -> Response:
             and holder["user"] == actor.get("username"),
             "issues": list(view.issues),
             "issue": view.issue,
+            # The log sources this server offers, for the Input filter's choice.
+            "sources": [{"id": s.id, "label": s.label} for s in settings.log_sources],
         }
     )
 

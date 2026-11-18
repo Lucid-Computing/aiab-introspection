@@ -895,3 +895,21 @@ def test_an_auditor_sees_only_the_slack_threads_they_wrote_in(tmp_path, monkeypa
     monkeypatch.setattr(web, "settings", replace(settings, log_owners={"robert": ("Cy",)}))
     ids = [s["id"] for s in client.get("/logs/sessions.json?logs=slack").json()["sessions"]]
     assert len(ids) == 1 and "1700000000.1" not in ids[0]  # Cy's day, by the mapped name
+
+
+def test_the_pages_offer_only_the_log_sources_named(monkeypatch):
+    """AIAB_LOG_SOURCES picks the sources in selector order; Dev Agent Logs and GitHub Logs
+    are off by default; unknown ids are ignored, and none known means every source."""
+    from server.config import load_settings, log_sources_from_env
+
+    env = {"AIAB_PROXY_KEY": "k", "AIAB_LOG_KEY": "p"}
+    ids = lambda sources: [s.id for s in sources]  # noqa: E731
+    assert ids(log_sources_from_env(env)) == ["prod", "dev", "slack", "github", "plant"]
+    assert ids(log_sources_from_env(env, "plant, prod,nope")) == ["prod", "plant"]
+    assert ids(log_sources_from_env(env, "nope")) == ["prod", "dev", "slack", "github", "plant"]
+    monkeypatch.delenv("AIAB_LOG_SOURCES", raising=False)
+    settings = load_settings()
+    assert ids(settings.log_sources) == ["prod", "slack", "plant"]
+    assert settings.log_source(None).id == "prod"  # the default, Dev Agent Logs, is not offered
+    monkeypatch.setenv("AIAB_LOG_SOURCES", "dev")
+    assert ids(load_settings().log_sources) == ["dev"]
