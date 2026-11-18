@@ -185,3 +185,15 @@ def test_without_the_root_the_sign_button_is_browser_only(settings, monkeypatch)
     create(settings)
     html = client_for(monkeypatch, settings).get("/a/auto/plan").text
     assert "quick-sign" in html and "data-certify" not in html
+
+
+def test_the_lab_card_names_who_pressed_sign_and_who_authorized_it(settings, monkeypatch):
+    named = replace(settings, lab_signer_authorized_by="jonathan.ng@lucidcomputing.ai")
+    target = create(named)
+    status, _ = pv.lab_sign(target, AUDITOR)
+    assert status == "ok"
+    lab = pv.load_plan_view(target).signatures["lab"]
+    assert lab["auto"] and lab["pressed_by"] == "caleb"
+    aid = target.plan_dir.name
+    page = client_for(monkeypatch, named).get(f"/a/{aid}/sign").text
+    assert "Signed for the lab by caleb, authorized by jonathan.ng@lucidcomputing.ai" in page
