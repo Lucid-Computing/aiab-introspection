@@ -725,7 +725,7 @@ def _lab_sign_presser(plan_dir: Path, plan_digest: str) -> str | None:
     for entry in load_history(plan_dir):
         detail = str(entry.get("detail", ""))
         if entry.get("where") == "signature: lab" and detail.startswith(marker):
-            return detail[len(marker):].split(";", 1)[0] or None
+            return detail[len(marker) :].split(";", 1)[0] or None
     return None
 
 
