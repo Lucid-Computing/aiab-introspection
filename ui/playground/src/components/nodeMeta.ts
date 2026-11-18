@@ -10,8 +10,8 @@ export const NODE_META: Record<NodeType, { label: string; blurb: string }> = {
     blurb: "Fixes which logs the box may read before anything runs, so the audit cannot reach beyond what both parties agreed to.",
   },
   filter_logs: {
-    label: "Query",
-    blurb: "Keeps only the records that match its rules.",
+    label: "Rules filter",
+    blurb: "Keeps only the records that match its rules. Kept for plans made with it; new plans use Filter.",
   },
   combine_logs: {
     label: "AND / OR",
@@ -49,7 +49,7 @@ export type BlockKind = NodeType | "query" | "and" | "or" | "filter_llm";
 export const BLOCK_META: Record<BlockKind, { label: string; blurb: string }> = {
   ...NODE_META,
   query: {
-    label: "Query format",
+    label: "Query",
     blurb: "Decides what one model question covers: one session or one record, and how many records at most.",
   },
   filter_llm: {

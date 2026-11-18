@@ -73,7 +73,7 @@ export function addQuery(plan: Plan): { plan: Plan; id: string } {
   const node: RunPython = {
     id,
     type: "run_python",
-    title: same ? `Query format ${same + 1}` : "Query format",
+    title: same ? `Query ${same + 1}` : "Query",
     inputs: {},
     config: { code: queryCode(QUERY_DEFAULT), output: { ...QUERY_OUTPUT } },
   };

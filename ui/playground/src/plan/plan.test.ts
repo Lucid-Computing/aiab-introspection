@@ -526,7 +526,7 @@ describe("Query format block (a Run Python node the builder writes)", () => {
     const b = addQuery(a.plan);
     expect([a.id, b.id]).toEqual(["query", "query_2"]);
     const n = b.plan.nodes.find((x) => x.id === b.id)!;
-    expect(n).toMatchObject({ type: "run_python", title: "Query format 2", config: { output: QUERY_OUTPUT } });
+    expect(n).toMatchObject({ type: "run_python", title: "Query 2", config: { output: QUERY_OUTPUT } });
     expect(parseQuery(n)).toEqual({ per: "session", window: 8 });
     expect(queryLine(parseQuery(n)!)).toBe("per session · 8 records per question");
     expect(queryLine({ per: "record", window: 8 })).toBe("per record");

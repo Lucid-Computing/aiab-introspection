@@ -129,11 +129,11 @@ export function lintPlan(plan: Plan): Issue[] {
           if (q) {
             // The pane shows only the two settings, so the code must be what they generate.
             if (n.config.code !== queryCode(q))
-              warn(n.id, at(i, "config", "code"), `${n.id}: the code is not what the Query format settings generate`);
+              warn(n.id, at(i, "config", "code"), `${n.id}: the code is not what the Query settings generate`);
             if (ins.length > 1 || ins.some((k) => (inputType(plan, n, k) ?? "LogRecords") !== "LogRecords"))
-              err(n.id, at(i, "inputs"), `${n.id}: a Query format block reads one LogRecords input`);
+              err(n.id, at(i, "inputs"), `${n.id}: a Query block reads one LogRecords input`);
             if (out.type !== "Items")
-              err(n.id, at(i, "config", "output", "type"), `${n.id}: a Query format block outputs Items`);
+              err(n.id, at(i, "config", "output", "type"), `${n.id}: a Query block outputs Items`);
           }
         }
         if (n.type === "run_llm") {

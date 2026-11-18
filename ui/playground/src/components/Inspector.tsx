@@ -618,8 +618,8 @@ function ClassifierForm({
       {!fromItems && (
         <p className="f-hint">
           Reads records directly: one question per {c.group_by}
-          {c.group_by === "session" ? `, up to ${c.window} records each` : ""}. To change this, put a Query format
-          block before this one.
+          {c.group_by === "session" ? `, up to ${c.window} records each` : ""}. To change this, put a Query block
+          before this one.
         </p>
       )}
       <Field label="Prompt" hint="The question the model answers about each item. Examples go here too.">

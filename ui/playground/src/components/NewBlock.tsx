@@ -14,9 +14,8 @@ export const BLOCK_DRAG = "application/x-aiab-block";
 /** The kinds shown at the top of the rail, in the order a plan usually runs them. */
 export const MAIN: BlockKind[] = [
   "input_logs",
-  "filter_logs",
-  "filter_llm",
   "query",
+  "filter_llm",
   "classifier",
   "and",
   "or",

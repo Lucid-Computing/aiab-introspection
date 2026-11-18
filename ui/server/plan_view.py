@@ -48,7 +48,7 @@ ISSUE_WHERE = {
 }
 NODE_LABELS = {
     "input_logs": "Log Source",
-    "filter_logs": "Query",
+    "filter_logs": "Rules filter",
     "combine_logs": "AND / OR",
     "classifier": "Audit",
     "run_python": "Code",
