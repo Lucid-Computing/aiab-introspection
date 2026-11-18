@@ -97,6 +97,7 @@ class PlantStore:
         self._refresh_lock = threading.Lock()  # one fetch at a time, whoever asks
         self._runs: dict[str, tuple[Call, ...]] = {}  # run -> its calls; () for one held back
         self._held_back: set[str] = set()
+        self._unreadable: dict[str, str] = {}  # run -> why its files could not be read
         self._calls: tuple[Call, ...] = ()
         # Replaced whole, never changed in place, so a request reads it without the lock.
         self.status: dict = {"at": None, "error": None, "result": None, "problems": []}
@@ -172,7 +173,14 @@ class PlantStore:
                 else:
                     continue
             if changed or run not in self._runs:
-                found = _run_calls(run, raw)
+                try:
+                    found = _run_calls(run, raw)
+                except Exception as error:  # one run's odd files must not hide the others
+                    # What an earlier read made of it stays; it is read again once it changes.
+                    self._unreadable[run] = f"{type(error).__name__}: {error}"
+                    self._runs.setdefault(run, ())
+                    continue
+                self._unreadable.pop(run, None)
                 self._held_back.discard(run)
                 if found is None:
                     self._held_back.add(run)
@@ -181,6 +189,10 @@ class PlantStore:
                 new += 1
         for run in sorted(self._held_back & set(runs)):
             problems.append({"file": run, "problem": "held back: its records hold a provider key"})
+        for run in sorted(self._unreadable.keys() & set(runs)):
+            problems.append(
+                {"file": run, "problem": f"cannot be read, skipped: {self._unreadable[run]}"}
+            )
         # A run the hub no longer lists is kept: the hub only adds.
         self._calls = tuple(
             sorted((c for found in self._runs.values() for c in found), key=lambda c: c.time)
@@ -278,15 +290,25 @@ class PlantStore:
         now = [entry["size"], entry.get("changed_ns"), entry.get("sha256")]
         if target.is_file() and seen.get(entry["path"]) == now:
             return False
-        data, path = b"", f"/api/runs/{run}/files/{urllib.parse.quote(entry['path'])}"
-        while len(data) < entry["size"]:
-            status, body, _ = self._get(f"{path}?offset={len(data)}")
-            if status != 200 or not body:
-                break
-            data += body
-        if len(data) != entry["size"]:
-            return False  # not all of it came: the copy here stays, the next fetch asks again
-        _write(target, data)
+        path = f"/api/runs/{run}/files/{urllib.parse.quote(entry['path'])}"
+        # Written to the disk as it comes, never held whole: the hub decides which files
+        # are sent this way, and a file may be gigabytes.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        part = target.with_name(target.name + ".part")
+        got = 0
+        try:
+            with part.open("wb") as out:
+                while got < entry["size"]:
+                    status, body, _ = self._get(f"{path}?offset={got}")
+                    if status != 200 or not body:
+                        break
+                    out.write(body)
+                    got += len(body)
+            if got != entry["size"]:
+                return False  # not all of it came: the copy here stays, the next fetch asks again
+            os.replace(part, target)
+        finally:
+            part.unlink(missing_ok=True)
         seen[entry["path"]] = now
         return True
 

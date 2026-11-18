@@ -1,5 +1,7 @@
 import hashlib
+import json
 import os
+import tracemalloc
 
 import pytest
 from conftest import ANSWER, API_KEY, LIVE, SECRET, ProxyDir, entry, lines
@@ -476,3 +478,39 @@ def test_several_boxes_each_with_its_own_key():
         config.load({**env, "BOXES": "dev,pr-od"})
     with pytest.raises(config.ConfigError, match="not both"):
         config.load({**env, "API_KEY": "a"})
+
+
+def test_an_export_never_holds_the_chosen_lines_all_at_once(tmp_path):
+    """Each line resends the conversation so far, so a session's lines are far larger than
+    its text: they are read one at a time, and only the parts a run sends are kept."""
+    history = [{"role": "user", "content": "x" * 200_000}]
+    entries = []
+    for i in range(30):
+        request = {"model": "m", "messages": [*history, {"role": "user", "content": f"q{i}"}]}
+        reply = {"content": [{"type": "text", "text": f"a{i}"}], "stop_reason": "end_turn"}
+        entries.append(
+            {
+                "id": f"c{i}",
+                "who": "alice",
+                "time": 1_800_000_000.0 + i,
+                "request_headers": {"x-claude-code-session-id": "s-long"},
+                "request_raw": {"text": json.dumps(request)},
+                "response_raw": {"text": json.dumps(reply)},
+            }
+        )
+    proxy = ProxyDir(tmp_path / "long")
+    proxy.seal(entries[:15])
+    proxy.append(entries[15:])
+    store = Store(Settings(proxy_dir=proxy.root, boxes=(), sync_seconds=300))
+    store.refresh()
+    held = sum(c.at[2] for c in store.calls())  # the bytes of the 30 lines: about 6 MB
+    tracemalloc.start()
+    try:
+        read = store.with_text(list(store.calls()))
+        _, most = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert [c.parts for c in read] == [
+        (("request", f"q{i}"), ("response", f"a{i}")) for i in range(30)
+    ]
+    assert held > 6_000_000 and most < held / 4

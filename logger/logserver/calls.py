@@ -22,8 +22,6 @@ SESSION_GAP_SECONDS = 30 * 60  # calls from one person this close together form 
 REMINDER = re.compile(r"(<system-reminder>.*?</system-reminder>)", re.DOTALL)
 
 
-# What one record may carry. Tool results (file contents, command output) and tool inputs
-# can be enormous, and a plan allows about 100 KB per run, so they are cut, head first.
 @dataclass(frozen=True)
 class Call:
     """One call without its conversation: the metadata, and the parts kept for the box."""

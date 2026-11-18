@@ -545,3 +545,50 @@ def test_the_two_hub_settings_come_together_or_not_at_all():
             config.load({**base, **env})
     with pytest.raises(config.ConfigError, match="not an http"):
         config.load({**base, "PLANT_HUB_URL": "hub.example", "PLANT_HUB_KEY": "token"})
+
+
+def test_a_run_whose_files_cannot_be_read_is_named_and_hides_no_other_run(hub, settings):
+    odd = {**REPORT, "jobs": [{"state": "RUNNING"}]}  # a job with no id
+    hub.runs = {"aaa~odd": {"report": odd, "files": _files()}, **hub.runs}
+    store = PlantStore(settings)
+    result = store.refresh()
+    assert result["calls"] == 4 and {c.run for c in store.calls()} == {RUN}
+    named = [p for p in store.status["problems"] if p["file"] == "aaa~odd"]
+    assert len(named) == 1 and "cannot be read, skipped: KeyError" in named[0]["problem"]
+
+    hub.asked.clear()
+    store.refresh()  # it is not read again until it changes, and it keeps being named
+    assert [p["file"] for p in store.status["problems"]] == ["aaa~odd"]
+    assert not any("/files/" in path for path in hub.asked)
+
+    hub.runs["aaa~odd"]["report"] = REPORT  # the hub's report is put right
+    assert store.refresh()["calls"] == 8
+    assert store.status["problems"] == []
+
+
+def test_a_file_sent_whole_is_written_as_it_comes_and_kept_only_when_all_of_it_came(
+    hub, settings, monkeypatch
+):
+    store = PlantStore(settings)
+    store.refresh()
+    raw = settings.data_dir / "hub" / RUN
+    assert (raw / "score.json").read_bytes() == SCORE  # several requests of PIECE bytes
+    assert not list(raw.rglob("*.part"))
+
+    hub.runs[RUN]["files"]["score.json"] = SCORE + b" " * 300
+    get, asked = store._get, []
+
+    def cut_short(path, headers=None):
+        if "score.json?offset=" in path:
+            asked.append(path)
+            if len(asked) > 2:
+                return 200, b"", {}
+        return get(path, headers)
+
+    monkeypatch.setattr(store, "_get", cut_short)
+    store.refresh()
+    assert len(asked) == 3 and (raw / "score.json").read_bytes() == SCORE  # the copy stays
+    assert not list(raw.rglob("*.part"))
+    monkeypatch.undo()
+    store.refresh()
+    assert (raw / "score.json").read_bytes() == SCORE + b" " * 300

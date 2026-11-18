@@ -35,6 +35,7 @@ import os
 import re
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -313,24 +314,26 @@ class Store:
         by_first: dict[int, set[tuple]] = {}
         for call in wanted:
             by_first.setdefault(call.at[0], set()).add(call.at)
-        lines: dict[tuple, bytes] = {}
+        found: dict[tuple, Call | None] = {}
         try:
             listing = {c.first: c for c in self._list()}
             for first, ats in by_first.items():
-                lines.update(self._lines(listing.get(first), first, sorted(ats)))
+                found.update(self._lines(listing.get(first), first, sorted(ats)))
         except (OSError, zstandard.ZstdError) as error:
             raise StoreError(f"a call's text cannot be read again: {error}") from None
         out = []
         for call in wanted:
-            read = _call(lines[call.at])
+            read = found[call.at]
             if read is None or read.id != call.id:
                 raise StoreError("the proxy's log changed under a call; read again and retry")
             out.append(replace(call, parts=read.parts, sizes=read.sizes))
         return out
 
-    def _lines(self, c: Container | None, first: int, ats: list[tuple]) -> dict[tuple, bytes]:
-        """The lines at ``ats`` of the file whose first seq is ``first``: a sealed or pending
-        one, or the live file while it is still the one the index read."""
+    def _lines(self, c: Container | None, first: int, ats: list[tuple]) -> dict[tuple, Call | None]:
+        """The calls at ``ats`` of the file whose first seq is ``first``: a sealed or pending
+        one, or the live file while it is still the one the index read. Each line is read
+        as a call and dropped before the next is read: a line holds the whole conversation
+        so far, megabytes of it, and an export asks for hundreds of them."""
         if c is None:
             f, compressed = (self.dir / LIVE).open("rb"), False
             stat = os.fstat(f.fileno())
@@ -347,11 +350,11 @@ class Store:
                 f, compressed = path.with_name(path.name + ".zst").open("rb"), True
         with f:
             if not compressed:
-                return _slices(f, ats, seek=True)
+                return {at: _call(line) for at, line in _slices(f, ats, seek=True)}
             with _segment_lock:
                 decompressor = zstandard.ZstdDecompressor(max_window_size=1 << WINDOW_LOG)
                 reader = io.BufferedReader(decompressor.stream_reader(f, closefd=False))
-                return _slices(reader, ats, seek=False)
+                return {at: _call(line) for at, line in _slices(reader, ats, seek=False)}
 
 
 def _same_file(handle, path: Path) -> bool:
@@ -422,10 +425,10 @@ def _calls(lines, first: int) -> tuple[list[tuple[int, Call]], int, int]:
     return found, n, unreadable
 
 
-def _slices(reader, ats: list[tuple], seek: bool) -> dict[tuple, bytes]:
-    """The bytes at each (first, offset, length), in the order of the offsets. A compressed
-    file cannot seek, so what lies between two lines is read and dropped."""
-    out: dict[tuple, bytes] = {}
+def _slices(reader, ats: list[tuple], seek: bool) -> Iterator[tuple[tuple, bytes]]:
+    """(at, the bytes there) for each (first, offset, length), in the order of the offsets,
+    one at a time. A compressed file cannot seek, so what lies between two lines is read
+    and dropped."""
     position = 0
     for at in ats:
         _, offset, length = at
@@ -441,8 +444,7 @@ def _slices(reader, ats: list[tuple], seek: bool) -> dict[tuple, bytes]:
         if len(line) != length:
             raise StoreError("a file is shorter than when it was read; read again")
         position = offset + length
-        out[at] = line
-    return out
+        yield at, line
 
 
 def _call(line: bytes) -> Call | None:
