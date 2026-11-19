@@ -1,12 +1,22 @@
 /**
  * Ticking sessions in the Log Source's picker, in three layers: all of a log source, the
- * sessions of one page, a single session. The plan names sessions as a list, where none
- * named means every session of the log source ("implicit"); these functions turn a tick
- * into the next list. They hold no state, so the picker and its tests share them.
+ * sessions of one page, a single session. The plan names sessions as a list and a run sends
+ * the ones named: none named, none sent. A run can send only so much (the limit, in bytes),
+ * so a tick that would pass it is not taken. These functions turn a tick into the next
+ * list. They hold no state, so the picker and its tests share them.
  */
 
 /** Sessions shown per page of the picker. */
 export const PAGE = 50;
+
+/** How large a session is, in bytes; 0 when it is not known. */
+export type SizeOf = (id: string) => number;
+
+/** The next list, and how many sessions were left unticked because they did not fit. */
+export interface Ticked {
+  value: string[];
+  left: number;
+}
 
 /** How many pages `count` sessions take; at least one. */
 export function pageCount(count: number): number {
@@ -19,27 +29,56 @@ export function pageOf<T>(rows: T[], page: number): T[] {
   return rows.slice(at * PAGE, (at + 1) * PAGE);
 }
 
-/** Whether every session of the page is ticked. An empty page is not. */
-export function pageTicked(value: string[], pageIds: string[], implicit: boolean): boolean {
-  if (pageIds.length === 0) return false;
-  if (implicit) return true;
-  const chosen = new Set(value);
-  return pageIds.every((id) => chosen.has(id));
+/** The bytes a run sends for the sessions named. */
+export function total(value: string[], size: SizeOf): number {
+  return value.reduce((sum, id) => sum + size(id), 0);
 }
 
-/**
- * Tick or untick a whole page. `ids` are every session of the log source, `pageIds` the
- * ones on the page. Unticking a page while every session is read names all the others.
- */
-export function togglePage(value: string[], ids: string[], pageIds: string[], implicit: boolean): string[] {
-  const page = new Set(pageIds);
-  if (pageTicked(value, pageIds, implicit)) return (implicit ? ids : value).filter((id) => !page.has(id));
+/** Whether one more session fits under the limit; no limit, it always does. */
+export function fits(value: string[], id: string, size: SizeOf, limit: number | null): boolean {
+  return limit === null || total(value, size) + size(id) <= limit;
+}
+
+/** Whether every one of `ids` is ticked. An empty list is not. */
+export function allTicked(value: string[], ids: string[]): boolean {
+  if (ids.length === 0) return false;
   const chosen = new Set(value);
-  return [...value, ...pageIds.filter((id) => !chosen.has(id))];
+  return ids.every((id) => chosen.has(id));
+}
+
+/** Tick `ids` in order, each only while the total stays under the limit. */
+export function tick(value: string[], ids: string[], size: SizeOf, limit: number | null): Ticked {
+  const chosen = new Set(value);
+  const next = [...value];
+  let sum = total(value, size);
+  let left = 0;
+  for (const id of ids) {
+    if (chosen.has(id)) continue;
+    if (limit !== null && sum + size(id) > limit) {
+      left += 1;
+      continue;
+    }
+    next.push(id);
+    sum += size(id);
+  }
+  return { value: next, left };
+}
+
+/** Tick or untick a group (a page, or all of a log source): untick when all of it is ticked. */
+export function toggleMany(value: string[], ids: string[], size: SizeOf, limit: number | null): Ticked {
+  if (!allTicked(value, ids)) return tick(value, ids, size, limit);
+  const group = new Set(ids);
+  return { value: value.filter((id) => !group.has(id)), left: 0 };
 }
 
 /** Tick or untick one session. */
-export function toggleOne(value: string[], ids: string[], id: string, implicit: boolean): string[] {
-  if (implicit) return ids.filter((x) => x !== id);
-  return value.includes(id) ? value.filter((x) => x !== id) : [...value, id];
+export function toggleOne(value: string[], id: string, size: SizeOf, limit: number | null): Ticked {
+  if (value.includes(id)) return { value: value.filter((x) => x !== id), left: 0 };
+  return tick(value, [id], size, limit);
+}
+
+/** "1.4 MB", "320 KB": a size as the picker shows it. */
+export function sizeText(bytes: number): string {
+  if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`;
+  return `${Math.max(bytes ? 1 : 0, Math.round(bytes / 1024))} KB`;
 }

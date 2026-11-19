@@ -66,7 +66,7 @@ export const InputLogsNode = z.strictObject({
         kinds: z.array(RecordKind).default([...RECORD_KINDS]),
         /** Empty keeps every record; otherwise a record must contain one keyword. */
         keywords: z.array(z.string()).default([]),
-        /** Absent keeps every session of the source; otherwise only these sessions are read. */
+        /** The sessions a run sends and the plan reads. Absent: none is sent, so no run starts. */
         sessions: z.array(z.string().min(1).max(256)).optional(),
       })
       .default({ kinds: [...RECORD_KINDS], keywords: [] }),

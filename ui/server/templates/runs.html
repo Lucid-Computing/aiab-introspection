@@ -22,9 +22,9 @@
 
   {% if show_bar %}
   <div class="runs-bar">
-    <span>{{ fits | length }} session{{ "s" if fits | length != 1 }} · {% if totals.on_hub %}{{ totals.kb }} KB on the hub, fetched when the run starts,{% else %}{{ totals.records }} records · {{ totals.kb }} KB{% endif %} from {{ (source_labels or [log_source.label]) | join(", ") }}{% if source_fixed %}, as the agreement's Log Source says{% elif scope %}, within the agreement's Log Source{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the Log Source{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a>{% if too_large %}<br><span class="selected-label bad">{{ too_large }}</span>{% endif %}</span>
-    {% if pre.ok and fits and not too_large %}<button class="btn btn--primary" form="run-form">Start the run</button>
-    {% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% elif too_large %}too much to send{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}
+    <span>{% if none_named %}<span class="selected-label bad">The agreement's Log Source names no session.</span> A run sends the sessions ticked there.{% else %}{{ fits | length }} session{{ "s" if fits | length != 1 }} · {% if totals.on_hub %}{{ totals.kb }} KB on the hub, fetched when the run starts,{% else %}{{ totals.records }} records · {{ totals.kb }} KB{% endif %} from {{ (source_labels or [log_source.label]) | join(", ") }}{% if source_fixed %}, as the agreement's Log Source says{% elif scope %}, within the agreement's Log Source{% endif %}.{% if outside or empty %} <span class="text-muted">Left out: {% if outside %}{{ outside | length }} outside the Log Source{% endif %}{% if outside and empty %}, {% endif %}{% if empty %}{{ empty | length }} with no records{% endif %}.</span>{% endif %} <a class="link" href="/logs?logs={{ log_source.id }}">See them on Logs</a>{% endif %}</span>
+    {% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>
+    {% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% elif none_named %}the agreement's Log Source names no session{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}
   </div>
   {% endif %}
 

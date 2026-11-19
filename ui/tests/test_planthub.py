@@ -578,6 +578,7 @@ def test_the_pages_list_hub_runs_and_a_run_sends_what_it_fetched(tmp_path, hub, 
     monkeypatch.setattr(ui.pv, "for_agreement", lambda settings, name: Target)
     monkeypatch.setattr(ui.runs, "start_run", fake_start)
     monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
+    monkeypatch.setattr(ui.runs, "plan_sessions", lambda folder: {f"{SESSION}-transcript"})
     response = client.post(
         "/runs/start",
         data={"agreement": "bio", "logs": "plant", "session": f"{SESSION}-transcript"},

@@ -107,8 +107,8 @@ def plan_source(folder: Path) -> str | None:
 
 
 def plan_sessions(folder: Path) -> set[str]:
-    """The sessions the agreement's Log Source names (``filter.sessions``); empty when it
-    names none, which means every session of the source."""
+    """The sessions the agreement's Log Source names (``filter.sessions``), the ones a run
+    sends; empty when it names none, and then no run starts."""
     plan = _plan(folder)
     try:
         source = next(n for n in plan["nodes"] if n["type"] == "input_logs")

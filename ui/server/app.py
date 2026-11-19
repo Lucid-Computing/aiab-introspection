@@ -673,14 +673,16 @@ def _log_source(request: Request, form: Any = None) -> LogSource:
 
 @app.get("/logs/sessions.json")
 async def logs_sessions(request: Request) -> Response:
-    """The sessions of one log source, by metadata only, for the Log Source's picker."""
+    """The sessions of one log source, by metadata only, for the Log Source's picker: each
+    with what a run sends for it, in bytes, and the most a run can send (``limit``)."""
     if user_of(request) is None:
         return JSONResponse({"error": "sign in"}, status_code=401)
     source = _log_source(request)
     out = []
     for s in proxylogs.sessions(proxylogs.load_index(settings, source)):
         # A part of a plant's run on its hub has no count: its records are fetched by a run.
-        records = None if proxylogs.on_hub(s.records) else len(proxylogs.box_records(s.records))
+        built = [] if proxylogs.on_hub(s.records) else proxylogs.box_records(s.records)
+        records = None if proxylogs.on_hub(s.records) else len(built)
         if records is None or records:
             out.append(
                 {
@@ -689,9 +691,38 @@ async def logs_sessions(request: Request) -> Response:
                     "who": s.who,
                     "started": s.started_short,
                     "records": records,
+                    "bytes": proxylogs.sent_bytes(s.records, built),
                 }
             )
-    return JSONResponse({"source": source.id, "sessions": out})
+    return JSONResponse({"source": source.id, "sessions": out, "limit": _most_sent()})
+
+
+def _named_bytes(named: set[str]) -> int:
+    """What a run sends for the sessions an agreement names, in bytes, over every log
+    source that can be read here. A session found nowhere counts for nothing."""
+    size = 0
+    for source in settings.log_sources:
+        if not named or not source.configured:
+            continue
+        try:
+            sessions = proxylogs.sessions(proxylogs.load_index(settings, source))
+        except (OSError, ValueError):
+            continue
+        for s in sessions:
+            if s.id in named:
+                built = [] if proxylogs.on_hub(s.records) else proxylogs.box_records(s.records)
+                size += proxylogs.sent_bytes(s.records, built)
+                named = named - {s.id}
+    return size
+
+
+def _plan_sessions(plan: Any) -> set[str]:
+    """The sessions a plan from the builder names in its Log Source."""
+    try:
+        node = next(n for n in plan["nodes"] if n["type"] == "input_logs")
+        return {str(x) for x in node["config"]["filter"].get("sessions") or ()}
+    except (TypeError, KeyError, StopIteration, AttributeError):
+        return set()
 
 
 @app.get("/logs")
@@ -1095,6 +1126,9 @@ def _past_runs(qp: Any, chosen: str, logs: str) -> dict:
     }
 
 
+NONE_NAMED = "The agreement's Log Source names no session: tick the ones a run sends."
+
+
 def _most_sent() -> int | None:
     """The most a run may send, in bytes; None when no limit is set."""
     return int(settings.max_send_mb * (1 << 20)) or None
@@ -1127,7 +1161,7 @@ async def runs_index(request: Request) -> Response:
         recs = proxylogs.box_records(s.records)
         who = None if on_hub else s.who
         notes = runs.scope_notes(folder, who, min(times), max(times)) if folder else []
-        if named and s.id not in named:
+        if s.id not in named:
             notes = [*notes, "not one of the sessions the agreement names"]
         item = {
             "session": s,
@@ -1155,8 +1189,6 @@ async def runs_index(request: Request) -> Response:
         # Sessions whose records a run fetches from a plant's hub: counted only then.
         "on_hub": sum(1 for i in fits if proxylogs.on_hub(i["session"].records)),
     }
-    most = _most_sent()
-    too_large = proxylogs.too_large(most) if most and totals["kb"] * 1024 > most else ""
     return render(
         request,
         "runs.html",
@@ -1172,7 +1204,7 @@ async def runs_index(request: Request) -> Response:
         empty=empty,
         all_count=len(all_sessions),
         totals=totals,
-        too_large=too_large,
+        none_named=folder is not None and not named,
         scope=runs.plan_scope(folder) if folder else None,
         past=_past_runs(qp, chosen, source.id),
         show_bar=any(c["id"] == chosen for c in choices),
@@ -1209,6 +1241,8 @@ async def runs_start(request: Request) -> Response:
         elsewhere = _named_elsewhere(source, named)
         picks = [(source, s) for s in picked] + elsewhere
         picked += [s for _, s in elsewhere]
+        if not runs.plan_sessions(target.plan_dir):
+            return back(here, err=NONE_NAMED)
         if not picked:
             return back(here, err="Pick at least one recorded session.")
         # What is on a hub is refused by its size there, before any of it is fetched; the
@@ -1423,6 +1457,10 @@ async def plan_save(request: Request, aid: str) -> Response:
             )
         if stale := _stale(view, str(payload.get("expect") or "")):
             return JSONResponse({"error": stale}, status_code=409)
+        most = _most_sent()
+        named = _plan_sessions(payload["plan"])
+        if most and await asyncio.to_thread(_named_bytes, named) > most:
+            return JSONResponse({"error": proxylogs.too_large(most)}, status_code=422)
         digest, issues = pv.save_plan(target, payload["plan"], actor)
         if digest is None:
             return JSONResponse(

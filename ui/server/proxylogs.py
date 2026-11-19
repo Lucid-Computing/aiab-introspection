@@ -746,16 +746,20 @@ def sendable(records: list[Record]) -> bool:
     return on_hub(records) or bool(box_records(records))
 
 
-def sent_kb(records: list[Record], built: list[dict]) -> float:
-    """How much a run sends for these records, in KB. A log server's calls say it
+def sent_bytes(records: list[Record], built: list[dict]) -> int:
+    """How much a run sends for these records, in bytes. A log server's calls say it
     themselves; a part of a plant's run is as large as the hub holds it, which is more
     than is sent; anything else is measured on the records built here."""
     if on_hub(records):
-        return round(sum(r.size or 0 for r in records) / 1024, 1)
+        return sum(r.size or 0 for r in records)
     known = [r.content_bytes for r in records if isinstance(r, Request)]
     if known and all(k is not None for k in known):
-        return round(sum(known) / 1024, 1)
-    return round(len(json.dumps(built).encode("utf-8")) / 1024, 1)
+        return sum(known)
+    return len(json.dumps(built).encode("utf-8"))
+
+
+def sent_kb(records: list[Record], built: list[dict]) -> float:
+    return round(sent_bytes(records, built) / 1024, 1)
 
 
 def run_records(picks: list[tuple[LogSource, Session]]) -> list[dict]:
@@ -810,8 +814,8 @@ class _Capped:
 
 def too_large(most: int) -> str:
     return (
-        f"The chosen sessions are over the {most / (1 << 20):g} MB a run can send. "
-        "Name fewer sessions in the agreement's Log Source."
+        f"The sessions named are over the {most / (1 << 20):g} MB a run can send. "
+        "Tick fewer in the agreement's Log Source."
     )
 
 
