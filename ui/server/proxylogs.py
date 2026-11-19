@@ -795,9 +795,32 @@ def run_records(picks: list[tuple[LogSource, Session]]) -> list[dict]:
     return sealed + built
 
 
-def write_run_records(picks: list[tuple[LogSource, Session]], target: Path) -> int:
+class _Capped:
+    """A text file that refuses to grow past ``most`` bytes: a run sends no more."""
+
+    def __init__(self, out, most: int | None) -> None:
+        self.out, self.most, self.size = out, most, 0
+
+    def write(self, text: str) -> int:
+        self.size += len(text.encode("utf-8"))
+        if self.most and self.size > self.most:
+            raise ProxyError(too_large(self.most))
+        return self.out.write(text)
+
+
+def too_large(most: int) -> str:
+    return (
+        f"The chosen sessions are over the {most / (1 << 20):g} MB a run can send. "
+        "Name fewer sessions in the agreement's Log Source."
+    )
+
+
+def write_run_records(
+    picks: list[tuple[LogSource, Session]], target: Path, most: int | None = None
+) -> int:
     """Write what a run sends for the chosen sessions to ``target``, one record a line, and
-    say how many. The parts of a plant's runs are fetched from its hub and written as they
+    say how many. Past ``most`` bytes it stops with a ProxyError and nothing is kept. The
+    parts of a plant's runs are fetched from its hub and written as they
     arrive, each part in a batch of its own past the others' (the box refuses two records
     at one position), so they are never held whole. Everything else is ``run_records``.
     ``target`` is in place only when all of it is written."""
@@ -816,7 +839,8 @@ def write_run_records(picks: list[tuple[LogSource, Session]], target: Path) -> i
     count = len(records)
     partial = target.with_name(target.name + ".part")
     try:
-        with partial.open("w", encoding="utf-8") as out:
+        with partial.open("w", encoding="utf-8") as file:
+            out = _Capped(file, most)
             for record in records:
                 out.write(json.dumps(record) + "\n")
             del records

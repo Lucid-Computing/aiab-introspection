@@ -138,6 +138,19 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
     assert [r["content"] for r in started["records"]] == ["dev prompt"]
     assert "from Dev Agent Logs" in started["label"]
 
+    # Over the most a run may send: the page says so with the button off, a start is refused
+    # and nothing of it is left in the runs folder.
+    small = replace(ui.settings, max_send_mb=0.00001)  # about 10 bytes
+    monkeypatch.setattr(ui, "settings", small)
+    page = client.get("/runs?agreement=bio&logs=prod").text
+    assert "a run can send" in page and 'title="too much to send"' in page
+    started.clear()
+    response = client.post(
+        "/runs/start", data={"agreement": "bio", "logs": "prod", "session": "shared"}
+    )
+    assert "run%20can%20send" in response.headers["location"].replace("+", "%20")
+    assert not started and not list(small.runs_dir.glob(".incoming-*"))
+
 
 def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_path, monkeypatch):
     export = tmp_path / "plant" / "run-1" / "records"

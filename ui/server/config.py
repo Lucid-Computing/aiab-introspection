@@ -131,6 +131,10 @@ class Settings:
     feedback_email_to: str | None = field(default=None, repr=False)
     feedback_email_from: str | None = None
     feedback_note_delay: float = 300.0
+    # The most a run may send, in MB of records (AIAB_MAX_SEND_MB). The export and submit
+    # steps hold every record of a run at once, about 4 MB of memory for each MB sent
+    # (measured: 245 MB at 50 MB, 354 MB at 100 MB), and so does the box. 0: no limit.
+    max_send_mb: float = 50.0
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_user: str | None = None
@@ -244,6 +248,7 @@ def load_settings() -> Settings:
         feedback_email_to=env.get("AIAB_FEEDBACK_EMAIL_TO", "").strip() or None,
         feedback_email_from=env.get("AIAB_FEEDBACK_EMAIL_FROM", "").strip() or None,
         feedback_note_delay=float(env.get("AIAB_FEEDBACK_NOTE_DELAY", "300") or 300),
+        max_send_mb=float(env.get("AIAB_MAX_SEND_MB", "50") or 0),
         smtp_host=env.get("AIAB_SMTP_HOST", "").strip() or None,
         smtp_port=int(env.get("AIAB_SMTP_PORT", "587") or 587),
         smtp_user=env.get("AIAB_SMTP_USER", "").strip() or None,

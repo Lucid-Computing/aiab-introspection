@@ -587,3 +587,14 @@ def test_the_pages_list_hub_runs_and_a_run_sends_what_it_fetched(tmp_path, hub, 
     assert "4 records" in started["label"]
     assert started["sent"]["sessions"][0]["records"] == 4
     assert not list((tmp_path / "runs").iterdir())  # no file of the run is left behind
+
+    # Larger on the hub than a run may send: refused by its size there, nothing fetched.
+    monkeypatch.setattr(ui, "settings", replace(settings, max_send_mb=0.00001))
+    hub.asked.clear()
+    started.clear()
+    response = client.post(
+        "/runs/start",
+        data={"agreement": "bio", "logs": "plant", "session": f"{SESSION}-transcript"},
+    )
+    assert "run%20can%20send" in response.headers["location"].replace("+", "%20")
+    assert not started and not hub.bytes_asked()

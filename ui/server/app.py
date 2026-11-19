@@ -1095,6 +1095,11 @@ def _past_runs(qp: Any, chosen: str, logs: str) -> dict:
     }
 
 
+def _most_sent() -> int | None:
+    """The most a run may send, in bytes; None when no limit is set."""
+    return int(settings.max_send_mb * (1 << 20)) or None
+
+
 @app.get("/runs")
 async def runs_index(request: Request) -> Response:
     if user_of(request) is None:
@@ -1150,6 +1155,8 @@ async def runs_index(request: Request) -> Response:
         # Sessions whose records a run fetches from a plant's hub: counted only then.
         "on_hub": sum(1 for i in fits if proxylogs.on_hub(i["session"].records)),
     }
+    most = _most_sent()
+    too_large = proxylogs.too_large(most) if most and totals["kb"] * 1024 > most else ""
     return render(
         request,
         "runs.html",
@@ -1165,6 +1172,7 @@ async def runs_index(request: Request) -> Response:
         empty=empty,
         all_count=len(all_sessions),
         totals=totals,
+        too_large=too_large,
         scope=runs.plan_scope(folder) if folder else None,
         past=_past_runs(qp, chosen, source.id),
         show_bar=any(c["id"] == chosen for c in choices),
@@ -1203,6 +1211,12 @@ async def runs_start(request: Request) -> Response:
         picked += [s for _, s in elsewhere]
         if not picked:
             return back(here, err="Pick at least one recorded session.")
+        # What is on a hub is refused by its size there, before any of it is fetched; the
+        # rest is measured as it is written, and the writing stops at the limit.
+        most = _most_sent()
+        on_hub = sum(r.size or 0 for s in picked if proxylogs.on_hub(s.records) for r in s.records)
+        if most and on_hub > most:
+            return back(here, err=proxylogs.too_large(most))
         # A log server's sessions arrive sealed to the box, the parts of a plant's runs are
         # fetched from its hub, and the rest are built here: all written to one file, a
         # record at a time, which becomes the run's. Off the event loop: a long run on the
@@ -1210,7 +1224,7 @@ async def runs_start(request: Request) -> Response:
         settings.runs_dir.mkdir(parents=True, exist_ok=True)
         incoming = settings.runs_dir / f".incoming-{secrets.token_hex(6)}.jsonl"
         try:
-            count = await asyncio.to_thread(proxylogs.write_run_records, picks, incoming)
+            count = await asyncio.to_thread(proxylogs.write_run_records, picks, incoming, most)
             if not count:
                 return back(here, err="The chosen sessions hold no text to audit.")
             label = (
