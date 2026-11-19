@@ -14,6 +14,8 @@ import sys
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
+from logserver import codex
+
 SESSION_GAP_SECONDS = 30 * 60  # calls from one person this close together form one session
 REMINDER = re.compile(r"(<system-reminder>.*?</system-reminder>)", re.DOTALL)
 
@@ -105,6 +107,37 @@ Parts = tuple[tuple[str, str], ...]  # (kind, content), in order: what a run sen
 
 def parse(entry: dict) -> tuple[Call, Parts]:
     """The call, and its parts. The index keeps the call and drops the parts."""
+    if codex.is_codex(entry):  # Codex's calls have their own reader
+        read = codex.read(entry)
+        session, model, stop = read["session"], read["model"], read["stop_reason"]
+        count, parts = read["message_count"], tuple(read["parts"])
+    else:
+        session, model, stop, count, parts = _claude(entry)
+    raw_req = entry.get("request_raw") or {}
+    size = (
+        len(raw_req.get("text") or raw_req.get("base64") or "") if isinstance(raw_req, dict) else 0
+    )
+    # Interned: thousands of calls share one copy of each sender, model, session and kind.
+    call = Call(
+        id=str(entry.get("id", "")),
+        time=float(entry.get("time", 0)),
+        who=sys.intern(str(entry.get("who", "?"))),
+        status=entry.get("status"),
+        duration_s=entry.get("duration_s"),
+        session_id=sys.intern(session),
+        model=sys.intern(model) if isinstance(model, str) else None,
+        stop_reason=sys.intern(stop) if isinstance(stop, str) else stop,
+        size=size,
+        message_count=count,
+        kinds=tuple(sys.intern(kind) for kind, _ in parts),
+        content_bytes=sum(len(content.encode()) for _, content in parts),
+    )
+    return call, parts
+
+
+def _claude(entry: dict) -> tuple[str, str | None, str | None, int, Parts]:
+    """A Claude Code call (Anthropic's Messages API): session, model, how it ended, how many
+    messages it carried and its parts."""
     body = _json_text(entry.get("request_raw"))
     reply = _json_text(entry.get("response_raw"))
     headers = {k.lower(): v for k, v in (entry.get("request_headers") or {}).items()}
@@ -119,27 +152,7 @@ def parse(entry: dict) -> tuple[Call, Parts]:
         if not session:
             session = _session_from_metadata(body.get("metadata"))
     response_blocks, stop = _response_blocks(reply)
-    raw_req = entry.get("request_raw") or {}
-    size = (
-        len(raw_req.get("text") or raw_req.get("base64") or "") if isinstance(raw_req, dict) else 0
-    )
-    parts = tuple(_parts(messages, response_blocks))
-    # Interned: thousands of calls share one copy of each sender, model, session and kind.
-    call = Call(
-        id=str(entry.get("id", "")),
-        time=float(entry.get("time", 0)),
-        who=sys.intern(str(entry.get("who", "?"))),
-        status=entry.get("status"),
-        duration_s=entry.get("duration_s"),
-        session_id=sys.intern(session),
-        model=sys.intern(model) if isinstance(model, str) else None,
-        stop_reason=sys.intern(stop) if isinstance(stop, str) else stop,
-        size=size,
-        message_count=len(messages),
-        kinds=tuple(sys.intern(kind) for kind, _ in parts),
-        content_bytes=sum(len(content.encode()) for _, content in parts),
-    )
-    return call, parts
+    return session, model, stop, len(messages), tuple(_parts(messages, response_blocks))
 
 
 def _parts(messages: list[dict], response_blocks: list[dict]) -> list[tuple[str, str]]:
@@ -173,7 +186,8 @@ def _parts(messages: list[dict], response_blocks: list[dict]) -> list[tuple[str,
 
 
 def sessions(calls: list[Call]) -> list[Session]:
-    """Group calls into sessions: by the Claude Code session id when the call carries one,
+    """Group calls into sessions: by the Claude Code session id or Codex's thread id when the
+    call carries one,
     otherwise by who sent it and a 30-minute gap. Newest session first."""
     groups: dict[str, list[Call]] = {}
     last_by_who: dict[str, tuple[str, float]] = {}
