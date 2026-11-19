@@ -184,3 +184,15 @@ PROXY_DIR=/path/to/logging-proxy/logs API_KEY=… BOX_HOST=… BOX_REPO=… \
 
 The reading rules for a recorded call (`logserver/calls.py`) are the agreement UI's
 (`ui/server/proxylogs.py`). Keep them the same until the UI reads from this server only.
+
+Each kind of call has its own reader, and both give the same parts (request, tool_result,
+response, tool_call):
+
+| Calls | Reader | Told apart by |
+| --- | --- | --- |
+| Claude Code (Anthropic's Messages API) | `logserver/calls.py` | every other path |
+| Codex (OpenAI's Responses API) | `logserver/codex.py` | the proxy's two Codex path prefixes |
+
+The Codex reader unpacks a compressed request body first (zstd or gzip, by the
+`content-encoding` header) and takes the session from Codex's `thread-id`. Its rules follow
+the logging proxy's own `transcript.py`. The agreement UI's older reader does not read Codex.
