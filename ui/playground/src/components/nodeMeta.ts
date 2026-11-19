@@ -73,6 +73,10 @@ export const SOURCE_OPTIONS: { id: string; label: string }[] = [
   { id: "plant", label: "Plant Logs" },
 ];
 export const sourceLabel = (id: string) => SOURCE_OPTIONS.find((o) => o.id === id)?.label ?? id;
+/** In agreement mode the server says which sources it offers (its AIAB_LOG_SOURCES); the list above is the standalone playground's. */
+export function setSourceOptions(list: { id: string; label: string }[]): void {
+  if (list.length) SOURCE_OPTIONS.splice(0, SOURCE_OPTIONS.length, ...list);
+}
 
 export const MODEL_OPTIONS = ["gpt-oss-safeguard-120b", "gpt-oss-120b", "llama-3.3-70b-instruct", "qwen3-32b"];
 

@@ -18,6 +18,8 @@ TEST_PROXY_URL = (
 )
 PROD_PROXY_URL = "https://llm-proxy.lucidcompute.com"
 DEFAULT_LOG_SOURCE = "dev"
+# AIAB_LOG_SOURCES: the sources the pages offer, a comma list of ids; the rest stay unread.
+DEFAULT_LOG_SOURCES = "prod,plant"
 
 
 @dataclass(frozen=True)
@@ -91,16 +93,28 @@ class Settings:
     # The GitHub export (server.githubexport), the same way: AIAB_GITHUB_EXPORT_KEY opens it
     # into logs_dir/github unless AIAB_GITHUB_EXPORT names a folder.
     github_bundle: Path = UI_ROOT / "data" / "github-export.enc"
+    # AIAB_LOG_OWNERS="auditor1=tester+alex-test3,auditor2=caleb": the sender names an
+    # auditor's account owns besides its own username. The lab sees every session of an
+    # agent log; an auditor only the sessions sent as one of their names (server.app).
+    log_owners: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     anthropic_api_key: str | None = field(default=None, repr=False)
-    # AIAB_LAB_KEY: the lab's signing key (base64 raw Ed25519, the format of lab.key from
-    # make dev-keys) and AIAB_LAB_CERTIFICATE: the certificate the lab's root gave it (the
-    # JSON line in lab.cert). Both set, the Sign screen offers Lab Sign, a demo-only button
-    # that signs the shown version as the lab with this key, and every page says DEV MODE;
-    # anyone logged in can then sign as the lab. The lab's root stays with the lab.
-    # Prototype only.
+    # AIAB_LAB_KEY: the server's lab signing key (base64 raw Ed25519, the format of lab.key
+    # from make dev-keys). Its certificate comes from AIAB_LAB_ROOT_KEY when the server holds
+    # the lab root, otherwise from AIAB_LAB_CERTIFICATE (the JSON line in lab.cert). With a
+    # working key, the lab card on the Sign screen offers Sign to everyone who is not a lab
+    # member, which signs the shown version as the lab with this key. Prototype only.
     lab_signing_key: str | None = field(default=None, repr=False)
     lab_signing_certificate: str | None = None
+    # AIAB_LAB_ROOT_KEY: the lab root's private key (base64 raw Ed25519). Set, the server
+    # certifies the signing key each lab member's browser makes on their first Sign, the way
+    # AIAB_AUDITOR_ROOT_KEY does for auditors, and certifies AIAB_LAB_KEY itself. Prototype
+    # only: whoever controls the server can sign as the lab (THREAT_MODEL.md).
+    lab_root_key: str | None = field(default=None, repr=False)
+    # AIAB_LAB_SIGNER_AUTHORIZED_BY: who allowed the server to sign as the lab, shown as
+    # "Authorized by" on the lab card's Sign. The certificate names no issuer, so this is
+    # the only place the name comes from.
+    lab_signer_authorized_by: str | None = None
     # AIAB_AUDITOR_ROOT_KEY: the auditor root's private key (base64 raw Ed25519). Set, the
     # server certifies the signing key each logged-in auditor's browser makes on its first
     # Sign, so every auditor has a key of their own and nobody sets anything up. Prototype
@@ -225,7 +239,8 @@ def load_settings() -> Settings:
         push_drafts=env.get("AIAB_PUSH_DRAFTS", "").lower() in {"1", "true", "yes"},
         auto_pull=env.get("AIAB_AUTO_PULL", "").lower() in {"1", "true", "yes"},
         logs_dir=Path(env.get("AIAB_LOGS_DIR", UI_ROOT / "logs")).resolve(),
-        log_sources=log_sources_from_env(env),
+        log_sources=log_sources_from_env(env, env.get("AIAB_LOG_SOURCES", DEFAULT_LOG_SOURCES)),
+        log_owners=log_owners_from_env(env),
         slack_bundle=Path(
             env.get("AIAB_SLACK_BUNDLE", UI_ROOT / "data" / "slack-export.enc")
         ).resolve(),
@@ -235,6 +250,8 @@ def load_settings() -> Settings:
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
         lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
         lab_signing_certificate=env.get("AIAB_LAB_CERTIFICATE", "").strip() or None,
+        lab_root_key=env.get("AIAB_LAB_ROOT_KEY", "").strip() or None,
+        lab_signer_authorized_by=env.get("AIAB_LAB_SIGNER_AUTHORIZED_BY", "").strip() or None,
         auditor_root_key=env.get("AIAB_AUDITOR_ROOT_KEY", "").strip() or None,
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
         oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,
@@ -256,8 +273,23 @@ def load_settings() -> Settings:
     )
 
 
-def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
-    """The log sources this server reads, all at once when all are set. Production takes
+def log_owners_from_env(env: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    """AIAB_LOG_OWNERS, ``user=sender+sender,user=sender``, as a map of lower-cased
+    username to the sender names it owns. A malformed entry is skipped."""
+    owners: dict[str, tuple[str, ...]] = {}
+    for entry in env.get("AIAB_LOG_OWNERS", "").split(","):
+        user, _, names = entry.partition("=")
+        if user.strip() and names.strip():
+            owners[user.strip().lower()] = tuple(n.strip() for n in names.split("+") if n.strip())
+    return owners
+
+
+def log_sources_from_env(
+    env: Mapping[str, str], offered: str | None = None
+) -> tuple[LogSource, ...]:
+    """The log sources this server reads: all of them, or only the ids ``offered`` names
+    (AIAB_LOG_SOURCES, a comma list; unknown ids are ignored, none known means all), in
+    selector order. Production takes
     its reader key as x-log-key (AIAB_LOG_KEY); the test proxy takes its shared key as
     x-proxy-key (AIAB_PROXY_KEY); each has its own folder under AIAB_LOGS_DIR. Slack Logs
     is the public-channel export, a static copy: read in place from the folder
@@ -282,7 +314,7 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
     hub = env.get("AIAB_PLANT_HUB_URL", "").strip().rstrip("/")
     hub_key = env.get("AIAB_PLANT_HUB_KEY", "").strip() or None
     from_hub = bool(hub and hub_key)
-    return (
+    every = (
         _log_server(env, "prod", "Prod Agent Logs", "AIAB_LOG_SERVER")
         or LogSource(
             id="prod",
@@ -337,6 +369,10 @@ def log_sources_from_env(env: Mapping[str, str]) -> tuple[LogSource, ...]:
             root=None if from_hub else (Path(plant).resolve() if plant else None),
         ),
     )
+    if offered is None:
+        return every
+    wanted = {x.strip() for x in offered.split(",") if x.strip()}
+    return tuple(s for s in every if s.id in wanted) or every
 
 
 def _log_server(env: Mapping[str, str], id: str, label: str, prefix: str) -> LogSource | None:

@@ -465,3 +465,66 @@ def test_a_button_address_opened_as_a_page_goes_to_its_page(client):
     assert to("/a/bio/delete") == "/a/bio/plan"
     assert to("/runs/start").startswith("/runs")  # an existing page route takes it
     assert to("/agreements/nothing/here") is None  # a page that does not exist is still a 404
+
+
+def test_an_auditor_sees_only_the_sessions_sent_as_them(client, tmp_path, monkeypatch):
+    """The lab sees every session of an agent log. An auditor sees only the sessions whose
+    sender is their username, or a name AIAB_LOG_OWNERS gives them: on the Logs page, in
+    the session picker, on the Runs page, and a run cannot be started on the others."""
+    logs = tmp_path / "logs" / "dev"
+    logs.mkdir(parents=True)
+    (logs / "live.jsonl").write_text(
+        _record("dev-user", "dev prompt", "s-dev") + _record("auditor1", "my prompt", "s-mine")
+    )
+    assert len(client.get("/logs/sessions.json?logs=dev").json()["sessions"]) == 2  # the lab
+    lab_page = client.get("/logs?logs=dev").text
+    assert 'name="who"' in lab_page and "sent as" not in lab_page
+
+    auditor = {"username": "Auditor1", "party": "auditor", "display_name": "Auditor 1"}
+    monkeypatch.setattr(ui, "user_of", lambda request: auditor)
+    listing = client.get("/logs/sessions.json?logs=dev").json()["sessions"]
+    assert [s["who"] for s in listing] == ["auditor1"]
+    page = client.get("/logs?logs=dev").text
+    assert "s-mine" in page and "s-dev" not in page and "dev-user" not in page
+    assert 'name="who"' not in page and "1 requests on disk, sent as auditor1" in page
+    assert "dev prompt" not in client.get("/logs?logs=dev&session=s-dev").text
+    # The agreement names both sessions: a run sends the ones named, and of those an
+    # auditor only their own.
+    monkeypatch.setattr(ui.runs, "plan_sessions", lambda folder: {"s-dev", "s-mine"})
+    runs_page = client.get("/runs?agreement=bio&logs=dev").text
+    assert 'value="s-mine"' in runs_page and "s-dev" not in runs_page
+
+    started = {}
+
+    async def ready(_folder):
+        return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
+
+    def fake_start(settings, user, agreement, folder, records, label=None, sent=None):
+        # The run's records come as a file, one a line.
+        started.update(records=[json.loads(x) for x in records.read_text().splitlines()])
+        return "run-1"
+
+    monkeypatch.setattr(ui, "_run_preflight", ready)
+    monkeypatch.setattr(ui.runs, "start_run", fake_start)
+    monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
+    response = client.post(
+        "/runs/start", data={"agreement": "bio", "logs": "dev", "session": "s-dev"}
+    )
+    assert response.status_code == 303 and not started
+    client.post("/runs/start", data={"agreement": "bio", "logs": "dev", "session": "s-mine"})
+    assert [r["content"] for r in started["records"]] == ["my prompt"]
+
+    owners = replace(ui.settings, log_owners={"auditor1": ("dev-user",)})
+    monkeypatch.setattr(ui, "settings", owners)
+    assert len(client.get("/logs/sessions.json?logs=dev").json()["sessions"]) == 2
+
+
+def test_log_owners_come_from_the_environment():
+    from server.config import log_owners_from_env
+
+    env = {"AIAB_LOG_OWNERS": "auditor1=tester+alex-test3, Auditor2=caleb,broken,=x,y="}
+    assert log_owners_from_env(env) == {
+        "auditor1": ("tester", "alex-test3"),
+        "auditor2": ("caleb",),
+    }
+    assert log_owners_from_env({}) == {}

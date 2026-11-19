@@ -5,8 +5,8 @@ This procedure uses the agreement UI against the live box. For the command-line 
 ## Before you start
 
 - You have a login. The lab account and the auditor account are different people.
-- The UI server holds the lab signing key in `AIAB_LAB_KEY` and its certificate in `AIAB_LAB_CERTIFICATE`. Every page then shows a DEV MODE label, and the Sign screen offers **Lab Sign**, a demo-only button that signs the current version as the lab with that key. Anyone logged in can press it, the auditor included.
-- The auditor can sign. On the prototype the UI server holds the auditor root in `AIAB_AUDITOR_ROOT_KEY`, and the first Sign in a browser makes that browser's key and has the server certify it. Without it, the auditor sets up signing in the browser first (see "Set up signing"). [THREAT_MODEL.md](THREAT_MODEL.md), "Prototype shortcut", says what this shortcut gives up.
+- On the prototype the UI server holds both roots, the lab's in `AIAB_LAB_ROOT_KEY` and the auditor's in `AIAB_AUDITOR_ROOT_KEY`. A member's first Sign in a browser makes that browser's key and has the server certify it. Without the root, the party sets up signing in the browser first (see "Set up signing").
+- The UI server holds its own lab signing key in `AIAB_LAB_KEY`, certified by the lab root it holds (or by `AIAB_LAB_CERTIFICATE`). The lab card on the Sign screen then offers **Sign** in a blue panel to everyone who is not a lab member, with "Authorized by" and the name in `AIAB_LAB_SIGNER_AUTHORIZED_BY`. [THREAT_MODEL.md](THREAT_MODEL.md), "Prototype shortcut", says what this shortcut gives up.
 - The UI server holds `lab.token` and `logger.key` in `AIAB_DEMO_KEYS`. The box operator supplies them.
 - The release pins in the checkout match the release the box runs. If they do not, step 2 of the run refuses.
 - The Logs page shows at least one recorded session. Without a session, the run cannot start.
@@ -28,7 +28,7 @@ This procedure uses the agreement UI against the live box. For the command-line 
 Nothing is signed when an agreement is created or saved. Each signature freezes the agreement.
 
 1. On the plan page, select **Sign this plan**.
-2. In the lab card, select **Lab Sign** (the yellow and black demo box). Check that the lab card shows "Signed by the server".
+2. As a lab member, select **Sign** on the plan page. As the auditor, select **Sign** in the blue panel of the lab card instead; check that the lab card then shows "Signed by the server".
 3. As the auditor, select **Sign this version in this browser**.
 4. Read the digest in the confirmation dialog. Select **Continue**.
 5. Check that the auditor card shows "signed this version".

@@ -5,6 +5,7 @@
  * on every save and answers with the loader's issues when it refuses. Without the
  * parameter the page is the standalone playground: samples, localStorage, no server.
  */
+import { setSourceOptions } from "./components/nodeMeta";
 import { type Plan, PlanSchema } from "./plan/types";
 import { validatePlan } from "./plan/validate";
 
@@ -38,6 +39,8 @@ export async function loadAgreement(id: string): Promise<ServerPlan> {
   if (!parsed.success) throw new Error(`The saved plan does not parse: ${parsed.error.issues[0]?.message}`);
   const checked = validatePlan(parsed.data);
   if (!checked.ok) throw new Error(`The saved plan is not a valid graph: ${checked.issues[0]?.message}`);
+  if (Array.isArray(body.sources))
+    setSourceOptions(body.sources.filter((s: unknown) => s && typeof s === "object" && "id" in s && "label" in s));
   return {
     plan: checked.plan,
     digest: String(body.digest),

@@ -17,16 +17,18 @@
 <div class="stack">
   {% for party in parties %}{% set s = view.signatures[party] %}
   {% set k = keys.parties[party] if keys else None %}
-  {% set demo = party == 'lab' and lab_sign and s.status != 'ok' %}
+  {# The server signs as the lab for those who are not lab members, and for lab members
+     when it holds no lab root to certify their own keys (prototype). #}
+  {% set server_sign = party == 'lab' and lab_sign and s.status != 'ok' and (user.party != 'lab' or 'lab' not in issuer_parties) %}
   <div class="card" id="sign-{{ party }}">
     <div class="card-header">{{ party }}</div>
     <div class="card-body sign-card">
-      <p class="sign-state {% if s.status == 'ok' %}ok{% elif s.status == 'invalid' %}bad{% endif %}">{% if s.auto %}Signed by the server{% elif s.status == 'ok' %}Signed{% elif s.status == 'missing' %}Not signed{% else %}Signed an older version, sign again{% endif %}</p>
+      <p class="sign-state {% if s.status == 'ok' %}ok{% elif s.status == 'invalid' %}bad{% endif %}">{% if s.auto %}Signed for the lab{% if s.pressed_by %} by {{ s.pressed_by }}{% endif %}{% if settings.lab_signer_authorized_by %}, authorized by {{ settings.lab_signer_authorized_by }}{% endif %}{% elif s.status == 'ok' %}Signed{% elif s.status == 'missing' %}Not signed{% else %}Signed an older version, sign again{% endif %}</p>
 
       {# 1. Sign: one click when this server certifies the party's browser key; otherwise the
             key is set up in this browser once. #}
       {% if user.party != party %}
-      {% if not demo and not s.auto %}<p class="text-muted">Only the {{ party }} signs here.</p>{% endif %}
+      {% if not server_sign and not s.auto %}<p class="text-muted">Only the {{ party }} signs here.</p>{% endif %}
       {% elif s.status == 'ok' %}
       <form method="post" action="{{ base }}/sign/remove" class="inline" data-confirm="This removes your signature for this version. You will need to sign it again. Continue?">
         <input type="hidden" name="party" value="{{ party }}">
@@ -66,25 +68,28 @@
       </div>
       {% endif %}
 
-      {# Lab Sign, for the demo (prototype): anyone logged in signs this version as the lab
-         with the server's lab key. #}
-      {% if demo %}
-      <form method="post" action="{{ base }}/sign/lab" class="demo-sign">
+      {# Sign as the lab with the server's lab key, certified by the lab root (prototype). #}
+      {% if server_sign %}
+      <form method="post" action="{{ base }}/sign/lab" class="server-sign">
         <input type="hidden" name="digest" value="{{ view.digest }}">
-        <span class="demo-tag">Demo only</span>
-        <button class="btn demo-btn"{% if view.issue %} disabled{% endif %}>Lab Sign</button>
-        <span class="demo-note">Signs this version as the lab with the server's lab key.</span>
+        <button class="btn btn--primary"{% if view.issue %} disabled{% endif %}>Sign</button>
+        {% if settings.lab_signer_authorized_by %}<span class="server-sign-by"><span class="text-muted">Authorized by:</span> {{ settings.lab_signer_authorized_by }}</span>{% endif %}
       </form>
       {% endif %}
 
       {# 2. The root key the box trusts for this party, and a way to submit a new one. #}
       <p class="explain keyline"><span class="text-muted">Root key</span> <span class="mono">{{ view.public_keys[party] or "none" }}</span>{% if k and k.busy %} <span class="text-muted">· a new key is on its way to the box</span> <span class="spinner spinner--sm"></span>{% elif k and k.tone == 'bad' %} <span class="selected-label bad">{{ k.label }}</span>{% endif %}</p>
-      {% if user.party == party and party not in issuer_parties %}
-      <form id="key-form-{{ party }}" method="post" action="{{ base }}/sign/key" class="sign-root" data-confirm="Submitting a new root key makes the box trust it instead of the current one. Signatures under the old root stop counting. Continue?" data-busy="Submitting your root key.">
-        <input type="hidden" name="party" value="{{ party }}">
-        <input id="key-{{ party }}" name="public_key" class="json" placeholder="New root public key" aria-label="New root public key" required>
-        <button class="btn btn--ghost">Submit root key</button>
-      </form>
+      {# Replacing the root cuts off every key it certified, other members' included, so it
+         sits folded away behind a red button. #}
+      {% if user.party == party and (party not in issuer_parties or party == 'lab') %}
+      <details class="fold fold--plain root-replace">
+        <summary>Replace root key</summary>
+        <form id="key-form-{{ party }}" method="post" action="{{ base }}/sign/key" class="sign-root" data-confirm="Submitting a new root key makes the box trust it instead of the current one. Every signing key the old root certified, other {{ party }} members' included, stops counting{% if party in issuer_parties or (party == 'lab' and lab_sign) %}, and this server stops signing for the {{ party }}{% endif %}. Continue?" data-busy="Submitting your root key.">
+          <input type="hidden" name="party" value="{{ party }}">
+          <input id="key-{{ party }}" name="public_key" class="json" placeholder="New root public key" aria-label="New root public key" required>
+          <button class="btn btn--danger">Submit root key</button>
+        </form>
+      </details>
       {% endif %}
     </div>
   </div>

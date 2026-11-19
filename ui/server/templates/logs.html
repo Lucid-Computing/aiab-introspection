@@ -61,13 +61,13 @@
 <div class="logs-tools">
   <form method="get" action="/logs" class="logs-filters">
     <input type="hidden" name="logs" value="{{ source.id }}">
-    <select name="who" onchange="this.form.submit()"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>
+    {% if whos | length > 1 %}<select name="who" onchange="this.form.submit()"><option value="">everyone</option>{% for w in whos %}<option value="{{ w }}" {% if w == who %}selected{% endif %}>{{ w }}</option>{% endfor %}</select>{% endif %}
     <input name="q" value="{{ q }}" placeholder="Search titles">
     <button class="btn btn--ghost">Search</button>
   </form>
   <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><input type="hidden" name="logs" value="{{ source.id }}"><button class="btn btn--ghost" {% if not source.fetches %}disabled{% endif %}>Refresh</button></form>
 </div>
-<p class="logs-status">{{ source.label }} · {% if hub %}{{ hub.runs }} run{{ "s" if hub.runs != 1 }} on the hub{% if hub.unread %}, {{ hub.unread | length }} more the hub could not read{% endif %}{% else %}{{ total_requests }} {% if source.kind == "github" %}posts{% elif chat %}messages{% elif source.kind == "plant" %}records{% else %}requests{% endif %} on disk{% endif %} ·
+<p class="logs-status">{{ source.label }} · {% if hub %}{{ hub.runs }} run{{ "s" if hub.runs != 1 }} on the hub{% if hub.unread %}, {{ hub.unread | length }} more the hub could not read{% endif %}{% else %}{{ total_requests }} {% if source.kind == "github" %}posts{% elif chat %}messages{% elif source.kind == "plant" %}records{% else %}requests{% endif %} on disk{% endif %}{% if mine %}{% if chat %}, the threads you wrote in{% else %}, sent as {{ mine | join(", ") }}{% endif %}{% endif %} ·
     {% if (chat or source.kind == "plant") and not hub %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
     {% elif not source.configured %}no proxy key configured (<span class="mono">{{ source.key_env }}</span>), nothing is fetched
     {% elif fetch.running %}fetching now

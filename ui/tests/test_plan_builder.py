@@ -91,6 +91,7 @@ def test_builder_endpoints_follow_login_lease_frozen_and_version(draft, monkeypa
 
     doc = client.get(url).json()
     assert doc["plan"]["plan_id"] == "builder-test" and doc["issue"] is None
+    assert doc["sources"] and all(s["id"] and s["label"] for s in doc["sources"])
     assert doc["editable"] is False  # nobody pressed Edit yet
     plan = doc["plan"]
     node(plan, "filter")["config"]["llm"]["threshold"] = 0.8

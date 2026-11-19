@@ -95,43 +95,53 @@ with the repository and the shown digest with the downloaded plan files, and the
 file change that admits a new public key is visible in GitHub history. Requiring the
 other party's approval of a key change in `approve-keys.yml` is still open.
 
-## Prototype shortcut: the server signs for the lab and certifies the auditors
+## Prototype shortcut: the server holds both roots and signs for the lab
 
-To make signing one click, the UI server can hold two secrets:
+To make signing one click, the UI server can hold these secrets:
 
-- `AIAB_LAB_KEY` and `AIAB_LAB_CERTIFICATE`: a certified lab signing key. Every page then
-  shows a DEV MODE label, and the Sign screen shows a demo-only Lab Sign button to anyone
-  logged in, the auditor included. Pressing it signs the version the page showed as the
-  lab with this key. Nothing is signed by itself: creating, saving or editing an
-  agreement leaves the lab unsigned. Any logged-in user can therefore produce the lab's
-  signature.
-- `AIAB_AUDITOR_ROOT_KEY`: the auditor root's private key. On an auditor's first Sign,
-  the browser makes its own Ed25519 signing key, non-extractable from the start, and
-  sends only the public half to `POST /sign/certificate`. The server certifies it for
-  the logged-in auditor and appends a record (who, when, which key) to
-  `issued-certificates.jsonl` next to the accounts file. The browser checks the
-  certificate against the trusted root before keeping the key, then signs. Each auditor,
-  and each browser, has a key of its own; nobody sets anything up.
+- `AIAB_LAB_ROOT_KEY` and `AIAB_AUDITOR_ROOT_KEY`: each party's root private key. On a
+  member's first Sign, the browser makes its own Ed25519 signing key, non-extractable
+  from the start, and sends only the public half to `POST /sign/certificate`. The server
+  certifies it for the logged-in member's own party and appends a record (who, when,
+  which key) to `issued-certificates.jsonl` next to the accounts file. The browser checks
+  the certificate against the trusted root before keeping the key, then signs. Each
+  member, and each browser, has a key of its own; nobody sets anything up, and nobody
+  needs to make a new root to sign, so lab members stop replacing each other's root.
+- `AIAB_LAB_KEY`: the server's own lab signing key. While the server holds the lab root,
+  it certifies this key itself; otherwise `AIAB_LAB_CERTIFICATE` holds the certificate.
+  The lab card on the Sign screen then shows Sign, in a blue panel, to everyone logged in
+  who is not a lab member (and to lab members when the server holds no lab root).
+  Pressing it signs the version the page showed as the lab with this key. The panel
+  shows "Authorized by" with the name in `AIAB_LAB_SIGNER_AUTHORIZED_BY`; the certificate
+  names no issuer, so that name is a setting, not something the box checks. Nothing is
+  signed by itself: creating, saving or editing an agreement leaves the lab unsigned. Any
+  logged-in user can therefore produce the lab's signature.
+
+A lab member can still replace the lab root from a collapsed section of the lab card,
+behind a red button. That cuts off every key the old root certified, other members' and
+the server's included, until the server's variables hold the new root. The auditor root
+cannot be replaced while the server holds it.
 
 The box's check does not change: it still requires both signatures, each from a key the
 party's baked-in root certified. What changes is what a signature shows. With the lab
 key and the auditor root on the server, whoever controls the server, or breaks into it,
 can sign as the lab and can certify a new auditor key and sign with it. The two
 signatures then show only that the server approved the version. A signature under an
-existing auditor's key does show that this auditor's browser made it, because that
-private key never leaves the browser; but the server can always make another auditor
-key. The UI decides who is the auditor from the login (anyone not in `admins.json`), and
-the lab runs the server, so in this mode the lab can sign as the auditor. A root on the
-server also has more authority than a signing key would: the keys it certifies never
-expire. The lab root's private half is not on the server.
+existing member's key does show that this member's browser made it, because that
+private key never leaves the browser; but the server can always make another key for
+either party. The UI decides who is the lab from the login (`admins.json`), so a login
+wrongly granted the lab party gets a lab key the box accepts. The lab runs the server,
+so in this mode the lab can sign as the auditor. A root on the server also has more
+authority than a signing key would: the keys it certifies never expire.
 
 What the real version changes, in order:
 
 1. Each party makes its own root, on its own machine or with Set up signing in its own
    browser, and submits the public half. One PR and one release replace the roots, so
    no root's private half has ever been on the server or with the operator.
-2. Unset `AIAB_LAB_KEY`, `AIAB_LAB_CERTIFICATE` and `AIAB_AUDITOR_ROOT_KEY`. Lab Sign
-   and the DEV MODE label disappear, and the lab presses Sign like the auditor.
+2. Unset `AIAB_LAB_KEY`, `AIAB_LAB_CERTIFICATE`, `AIAB_LAB_ROOT_KEY` and
+   `AIAB_AUDITOR_ROOT_KEY`. The server's Sign on the lab card disappears, and each party
+   signs only with keys its own root certified.
 3. Each party runs its own certificate signer (the same protocol as
    `/sign/certificate`), on its own infrastructure, out of the lab's reach, authenticating
    its members with its own identity provider; or the root holder certifies members'

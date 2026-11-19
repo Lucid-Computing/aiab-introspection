@@ -78,6 +78,7 @@ class Account:
     party: str
     display_name: str
     password_hash: str
+    email: str = ""  # the login's email (the provider's), or none for a local account
 
 
 def load_accounts(path: Path) -> dict[str, Account]:
@@ -119,6 +120,7 @@ class SessionSigner:
             "u": account.username,
             "p": account.party,
             "n": account.display_name,
+            "e": account.email,
             "exp": int(time.time()) + self._ttl,
         }
         payload = _b64(json.dumps(body, separators=(",", ":")).encode("utf-8"))
@@ -136,7 +138,12 @@ class SessionSigner:
             return None
         if body.get("exp", 0) < time.time() or body.get("p") not in PARTIES:
             return None
-        return {"username": body["u"], "party": body["p"], "display_name": body.get("n", body["u"])}
+        return {
+            "username": body["u"],
+            "party": body["p"],
+            "display_name": body.get("n", body["u"]),
+            "email": body.get("e", ""),
+        }
 
 
 # ------------------------------------------------------------------------- OpenID Connect
@@ -368,7 +375,11 @@ class OidcLogin:
             filter(None, [claims.get("given_name"), claims.get("family_name")])
         )
         return Account(
-            username=username, party=party, display_name=name or username, password_hash=""
+            username=username,
+            party=party,
+            display_name=name or username,
+            password_hash="",
+            email=email,
         )
 
     def login(self, code: str, redirect_uri: str, verifier: str, nonce: str) -> tuple[Account, str]:
