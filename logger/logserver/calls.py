@@ -152,6 +152,11 @@ def _claude(entry: dict) -> tuple[str, str | None, str | None, int, Parts]:
         if not session:
             session = _session_from_metadata(body.get("metadata"))
     response_blocks, stop = _response_blocks(reply)
+    # Only a model request has parts. Claude Code also asks /v1/messages/count_tokens with
+    # the same conversation; reading that as a call would send the user's turn twice. An
+    # entry with no path is from before the proxy stored one, when it forwarded only these.
+    if entry.get("path") not in (None, "/v1/messages"):
+        return session, model, stop, len(messages), ()
     return session, model, stop, len(messages), tuple(_parts(messages, response_blocks))
 
 

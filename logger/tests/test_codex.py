@@ -190,3 +190,12 @@ def test_odd_shapes_do_not_break_the_reader():
         {"error": {"message": "m"}},
     ):
         calls.parse(entry(odd, reply))
+
+
+def test_a_token_count_is_not_read_as_a_second_call():
+    request = {"model": "claude-haiku-5-5", "messages": [{"role": "user", "content": "hi"}]}
+    headers = {"x-claude-code-session-id": "s-1"}
+    counted = entry(request, {"input_tokens": 9}, "/v1/messages/count_tokens", headers)
+    call, parts = calls.parse(counted)
+    assert parts == ()
+    assert call.session_id == "s-1"
