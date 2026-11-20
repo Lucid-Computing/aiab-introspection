@@ -13,7 +13,19 @@
 {% if current and req %}
 <p class="crumb"><a href="/logs?{{ keep[1:] }}" class="link">← Logs</a></p>
 <section class="logs-detail">
-  {% if plant is not none %}
+  {% if hub %}
+  {# A part of a run on the plant's hub: metadata only. Its records are fetched by a run. #}
+  <h2 class="logs-h">{{ current.title }}</h2>
+  <p class="logs-sub">session {{ current.id }}</p>
+  <dl class="req-facts">
+    <dt>Run</dt><dd class="mono">{{ req.run }}</dd>
+    <dt>Plant</dt><dd>{{ req.who }}</dd>
+    <dt>State</dt><dd>{{ req.state or "—" }}</dd>
+    <dt>Started</dt><dd>{{ req.when }} UTC</dd>
+    <dt>On the hub</dt><dd>{{ req.size_text }}</dd>
+  </dl>
+  <p class="text-muted">Nothing of this run is kept here. A run fetches it from the hub and sends it sealed to the box.</p>
+  {% elif plant is not none %}
   {% include "_logplant.html" %}
   {% elif source.kind == "github" %}
   {% include "_loggithub.html" %}
@@ -55,8 +67,8 @@
   </form>
   <form method="post" action="/logs/sync" class="inline" data-busy="Asking the proxy for new segments."><input type="hidden" name="logs" value="{{ source.id }}"><button class="btn btn--ghost" {% if not source.fetches %}disabled{% endif %}>Refresh</button></form>
 </div>
-<p class="logs-status">{{ source.label }} · {{ total_requests }} {% if source.kind == "github" %}posts{% elif chat %}messages{% elif source.kind == "plant" %}records{% else %}requests{% endif %} on disk{% if mine %}{% if chat %}, the threads you wrote in{% else %}, sent as {{ mine | join(", ") }}{% endif %}{% endif %} ·
-    {% if chat or source.kind == "plant" %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
+<p class="logs-status">{{ source.label }} · {% if hub %}{{ hub.runs }} run{{ "s" if hub.runs != 1 }} on the hub{% if hub.unread %}, {{ hub.unread | length }} more the hub could not read{% endif %}{% else %}{{ total_requests }} {% if source.kind == "github" %}posts{% elif chat %}messages{% elif source.kind == "plant" %}records{% else %}requests{% endif %} on disk{% endif %}{% if mine %}{% if chat %}, the threads you wrote in{% else %}, sent as {{ mine | join(", ") }}{% endif %}{% endif %} ·
+    {% if (chat or source.kind == "plant") and not hub %}{% if source.configured %}a static copy, read from {{ source.path(settings) }}{% else %}no export configured (<span class="mono">{{ source.key_env }}</span>){% endif %}
     {% elif not source.configured %}no proxy key configured (<span class="mono">{{ source.key_env }}</span>), nothing is fetched
     {% elif fetch.running %}fetching now
     {% elif fetch.error %}last fetch failed: {{ fetch.error }}
@@ -72,7 +84,7 @@
     <td><a class="logs-item link" href="/logs?session={{ s.id | urlencode }}{{ keep }}">{{ s.title }}</a></td>
     <td>{{ s.who }}</td>
     <td>{{ s.started_short }}</td>
-    <td>{{ s.records | length }} {{ unit }}</td>
+    <td>{% if hub %}{{ s.records[0].size_text }}{% else %}{{ s.records | length }} {{ unit }}{% endif %}</td>
     {% if models %}<td>{{ s.model }}</td>{% endif %}
   </tr>
   {% endfor %}

@@ -33,6 +33,12 @@ proxy's machine): a ``LogSource`` of kind "logger". Then nothing readable is dow
 for the chosen sessions' records, each sealed to the box's key (``run_records``). This
 server signs and forwards them and never holds what was said (MAC-377).
 
+Plant Logs with a hub to ask (``server.planthub``) is read the same way as a log server:
+the hub's runs are listed by metadata, each part of a run a session with no text
+(``PlantPart``), and a run fetches the chosen parts from the hub and writes them to the
+run's file a record at a time (``write_run_records``), so a run of any length costs the
+memory of one call (MAC-528).
+
 The pages work from a light index (``load_index``): one ``Request`` per call with the
 listing fields, the message count, the first user text, the parts a run sends to the box,
 and where the line sits on disk, but no conversation. A call's full conversation is parsed
@@ -59,7 +65,7 @@ from pathlib import Path
 from server import githublogs, plantlogs, slacklogs
 from server.config import LogSource, Settings
 from server.githublogs import GitHubPost
-from server.plantlogs import PlantRecord
+from server.plantlogs import PlantPart, PlantRecord
 from server.slacklogs import SlackMessage
 
 SESSION_GAP_SECONDS = 30 * 60  # records from one person this close together form one session
@@ -205,10 +211,15 @@ def _server_calls(session: dict) -> list[Request]:
 def sync(settings: Settings, source: LogSource) -> dict:
     """Fetch the listing, download missing segments, refresh the live part.
 
-    Returns {"new": n, "segments": total, "live_entries": m}.
+    Returns {"new": n, "segments": total, "live_entries": m}. Plant Logs is fetched from
+    the hub instead (``planthub``), which says what it did in "said".
     """
     if source.kind == "logger":
         return _sync_server(source)
+    if source.kind == "plant":
+        from server import planthub  # it uses this module's parser
+
+        return planthub.sync(settings, source)
     out = source.path(settings)
     out.mkdir(parents=True, exist_ok=True)
     body, _ = _get(source, "/_logs")
@@ -412,7 +423,8 @@ class Request:
         return f"{self.size / 1024:.1f} KB"
 
 
-Record = Request | SlackMessage | GitHubPost | PlantRecord  # calls, posts or plant records
+# Calls, posts, a plant's records, or the parts of a plant's runs on its hub.
+Record = Request | SlackMessage | GitHubPost | PlantRecord | PlantPart
 
 
 @dataclass
@@ -429,6 +441,9 @@ class Session:
         n = len(self.records)
         if isinstance(self.records[0], Request):
             return f"{self.who} · {self.started_short} · {n} call{'s' if n != 1 else ''}"
+        if isinstance(self.records[0], PlantPart):  # on the hub: its size, not its records
+            part = self.records[0]
+            return f"{part.label} · {self.started_short} · {part.size_text}"
         if isinstance(self.records[0], PlantRecord):
             what = self.records[0].label
             return f"{what} · {self.started_short} · {n} record{'s' if n != 1 else ''}"
@@ -496,10 +511,15 @@ def load_index(settings: Settings, source: LogSource) -> list[Record]:
     state = _state(source)
     if source.kind == "logger":  # filled by each sync; nothing is on disk
         return state["index"]["requests"]
+    if source.hub:  # the hub's list of runs, read from the disk each time and not kept
+        from server import planthub
+
+        return planthub.parts(source.path(settings))
     with state["index_lock"]:
         index = state["index"]
         paths = _paths(settings, source)
-        stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
+        stamped = paths + plantlogs.table_files(paths) if source.kind == "plant" else paths
+        stamp = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in stamped)
         if index["stamp"] == stamp:
             return index["requests"]
         if source.kind == "slack":
@@ -715,13 +735,31 @@ def to_box_records(records: list[Record]) -> list[dict]:
     return out
 
 
-def sent_kb(records: list[Record], built: list[dict]) -> float:
-    """How much a run sends for these records, in KB. A log server's calls say it
-    themselves; anything else is measured on the records built here."""
+def on_hub(records: list[Record]) -> bool:
+    """Whether these are parts of a plant's runs on its hub: nothing is built from them
+    here, a run fetches them."""
+    return bool(records) and all(isinstance(r, PlantPart) for r in records)
+
+
+def sendable(records: list[Record]) -> bool:
+    """Whether a run would send anything for these records."""
+    return on_hub(records) or bool(box_records(records))
+
+
+def sent_bytes(records: list[Record], built: list[dict]) -> int:
+    """How much a run sends for these records, in bytes. A log server's calls say it
+    themselves; a part of a plant's run is as large as the hub holds it, which is more
+    than is sent; anything else is measured on the records built here."""
+    if on_hub(records):
+        return sum(r.size or 0 for r in records)
     known = [r.content_bytes for r in records if isinstance(r, Request)]
     if known and all(k is not None for k in known):
-        return round(sum(known) / 1024, 1)
-    return round(len(json.dumps(built).encode("utf-8")) / 1024, 1)
+        return sum(known)
+    return len(json.dumps(built).encode("utf-8"))
+
+
+def sent_kb(records: list[Record], built: list[dict]) -> float:
+    return round(sent_bytes(records, built) / 1024, 1)
 
 
 def run_records(picks: list[tuple[LogSource, Session]]) -> list[dict]:
@@ -759,6 +797,63 @@ def run_records(picks: list[tuple[LogSource, Session]]) -> list[dict]:
         if at in taken:
             r["offset"] += taken[at] + 1
     return sealed + built
+
+
+class _Capped:
+    """A text file that refuses to grow past ``most`` bytes: a run sends no more."""
+
+    def __init__(self, out, most: int | None) -> None:
+        self.out, self.most, self.size = out, most, 0
+
+    def write(self, text: str) -> int:
+        self.size += len(text.encode("utf-8"))
+        if self.most and self.size > self.most:
+            raise ProxyError(too_large(self.most))
+        return self.out.write(text)
+
+
+def too_large(most: int) -> str:
+    return (
+        f"The sessions named are over the {most / (1 << 20):g} MB a run can send. "
+        "Tick fewer in the agreement's Log Source."
+    )
+
+
+def write_run_records(
+    picks: list[tuple[LogSource, Session]], target: Path, most: int | None = None
+) -> int:
+    """Write what a run sends for the chosen sessions to ``target``, one record a line, and
+    say how many. Past ``most`` bytes it stops with a ProxyError and nothing is kept. The
+    parts of a plant's runs are fetched from its hub and written as they
+    arrive, each part in a batch of its own past the others' (the box refuses two records
+    at one position), so they are never held whole. Everything else is ``run_records``.
+    ``target`` is in place only when all of it is written."""
+    from server import planthub  # it uses this module's parser
+
+    records = run_records([(source, s) for source, s in picks if not source.hub])
+    runs: dict[tuple[str, str], tuple[LogSource, dict[str, tuple[str, int]]]] = {}
+    batch = 1 + max((r["batch"] for r in records if r["stream"] == "proxy"), default=-1)
+    for source, session in picks:
+        if source.hub:
+            for part in session.records:
+                wanted = runs.setdefault((source.id, part.run), (source, {}))[1]
+                if part.part not in wanted:
+                    wanted[part.part] = (session.id, batch)
+                    batch += 1
+    count = len(records)
+    partial = target.with_name(target.name + ".part")
+    try:
+        with partial.open("w", encoding="utf-8") as file:
+            out = _Capped(file, most)
+            for record in records:
+                out.write(json.dumps(record) + "\n")
+            del records
+            for (_, run), (source, wanted) in runs.items():
+                count += sum(planthub.write_records(source, run, wanted, out).values())
+        os.replace(partial, target)
+    finally:
+        partial.unlink(missing_ok=True)
+    return count
 
 
 # ---- helpers -----------------------------------------------------------------------------

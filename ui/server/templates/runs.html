@@ -22,7 +22,8 @@
   <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"><input type="hidden" name="source" value="sessions">{% for item in fits %}<input type="hidden" name="session" value="{{ item.session.id }}">{% endfor %}</form>
 
   {% if show_bar %}
-  <p>{% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>{% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}</p>
+  {% if none_named %}<p><span class="selected-label bad">The agreement's Log Source names no session.</span> A run sends the sessions ticked there.</p>{% endif %}
+  <p>{% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>{% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% elif none_named %}the agreement's Log Source names no session{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}</p>
   {% endif %}
 
 

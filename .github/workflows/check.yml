@@ -1,0 +1,59 @@
+# Every pull request runs each part's own lint and tests, the commands its Makefile or README
+# gives for running them by hand: the box (static/), the UI (ui/) and the logger (logger/).
+# It runs the pull request's code, so it gets no secret and a token that can only read.
+name: Check
+on:
+  pull_request:
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  static:
+    name: box (static/)
+    runs-on: ubuntu-24.04   # the box's worker runs on Linux x86_64 only, and so do its tests
+    defaults:
+      run:
+        working-directory: static
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.6"
+      - run: make check
+  ui:
+    name: UI (ui/)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.6"
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check server
+      # As a module, so the tests find `server` from this directory.
+      - run: uv run --locked python -m pytest -q tests
+  logger:
+    name: logger (logger/)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: logger
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.6"
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked python -m pytest -q
