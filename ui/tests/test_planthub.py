@@ -158,6 +158,9 @@ SCORE = json.dumps(
 ).encode()
 
 
+SACCT = json.dumps({"jobs": [{"job_id": 7, "padding": "x" * 3000}]}).encode()
+
+
 class Hub:
     """The hub's read API over a dict of runs, each {"report": dict, "files": {path: bytes}}
     and, when given, "state", "whole" and "broken" (its file list answers 500)."""
@@ -255,6 +258,7 @@ def hub():
             "config/compose.json": COMPOSE,
             "score.json": SCORE,
             "logs/web.log": b"not fetched",
+            "logs/head-01.sacct.json": SACCT,
         },
     }
     yield hub
@@ -310,6 +314,10 @@ def test_the_pages_keep_the_hubs_list_of_runs_and_nothing_of_a_run(tmp_path, hub
     assert transcript.who == "mac" and transcript.title.startswith("research · transcript · ")
     assert transcript.title.endswith(f"{len(RECORD_2) / 1024:.1f} KB")
     assert P.on_hub(transcript.records) and P.sendable(transcript.records)
+    # The jobs are as large as Slurm's accounting of them on the hub: its size is in the list.
+    jobs = sessions[f"{SESSION}-jobs"]
+    assert jobs.records[0].size == len(SACCT) and "size not listed" not in jobs.title
+    assert jobs.title.endswith(f"{len(SACCT) / 1024:.1f} KB")
     assert P.box_records(transcript.records) == []  # nothing is built here
     assert P.sent_kb(transcript.records, []) == round(len(RECORD_2) / 1024, 1)
     # Nothing is kept in memory between two pages: the list is read from the disk again.
@@ -337,6 +345,9 @@ def test_a_run_that_is_whole_is_not_asked_about_again_and_one_going_is(tmp_path,
     hub.asked.clear()
     assert P.sync_now(settings, plant)["new"] == 1
     assert hub.asked == ["/api/runs", f"/api/runs/{live}/files"]
+    # No accounting of it on the hub yet, so it has no jobs to name.
+    assert planthub.session_id(live, "jobs") not in _sessions(settings, plant)
+    assert planthub.session_id(live, "transcript") in _sessions(settings, plant)
     hub.runs[live]["files"]["egress/record.jsonl"] = RECORD_2
     hub.asked.clear()
     P.sync_now(settings, plant)

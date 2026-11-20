@@ -55,7 +55,10 @@ RECORD, CONNECTIONS, ADDRESSES, SCORES = (
     "config/compose.json",
     "score.json",
 )
-PART_FILE = {"transcript": RECORD, "network": CONNECTIONS, "scores": SCORES}  # jobs: the report
+PART_FILE = {"transcript": RECORD, "network": CONNECTIONS, "scores": SCORES}
+# Slurm's accounting of a run, which the hub makes its report's jobs from: the one file that
+# says how much there is of them without the report being read.
+ACCOUNTING = re.compile(r"logs/[^/]+\.sacct\.json")
 MAX_FILE = 64 << 30  # the most of one file this reads: a long run's record is gigabytes
 MAX_REPLY = 64 << 20  # the most one answer may hold; the hub sends a file 4 MiB at a time
 MAX_WHOLE = 16 << 20  # the most of a document or file read whole: the report, the scores
@@ -226,8 +229,8 @@ def session_id(run: str, part: str) -> str:
 def parts(root: Path) -> list[PlantPart]:
     """Every part of every run in the list on disk, as the pages' records: read from the
     disk each time it is asked for and kept nowhere, so no page leaves the list in memory.
-    A part the hub holds nothing of is not listed; jobs are, since the hub's report holds
-    them and only a run reads it."""
+    A part the hub holds nothing of is not listed. The jobs are as large as Slurm's
+    accounting of them on the hub, which is more than is sent: a run with none has no jobs."""
     out = []
     for entry in _entries(root):
         if entry.get("error"):
@@ -235,8 +238,11 @@ def parts(root: Path) -> list[PlantPart]:
         run, files = entry["id"], entry.get("files") or {}
         started = entry.get("started") or 0.0
         for part in plantlogs.PARTS:
-            size = files.get(PART_FILE[part]) if part in PART_FILE else None
-            if part in PART_FILE and not size:
+            if part == "jobs":
+                size = sum(n for path, n in files.items() if ACCOUNTING.fullmatch(path))
+            else:
+                size = files.get(PART_FILE[part])
+            if not size:
                 continue
             session = session_id(run, part)
             out.append(

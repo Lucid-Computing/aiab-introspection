@@ -113,7 +113,7 @@ class PlantPart:
     session_id: str
     part: str  # a key of PARTS
     run: str  # the hub's id of the run, <plant>~<folder>
-    size: int | None  # bytes the hub holds of the part; None for jobs, which its report holds
+    size: int | None  # bytes the hub holds of the part; for jobs, of Slurm's accounting
     state: str  # the hub's word for the run: live, finished, unfinished
     kind: str = ""
     parts: tuple = ()  # nothing is built here
