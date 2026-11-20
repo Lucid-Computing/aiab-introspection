@@ -180,11 +180,7 @@ async def _pull_request(settings: Settings, client: httpx.AsyncClient, matches) 
         or []
     )
     pr = next(
-        (
-            p
-            for p in prs
-            if matches(p["head"]["ref"]) and p["base"]["ref"] == settings.deploy_base
-        ),
+        (p for p in prs if matches(p["head"]["ref"]) and p["base"]["ref"] == settings.deploy_base),
         None,
     )
     if pr is None:
