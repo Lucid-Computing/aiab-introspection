@@ -2,7 +2,7 @@
 {% block head %}<style>
 .builder { display: block; width: 100%; height: calc(100vh - 150px); min-height: 640px; border: 1px solid var(--line, #d9d9d9); background: #fff; }
 .nodes-table td, .nodes-table th { vertical-align: top; }
-</style>{% if not snapshot %}<script src="/assets/sign.js" defer></script>{% endif %}{% endblock %}
+</style>{% if not snapshot %}<script src="/assets/sign.js" defer></script>{% endif %}{% if edit %}<script src="/assets/plan.js?v={{ asset_version }}" defer></script>{% endif %}{% endblock %}
 {% block content %}
 {% if snapshot %}<p class="crumb"><a href="/runs/{{ snapshot.id }}" class="link">← Run {{ snapshot.id }}</a></p>
 {% else %}<p class="crumb"><a href="/agreements" class="link">← Agreements</a></p>{% endif %}
@@ -29,12 +29,13 @@
   {% elif view.issue %}
   <button class="btn btn--ghost" disabled title="The box would reject this plan: {{ view.issue }}">Sign</button>
   {% elif edit %}
-  {# The builder saves in its frame, so this page's digest can be stale: the Sign screen re-reads it. #}
+  {# Save tells the builder frame to save (plan.js); the page's digest can be stale, so the Sign screen re-reads it. #}
+  <button class="btn btn--primary" id="plan-save" disabled>Save</button><span class="text-muted" id="plan-save-note" role="status"></span>
   <a class="btn btn--primary" href="{{ base }}/sign">Sign</a>
   {% else %}
   <a class="btn btn--ghost quick-sign" href="{{ base }}/sign" data-party="{{ user.party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[user.party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/plan"{% if server_certifies %} data-certify="/sign/certificate"{% endif %}>Sign</a>
   {% endif %}
-  <span class="text-muted"><a class="link" href="{{ base }}/plan/bundle.zip">plan.zip</a> is the folder the box runs · <a class="link" href="{{ base }}/sign">Keys and signatures</a></span>
+  <span class="text-muted"><a class="link" href="{{ base }}/plan/bundle.zip" download>plan.zip</a> · the plan files, to check the digest yourself</span>
   <a class="plan-history" href="{{ base }}/history" title="History: who changed what" aria-label="History"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>{% if view.history %}<span>{{ view.history | length }}</span>{% endif %}</a>
 </div>
 <p class="plan-state{% if view.signed_by_both %} ok{% endif %}">{% for party in parties %}{% set s = view.signatures[party] %}{% if s.status == 'ok' %}Signed by the {{ party }}{% if s.auto %} (by the server){% endif %}{% elif s.status == 'missing' %}Waiting for the {{ party }}{% else %}The {{ party }} signed an older version{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}.</p>

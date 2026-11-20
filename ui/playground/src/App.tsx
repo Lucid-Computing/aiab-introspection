@@ -27,6 +27,9 @@ interface Server {
 const fromServer = (issues: ServerIssue[]): Issue[] =>
   issues.map((i) => ({ severity: "error", message: i.message, nodeId: i.node ?? undefined, path: i.path }));
 
+/** Inside the plan page's frame: that page holds the Save button and the leave guard (plan.js). */
+const EMBEDDED = typeof window !== "undefined" && window.parent !== window;
+
 export default function App() {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
   // The plan panel (title, description, all issues) opens from the status button.
@@ -120,10 +123,24 @@ export default function App() {
     }
   };
 
-  // Saving is the Save button's job. Leaving with unsaved changes asks first.
+  // Saving is the Save button's job. Leaving with unsaved changes asks first (the plan page
+  // does both when the builder sits in its frame).
   const canSave = Boolean(AGREEMENT) && server.editable && dirty && nErr === 0 && !server.saving;
+  const saveRef = useRef<() => Promise<void>>(save);
+  saveRef.current = save;
+  const canSaveRef = useRef(canSave);
+  canSaveRef.current = canSave;
   useEffect(() => {
-    if (!dirty || !server.editable) return;
+    if (!AGREEMENT || !EMBEDDED) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin || e.source !== window.parent) return;
+      if (e.data?.type === "aiab-plan-save" && canSaveRef.current) void saveRef.current();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+  useEffect(() => {
+    if (!dirty || !server.editable || EMBEDDED) return;
     const warn = (e: BeforeUnloadEvent) => e.preventDefault();
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
@@ -181,6 +198,14 @@ export default function App() {
                 ? "not saved · fix the errors"
                 : "not saved"
               : `saved · ${server.digest.slice(7, 19)}…`;
+  const noteBad = Boolean(server.error) || (dirty && nErr > 0);
+  useEffect(() => {
+    if (!AGREEMENT || !EMBEDDED) return;
+    window.parent.postMessage(
+      { type: "aiab-plan", dirty, canSave, note: saveNote, bad: noteBad },
+      window.location.origin,
+    );
+  }, [dirty, canSave, saveNote, noteBad]);
 
   return (
     <ReactFlowProvider>
@@ -225,12 +250,12 @@ export default function App() {
                   ? `${nWarn} warning${nWarn === 1 ? "" : "s"}`
                   : "Valid"}
           </button>
-          {saveNote && (
+          {saveNote && !EMBEDDED && (
             <span className={`bar-note${server.error ? " bad" : dirty ? "" : " ok"}`} role="status">
               {saveNote}
             </span>
           )}
-          {AGREEMENT && server.editable && (
+          {AGREEMENT && server.editable && !EMBEDDED && (
             <button className="btn btn--sm" onClick={save} disabled={!canSave}>
               Save
             </button>
