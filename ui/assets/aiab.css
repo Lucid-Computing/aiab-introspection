@@ -557,7 +557,6 @@ code.hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var
 
 /* Runs page: one bar says what the agreement's filter takes from the chosen log, with Start. */
 .runs-box { margin: 0; font-size: var(--text-sm); color: var(--ink-2); }
-.runs-bar { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-3) var(--space-4); background: var(--paper-1); border: var(--border-strong); font-size: var(--text-sm); }
 
 /* New agreement: the copy choice keeps its dropdown readable on a narrow screen. */
 .choice--copy { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
@@ -651,11 +650,11 @@ select[hidden] { display: none !important; }
 .home { padding-bottom: 240px; }
 .home-art .hill { fill: var(--ink-1); }
 
-/* Header: the name chip and Log out are one size */
+/* Header: the name chip and Log out are one pair: same height, border and weight */
 .nav-links .chip, .nav-links .btn { display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; padding: 0 var(--space-3); font-size: var(--text-xs); line-height: 1; }
+.nav-links .chip { border: var(--border-ink); color: var(--ink-1); font-weight: 600; }
 .nav-links .chip .party-icon { vertical-align: middle; }
 .home-art .block { fill: var(--ink-1); }
-.runs-pick { gap: var(--space-2); flex-wrap: wrap; }
 
 /* ---- feedback: the button and menu, the form (base.html) and post-it notes (notes.js) ---- */
 /* The button sits over the bottom right of the window, about 80px tall with its label. The

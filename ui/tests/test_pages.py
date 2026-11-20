@@ -60,7 +60,11 @@ def test_page_renders(client, path):
 
 def test_runs_page_offers_the_signed_agreement_and_names_what_is_missing(client):
     html = client.get("/runs").text
-    assert 'agreement=bio" title' in html and "Plan to send" in html
+    # The agreement is picked from a dropdown; the chosen one is selected.
+    assert '<select name="agreement" aria-label="Agreement" onchange="this.form.submit()">' in html
+    assert '<option value="bio" selected>' in html
+    assert "Plan to send" in html and "Start the run" in html
+    assert "Left out" not in html and "See them on Logs" not in html
     assert "sha256:9b16420a35b9eea517ef88e6715726425d20387967ea40ff7e22f401cc2fcc9e" in html
     assert "lab.token in" in html  # the demo keys are missing, so the run is off
 
@@ -108,11 +112,10 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
         (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
 
     page = client.get("/runs?agreement=bio").text  # default: Dev Agent Logs
-    assert "from Dev Agent Logs" in page and "from Prod Agent Logs" not in page
-    assert 'name="logs" value="dev"' in page
+    assert 'name="logs" value="dev"' in page and 'name="logs" value="prod"' not in page
     assert 'class="srcsel"' not in page  # the log is the agreement's choice, not the page's
     page = client.get("/runs?agreement=bio&logs=prod").text
-    assert "from Prod Agent Logs" in page and "from Dev Agent Logs" not in page
+    assert 'name="logs" value="prod"' in page and 'name="logs" value="dev"' not in page
 
     started = {}
 
@@ -168,7 +171,7 @@ def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_pa
     monkeypatch.setattr(ui, "_run_preflight", ready)
     monkeypatch.setattr(ui.runs, "start_run", fake_start)
     monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
-    assert "from Plant Logs" in client.get("/runs?agreement=bio&logs=plant").text
+    assert 'name="logs" value="plant"' in client.get("/runs?agreement=bio&logs=plant").text
     response = client.post(
         "/runs/start", data={"agreement": "bio", "logs": "plant", "session": "s1"}
     )
@@ -266,7 +269,8 @@ def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_
     assert 'quick-sign" href="/a/bio/sign" data-party="lab" data-digest="sha256:' in plan
     assert 'data-upload="/a/bio/sign/upload" data-next="/a/bio/plan"' in plan
     assert "Waiting for the lab · Signed by the auditor." in plan
-    assert 'href="/a/bio/sign">Keys and signatures</a>' in plan
+    assert 'href="/a/bio/plan/bundle.zip" download>plan.zip</a> · the plan files' in plan
+    assert "Keys and signatures" not in plan
     listing = client.get("/agreements").text
     assert '<script src="/assets/sign.js" defer></script>' in listing
     assert 'quick-sign" href="/a/bio/sign" data-party="lab"' in listing
@@ -355,10 +359,11 @@ def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, mon
     for who in ("prod", "dev"):
         (logs / who).mkdir(parents=True, exist_ok=True)
         (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
-    # The edit above broke the signatures; the summary bar shows only for a runnable agreement.
+    # The edit above broke the signatures; Start the run shows only for a runnable agreement.
     monkeypatch.setattr(ui, "_runnable", lambda rows: rows)
     page = client.get("/runs?agreement=bio&logs=dev").text
-    assert "from Prod Agent Logs, as the agreement" in page and 'class="srcsel"' not in page
+    assert 'name="logs" value="prod"' in page and 'name="logs" value="dev"' not in page
+    assert 'class="srcsel"' not in page
     started = {}
 
     async def ready(_folder):
@@ -483,3 +488,29 @@ def test_log_owners_come_from_the_environment():
         "auditor2": ("caleb",),
     }
     assert log_owners_from_env({}) == {}
+
+
+def test_the_header_links_run_from_how_it_works_to_runs(client):
+    html = client.get("/runs").text
+    links = [
+        '<a class="nav-link " href="/how">How it works</a>',
+        '<a class="nav-link " href="/logs">Logs</a>',
+        '<a class="nav-link " href="/agreements">Agreements</a>',
+        '<a class="nav-link active" href="/runs">Runs</a>',
+    ]
+    at = [html.index(link) for link in links]
+    assert at == sorted(at)
+
+
+def test_editing_puts_save_before_sign_and_loads_the_leave_guard(client, tmp_path):
+    """While editing, the plan page's Save button drives the builder frame (plan.js) and
+    leaving with unsaved changes asks first; the frame itself shows no Save button."""
+    (tmp_path / "agreements/bio/signatures/lab.sig").unlink()
+    (tmp_path / "agreements/bio/signatures/auditor.sig").unlink()
+    page = client.post("/a/bio/plan/edit", follow_redirects=True).text
+    assert '<script src="/assets/plan.js?v=' in page
+    save = page.index('<button class="btn btn--primary" id="plan-save" disabled>Save</button>')
+    sign = page.index('<a class="btn btn--primary" href="/a/bio/sign">Sign</a>')
+    assert save < sign
+    assert 'id="plan-save-note" role="status"' in page
+    assert client.get("/assets/plan.js").status_code == 200
