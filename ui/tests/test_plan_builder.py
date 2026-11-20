@@ -119,6 +119,15 @@ def test_builder_endpoints_follow_login_lease_frozen_and_version(draft, monkeypa
     assert refused.json()["issues"][0]["node"] == "report"
     assert client.get(url).json()["digest"] == doc["digest"]
 
+    # Sessions that together pass what a run can send are not saved either.
+    large = json.loads(json.dumps(plan))
+    source = next(n for n in large["nodes"] if n["type"] == "input_logs")
+    source["config"]["filter"]["sessions"] = ["a", "b"]
+    monkeypatch.setattr(web, "_named_bytes", lambda named: len(named) * (30 << 20))
+    refused = client.put(url, json={"plan": large, "expect": doc["digest"]})
+    assert refused.status_code == 422 and "50 MB a run can send" in refused.json()["error"]
+    assert client.get(url).json()["digest"] == doc["digest"]
+
     saved = client.put(url, json={"plan": plan, "expect": doc["digest"]})
     assert saved.status_code == 200
     assert saved.json()["digest"] != doc["digest"]

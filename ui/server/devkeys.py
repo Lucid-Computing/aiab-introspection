@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"wrote {out}")
     print(f"start the UI with AIAB_TRUST_FILE={out}")
     print("make dev also sets AIAB_LAB_KEY and AIAB_LAB_CERTIFICATE from lab.key and lab.cert,")
-    print("and AIAB_AUDITOR_ROOT_KEY from auditor-root.key")
+    print("and AIAB_LAB_ROOT_KEY and AIAB_AUDITOR_ROOT_KEY from lab-root.key and auditor-root.key")
     return 0
 
 

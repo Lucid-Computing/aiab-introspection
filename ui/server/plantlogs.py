@@ -1,8 +1,9 @@
 """Plant Logs: the RSI plant's exports, read from a folder (MAC-467).
 
-The plant will later answer HTTP GETs (a pull API). Until then this module stands in for
-it, reading the plant's export files from the folder AIAB_PLANT_EXPORT names, on a laptop
-or on the Render disk. The exports are confidential and never go into git.
+The folder is kept up to date from the plant's hub when AIAB_PLANT_HUB_URL and
+AIAB_PLANT_HUB_KEY are set (``planthub`` fetches the runs and writes this layout), and is
+otherwise an export someone put where AIAB_PLANT_EXPORT names, on a laptop or on the Render
+disk. The exports are confidential and never go into git.
 
 A run is any folder holding ``records/*.jsonl``; next to it may sit ``jobs.csv`` and
 ``network.csv``, and ``scores.csv`` in it or its parent. The functions mirror the API:
@@ -10,6 +11,11 @@ A run is any folder holding ``records/*.jsonl``; next to it may sit ``jobs.csv``
     runs(root)               the runs and their sessions
     transcript(path)         the records, already in the box's format
     jobs(run) / network(run) / scores(run)
+
+With a hub to ask (``planthub``) there is no folder of exports: the hub's list of runs is
+kept on disk, by metadata only, and each part of a run (its transcript, its Slurm jobs, its
+network traffic, its scores) is one ``PlantPart``, a session with no text. A run's records
+are fetched from the hub only when an agreement runs on it (MAC-528).
 
 A records line is already a box record (stream, batch, offset, agent_id, session_id, ts,
 kind, content) and is sent as written, with one change: the batch. Every file in the
@@ -24,8 +30,10 @@ import csv
 import json
 import re
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from itertools import batched
 from pathlib import Path
 
 TABLE_AGENTS = {"plant-jobs": "Slurm jobs", "plant-network": "network", "plant-scores": "scores"}
@@ -82,6 +90,59 @@ class PlantRecord:
     @property
     def parts(self) -> list[tuple[str, str]]:
         return [(self.kind, self.box["content"])]
+
+
+PARTS = {  # a run's parts, in the order they are listed, and what each is called
+    "transcript": "transcript",
+    "jobs": "Slurm jobs",
+    "network": "network",
+    "scores": "scores",
+}
+
+
+@dataclass
+class PlantPart:
+    """One part of a run the plant's hub holds, by metadata only: what the lists and an
+    agreement's scope need, and nothing of what was said. Its records are fetched from the
+    hub when a run sends them (``planthub.write_records``)."""
+
+    id: str  # the session id, which the part's records carry
+    time: float  # when the run started
+    end: float  # when it stopped, or when it started for one still going
+    who: str  # the plant
+    session_id: str
+    part: str  # a key of PARTS
+    run: str  # the hub's id of the run, <plant>~<folder>
+    size: int | None  # bytes the hub holds of the part; None for jobs, which its report holds
+    state: str  # the hub's word for the run: live, finished, unfinished
+    kind: str = ""
+    parts: tuple = ()  # nothing is built here
+
+    @property
+    def when(self) -> str:
+        return datetime.fromtimestamp(self.time, UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    @property
+    def when_short(self) -> str:
+        return datetime.fromtimestamp(self.time, UTC).strftime("%b %d, %I:%M %p")
+
+    @property
+    def title_text(self) -> str:
+        return ""  # listed by metadata only
+
+    @property
+    def label(self) -> str:
+        folder = re.sub(r"^\d+-", "", self.run.partition("~")[2])
+        return f"{folder} · {PARTS[self.part]}"
+
+    @property
+    def size_text(self) -> str:
+        """How much the hub holds of the part, for the lists."""
+        if self.size is None:
+            return "size not listed"
+        if self.size < 1024 * 1024:
+            return f"{self.size / 1024:.1f} KB"
+        return f"{self.size / 1024 / 1024:.1f} MB"
 
 
 def _time(value: str) -> float:
@@ -194,15 +255,54 @@ TABLES = (  # file, the name its session carries, the column that dates a row
 )
 
 
+def table_files(paths: list[Path]) -> list[Path]:
+    """The jobs, network and scores files of the runs these transcripts belong to: what
+    else the index is made from, so it is made again when one of them changes."""
+    runs = {p.parent.parent for p in paths}
+    places = {d / name for run in runs for d in (run, run.parent) for name, _, _ in TABLES}
+    return sorted(p for p in places if p.is_file())
+
+
+def table_records(
+    label: str, rows: Iterable[dict], session: str, batch: int, before: float = 0.0
+) -> Iterator[tuple[float, dict]]:
+    """One table of a run as box records, each with its time: a record per job or score
+    row; network rows go in groups, as there are thousands. ``rows`` are read one group at
+    a time, so a long table is never held whole. A row with no time takes the time of the
+    record before it (``before`` for the first)."""
+    clocks = next(c for _, name, c in TABLES if name == label)
+    size = NETWORK_ROWS_PER_RECORD if label == "network" else 1
+    for offset, group in enumerate(batched(rows, size)):
+        when = next((_time(group[0].get(c) or "") for c in clocks if group[0].get(c)), 0.0)
+        before = when = when or before
+        if size == 1:
+            content = ", ".join(f"{k}={v}" for k, v in group[0].items())
+        else:
+            content = ",".join(group[0]) + "\n" + "\n".join(",".join(r.values()) for r in group)
+        yield (
+            when,
+            {
+                "stream": "proxy",
+                "batch": batch,
+                "offset": offset,
+                "agent_id": f"plant-{label}",
+                "session_id": session,
+                "ts": datetime.fromtimestamp(when, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "kind": "tool_result",
+                "content": content,
+            },
+        )
+
+
 def _tables(root: Path, paths: list[Path], batch: int) -> list[PlantRecord]:
     """A run's other logs as sessions of their own, so an agreement can read them next to,
-    or instead of, the transcript: its Slurm jobs, its network traffic and its scores. One
-    record per job or score row; network rows go in groups, as there are thousands. Each
-    table is one session named ``<run>-jobs``, ``<run>-network`` or ``<folder>-scores``."""
+    or instead of, the transcript: its Slurm jobs, its network traffic and its scores
+    (``table_records``). Each table is one session named ``<run>-jobs``, ``<run>-network``
+    or ``<folder>-scores``."""
     out: list[PlantRecord] = []
     seen: set[Path] = set()
     for run in sorted({p.parent.parent for p in paths}):
-        for name, label, clocks in TABLES:
+        for name, label, _ in TABLES:
             path = run / name if (run / name).is_file() else run.parent / name
             if not path.is_file() or path.resolve() in seen:
                 continue
@@ -210,31 +310,12 @@ def _tables(root: Path, paths: list[Path], batch: int) -> list[PlantRecord]:
             rows = _read_csv(path)
             if not rows:
                 continue
-            size = NETWORK_ROWS_PER_RECORD if label == "network" else 1
             session = f"{path.parent.name}-{label}"
-            for offset, i in enumerate(range(0, len(rows), size)):
-                group = rows[i : i + size]
-                when = next((_time(group[0].get(c) or "") for c in clocks if group[0].get(c)), 0.0)
-                when = when or (out[-1].time if out else 0.0)
-                if size == 1:
-                    content = ", ".join(f"{k}={v}" for k, v in group[0].items())
-                else:
-                    content = (
-                        ",".join(group[0]) + "\n" + "\n".join(",".join(r.values()) for r in group)
-                    )
-                box = {
-                    "stream": "proxy",
-                    "batch": batch,
-                    "offset": offset,
-                    "agent_id": f"plant-{label}",
-                    "session_id": session,
-                    "ts": datetime.fromtimestamp(when, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "kind": "tool_result",
-                    "content": content,
-                }
+            before = out[-1].time if out else 0.0
+            for when, box in table_records(label, rows, session, batch, before):
                 out.append(
                     PlantRecord(
-                        id=f"{batch}:{offset}",
+                        id=f"{batch}:{box['offset']}",
                         time=when,
                         who=f"plant-{label}",
                         session_id=session,

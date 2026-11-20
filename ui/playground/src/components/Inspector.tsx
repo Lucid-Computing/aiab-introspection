@@ -5,6 +5,7 @@ import { accepts, INPUT_RULES, inputType, outputPort } from "../plan/ports";
 import { CLASSIFICATION_PATHS, classifierLabels, fieldPath, reportSource } from "../plan/report";
 import { blockPython, narrowing, planPython } from "../plan/python";
 import { isQuery, parseQuery, type Query, queryCode } from "../plan/query";
+import { type Ticked, allTicked, fits, pageCount, pageOf, sizeText, toggleMany, toggleOne, total } from "../plan/sessionPick";
 import { describeNode } from "../plan/shape";
 import { outputSpec } from "../plan/spec";
 import {
@@ -387,13 +388,18 @@ interface SessionRow {
   title: string;
   who: string;
   started: string;
-  records: number;
+  /** null for a part of a plant's run on its hub: its records are fetched by a run. */
+  records: number | null;
+  /** What a run sends for it, in bytes; for a part on the hub, its size there. */
+  bytes: number;
 }
 
 /**
- * Which sessions of the log source the agreement reads: none ticked means all of them.
- * The list comes from the agreement UI by metadata only; without a server (the standalone
- * playground) the ids are typed one per line.
+ * Which sessions the agreement reads: the ones ticked, and none to begin with. A run can
+ * send only so much, so the picker shows each session's size and the total against that
+ * limit, and takes no tick that would pass it. The list comes from the agreement UI by metadata only; without a server (the standalone
+ * playground) the ids are typed one per line. Ticking has three layers: all, the sessions
+ * of the page shown (50 a page), and one session (plan/sessionPick.ts).
  */
 function SessionPicker({
   source,
@@ -408,9 +414,11 @@ function SessionPicker({
   // (with its title) after the pane moves to another source.
   const [bySource, setBySource] = useState<Record<string, SessionRow[]> | null>(null);
   const [q, setQ] = useState("");
-  // Unticking Select all clears the ticks on screen. The plan itself cannot name "no
-  // session": none named means every session of the log source, which Selected says.
-  const [cleared, setCleared] = useState(false);
+  // The most a run can send, in bytes, as the server says; null when it sets no limit.
+  const [limit, setLimit] = useState<number | null>(null);
+  // How many sessions the last Select all or Select this page left out for their size.
+  const [left, setLeft] = useState(0);
+  const [page, setPage] = useState(0);
   useEffect(() => {
     let live = true;
     if (!AGREEMENT) return;
@@ -418,7 +426,10 @@ function SessionPicker({
       SOURCE_OPTIONS.map((o) =>
         fetch(`/logs/sessions.json?logs=${encodeURIComponent(o.id)}`, { credentials: "same-origin" })
           .then((r) => (r.ok ? r.json() : null))
-          .then((body) => [o.id, body && body.source === o.id ? (body.sessions as SessionRow[]) : []] as const)
+          .then((body) => {
+            if (live && body && typeof body.limit === "number") setLimit(body.limit);
+            return [o.id, body && body.source === o.id ? (body.sessions as SessionRow[]) : []] as const;
+          })
           .catch(() => [o.id, [] as SessionRow[]] as const),
       ),
     ).then((pairs) => live && setBySource(Object.fromEntries(pairs)));
@@ -426,34 +437,27 @@ function SessionPicker({
       live = false;
     };
   }, []);
-  useEffect(() => setCleared(false), [source]);
+  useEffect(() => setLeft(0), [source]);
+  useEffect(() => setPage(0), [source, q]);
   const rows = bySource ? (bySource[source] ?? []) : null;
   const ids = (rows ?? []).map((r) => r.id);
-  const here = new Set(ids);
   const chosen = new Set(value);
-  const where = new Map<string, { title: string; source: string }>();
+  const where = new Map<string, { title: string; source: string; bytes: number }>();
   for (const [id, list] of Object.entries(bySource ?? {}))
-    for (const r of list) where.set(r.id, { title: r.title, source: sourceLabel(id) });
+    for (const r of list) where.set(r.id, { title: r.title, source: sourceLabel(id), bytes: r.bytes ?? 0 });
+  const size = (id: string) => where.get(id)?.bytes ?? 0;
+  const sum = total(value, size);
   const needle = q.trim().toLowerCase();
   const shown = (rows ?? []).filter((r) => !needle || `${r.title} ${r.who} ${r.id}`.toLowerCase().includes(needle));
-  // None named means every session of this source. Otherwise this source is "all" when
-  // each of its sessions is named.
-  const implicit = value.length === 0 && !cleared;
-  const all = implicit || (ids.length > 0 && ids.every((id) => chosen.has(id)));
-  const toggle = (id: string) => {
-    setCleared(false);
-    onChange(implicit ? ids.filter((x) => x !== id) : chosen.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  const pages = pageCount(shown.length);
+  const at = Math.min(page, pages - 1);
+  const onPage = pageOf(shown, at);
+  const pageIds = onPage.map((r) => r.id);
+  const take = (next: Ticked) => {
+    setLeft(next.left);
+    onChange(next.value);
   };
-  const toggleAll = () => {
-    if (all) {
-      setCleared(true);
-      onChange(value.filter((x) => !here.has(x)));
-    } else {
-      setCleared(false);
-      const others = value.filter((x) => !here.has(x));
-      onChange(others.length ? [...others, ...ids] : []);
-    }
-  };
+  const most = limit === null ? "" : `${Math.round(limit / (1 << 20))} MB`;
   return (
     <div className="f">
       <span className="f-label">Sessions</span>
@@ -469,32 +473,63 @@ function SessionPicker({
           <div className="sess-pick">
             {rows.length > 0 && (
               <label className="sess-all">
-                <input type="checkbox" checked={all} onChange={toggleAll} />
+                <input type="checkbox" checked={allTicked(value, ids)} onChange={() => take(toggleMany(value, ids, size, limit))} />
                 <span>Select all</span>
               </label>
             )}
-            {shown.map((r) => (
-              <label key={r.id}>
-                <input type="checkbox" checked={implicit || chosen.has(r.id)} onChange={() => toggle(r.id)} />
-                <span>
-                  {r.title}
-                  <span className="muted"> · {r.records} records</span>
-                </span>
+            {pages > 1 && (
+              <label className="sess-page">
+                <input type="checkbox" checked={allTicked(value, pageIds)} onChange={() => take(toggleMany(value, pageIds, size, limit))} />
+                <span>Select this page</span>
               </label>
-            ))}
+            )}
+            {onPage.map((r) => {
+              const full = !chosen.has(r.id) && !fits(value, r.id, size, limit);
+              return (
+                <label key={r.id} className={full ? "sess-full" : undefined} title={full ? `over the ${most} a run can send` : undefined}>
+                  <input type="checkbox" checked={chosen.has(r.id)} disabled={full} onChange={() => take(toggleOne(value, r.id, size, limit))} />
+                  <span>
+                    {r.title}
+                    <span className="muted">
+                      {r.records != null && ` · ${r.records} records`} · {sizeText(r.bytes ?? 0)}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
             {shown.length === 0 && (
               <span className="f-hint">
                 {SOURCE_OPTIONS.some((o) => o.id === source) ? "No session here." : "Pick a log source first."}
               </span>
             )}
           </div>
-          <span className="f-label">Selected</span>
-          {implicit ? (
-            <span className="f-hint">
-              All {rows.length} sessions of {sourceLabel(source)}
+          {pages > 1 && (
+            <div className="sess-pager">
+              <button type="button" className="btn btn--ghost btn--sm" disabled={at === 0} onClick={() => setPage(at - 1)}>
+                ← newer
+              </button>
+              <span className="f-hint">
+                page {at + 1} of {pages}
+              </span>
+              <button type="button" className="btn btn--ghost btn--sm" disabled={at >= pages - 1} onClick={() => setPage(at + 1)}>
+                older →
+              </button>
+            </div>
+          )}
+          {left > 0 && (
+            <span className="f-hint danger">
+              {left} not ticked: over the {most} a run can send.
             </span>
-          ) : value.length === 0 ? (
-            <span className="f-hint">None. Until one is ticked, the plan reads every session.</span>
+          )}
+          <span className="f-label">Selected</span>
+          {value.length > 0 && (
+            <span className="f-hint">
+              {value.length} session{value.length === 1 ? "" : "s"} · {sizeText(sum)}
+              {limit !== null && ` of ${most}`}
+            </span>
+          )}
+          {value.length === 0 ? (
+            <span className="f-hint">None. A run sends the sessions ticked here.</span>
           ) : (
             <ul className="sess-chosen">
               {value.map((id) => {
@@ -511,7 +546,7 @@ function SessionPicker({
                         `${id} · not in any log source here`
                       )}
                     </span>
-                    <button type="button" aria-label="Remove" onClick={() => onChange(value.filter((x) => x !== id))}>
+                    <button type="button" aria-label="Remove" onClick={() => take({ value: value.filter((x) => x !== id), left: 0 })}>
                       ×
                     </button>
                   </li>

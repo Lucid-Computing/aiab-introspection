@@ -111,6 +111,12 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
         (logs / who).mkdir(parents=True)
         (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
 
+    # An agreement that names no session sends none: the page says so.
+    page = client.get("/runs?agreement=bio").text
+    assert "names no session" in page and 'name="session"' not in page
+    named = {"shared"}
+    monkeypatch.setattr(ui.runs, "plan_sessions", lambda folder: named)
+
     page = client.get("/runs?agreement=bio").text  # default: Dev Agent Logs
     assert 'name="logs" value="dev"' in page and 'name="logs" value="prod"' not in page
     assert 'class="srcsel"' not in page  # the log is the agreement's choice, not the page's
@@ -123,21 +129,49 @@ def test_runs_page_and_run_start_follow_the_chosen_log_source(client, tmp_path, 
         return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
 
     def fake_start(settings, user, agreement, folder, records, label=None, sent=None):
-        started.update(records=records, label=label)
+        # The run's records come as a file, one a line, which the run takes for its own.
+        lines = records.read_text().splitlines()
+        started.update(records=[json.loads(line) for line in lines], label=label)
         return "run-1"
 
     monkeypatch.setattr(ui, "_run_preflight", ready)
     monkeypatch.setattr(ui.runs, "start_run", fake_start)
     monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
+
+    # And a start is refused when no session is named.
+    named.clear()
+    response = client.post(
+        "/runs/start", data={"agreement": "bio", "logs": "prod", "session": "shared"}
+    )
+    assert "names%20no%20session" in response.headers["location"] and not started
+    named.add("shared")
     response = client.post(
         "/runs/start", data={"agreement": "bio", "logs": "prod", "session": "shared"}
     )
     assert response.status_code == 303 and response.headers["location"] == "/runs/run-1"
-    assert [r["content"] for r in started["records"]] == ["prod prompt"]
+    # The chosen source's records come first. A session named by the agreement is sent from
+    # every source that holds one of that id, so the other's follow.
+    assert [r["content"] for r in started["records"]] == ["prod prompt", "dev prompt"]
     assert "from Prod Agent Logs" in started["label"]
     response = client.post("/runs/start", data={"agreement": "bio", "session": "shared"})
-    assert [r["content"] for r in started["records"]] == ["dev prompt"]
+    assert [r["content"] for r in started["records"]] == ["dev prompt", "prod prompt"]
     assert "from Dev Agent Logs" in started["label"]
+
+    # The builder is told each session's size and the most a run can send.
+    listing = client.get("/logs/sessions.json?logs=prod").json()
+    assert listing["limit"] == 50 << 20 and listing["sessions"][0]["bytes"] > 0
+
+    # Over the most a run may send (sizes change after an agreement is signed): a start is
+    # refused and nothing of it is left in the runs folder.
+    small = replace(ui.settings, max_send_mb=0.00001)  # about 10 bytes
+    monkeypatch.setattr(ui, "settings", small)
+    assert ui._named_bytes({"shared"}) > 10
+    started.clear()
+    response = client.post(
+        "/runs/start", data={"agreement": "bio", "logs": "prod", "session": "shared"}
+    )
+    assert "run%20can%20send" in response.headers["location"].replace("+", "%20")
+    assert not started and not list(small.runs_dir.glob(".incoming-*"))
 
 
 def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_path, monkeypatch):
@@ -165,12 +199,15 @@ def test_a_plant_session_is_sent_to_the_box_as_the_plant_wrote_it(client, tmp_pa
         return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
 
     def fake_start(settings, user, agreement, folder, records, label=None, sent=None):
-        started.update(records=records, label=label)
+        # The run's records come as a file, one a line, which the run takes for its own.
+        lines = records.read_text().splitlines()
+        started.update(records=[json.loads(line) for line in lines], label=label)
         return "run-1"
 
     monkeypatch.setattr(ui, "_run_preflight", ready)
     monkeypatch.setattr(ui.runs, "start_run", fake_start)
     monkeypatch.setattr(ui.pv, "record_change", lambda *a, **k: None)
+    monkeypatch.setattr(ui.runs, "plan_sessions", lambda folder: {"s1"})
     assert 'name="logs" value="plant"' in client.get("/runs?agreement=bio&logs=plant").text
     response = client.post(
         "/runs/start", data={"agreement": "bio", "logs": "plant", "session": "s1"}
@@ -353,12 +390,14 @@ def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, mon
 
     plan_file = tmp_path / "agreements/bio/plan.json"
     plan = json.loads(plan_file.read_text())
-    next(n for n in plan["nodes"] if n["type"] == "input_logs")["config"]["source"] = "prod"
+    source = next(n for n in plan["nodes"] if n["type"] == "input_logs")["config"]
+    source["source"] = "prod"
+    source["filter"]["sessions"] = ["shared"]
     plan_file.write_text(json.dumps(plan))
+    # Only prod holds the session named: one of the same id in dev would be sent as well.
     logs = tmp_path / "logs"
-    for who in ("prod", "dev"):
-        (logs / who).mkdir(parents=True, exist_ok=True)
-        (logs / who / "live.jsonl").write_text(_record(f"{who}-user", f"{who} prompt"))
+    (logs / "prod").mkdir(parents=True, exist_ok=True)
+    (logs / "prod" / "live.jsonl").write_text(_record("prod-user", "prod prompt"))
     # The edit above broke the signatures; Start the run shows only for a runnable agreement.
     monkeypatch.setattr(ui, "_runnable", lambda rows: rows)
     page = client.get("/runs?agreement=bio&logs=dev").text
@@ -370,7 +409,9 @@ def test_a_run_reads_the_log_source_the_input_filter_names(client, tmp_path, mon
         return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
 
     def fake_start(settings, user, agreement, folder, records, label=None, sent=None):
-        started.update(records=records, label=label)
+        # The run's records come as a file, one a line, which the run takes for its own.
+        lines = records.read_text().splitlines()
+        started.update(records=[json.loads(line) for line in lines], label=label)
         return "run-1"
 
     monkeypatch.setattr(ui, "_run_preflight", ready)
@@ -452,6 +493,9 @@ def test_an_auditor_sees_only_the_sessions_sent_as_them(client, tmp_path, monkey
     assert "s-mine" in page and "s-dev" not in page and "dev-user" not in page
     assert 'name="who"' not in page and "1 requests on disk, sent as auditor1" in page
     assert "dev prompt" not in client.get("/logs?logs=dev&session=s-dev").text
+    # The agreement names both sessions: a run sends the ones named, and of those an
+    # auditor only their own.
+    monkeypatch.setattr(ui.runs, "plan_sessions", lambda folder: {"s-dev", "s-mine"})
     runs_page = client.get("/runs?agreement=bio&logs=dev").text
     assert 'value="s-mine"' in runs_page and "s-dev" not in runs_page
 
@@ -461,7 +505,8 @@ def test_an_auditor_sees_only_the_sessions_sent_as_them(client, tmp_path, monkey
         return {"ok": True, "missing": [], "release": None, "plan_digest": "x"}
 
     def fake_start(settings, user, agreement, folder, records, label=None, sent=None):
-        started.update(records=records)
+        # The run's records come as a file, one a line.
+        started.update(records=[json.loads(x) for x in records.read_text().splitlines()])
         return "run-1"
 
     monkeypatch.setattr(ui, "_run_preflight", ready)

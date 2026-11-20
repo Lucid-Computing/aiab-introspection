@@ -38,7 +38,7 @@ class LogSource:
     kind: str = "proxy"  # "proxy": the logging proxy's JSON lines; "slack", "github": an export;
     # "logger": the proxy's log server (metadata here, sealed records for a run; ``url`` and
     # ``key`` are then the log server's);
-    # "plant": the RSI plant's exports (server.plantlogs)
+    # "plant": the RSI plant's exports (server.plantlogs), a folder or fetched from the hub
     root: Path | None = None  # a folder kept elsewhere (the Slack export, a static copy)
 
     def path(self, settings: Settings) -> Path:
@@ -56,9 +56,17 @@ class LogSource:
         return self.kind in ("slack", "github")
 
     @property
+    def hub(self) -> bool:
+        """Whether this is Plant Logs read from the plant's hub: its runs are listed by
+        metadata and fetched only when an agreement runs on them (server.planthub)."""
+        return self.kind == "plant" and bool(self.url)
+
+    @property
     def fetches(self) -> bool:
-        """Whether this server downloads the source itself (Refresh, the prefetch thread)."""
-        return self.kind in ("proxy", "logger") and bool(self.key)
+        """Whether this server downloads the source itself (Refresh, the prefetch thread):
+        a proxy or its log server with its key, or Plant Logs with a hub to ask
+        (server.planthub)."""
+        return bool(self.key) and (self.kind in ("proxy", "logger") or self.hub)
 
 
 @dataclass(frozen=True)
@@ -91,14 +99,22 @@ class Settings:
     log_owners: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     anthropic_api_key: str | None = field(default=None, repr=False)
-    # AIAB_LAB_KEY: the lab's signing key (base64 raw Ed25519, the format of lab.key from
-    # make dev-keys) and AIAB_LAB_CERTIFICATE: the certificate the lab's root gave it (the
-    # JSON line in lab.cert). Both set, the Sign screen offers Lab Sign, a demo-only button
-    # that signs the shown version as the lab with this key, and every page says DEV MODE;
-    # anyone logged in can then sign as the lab. The lab's root stays with the lab.
-    # Prototype only.
+    # AIAB_LAB_KEY: the server's lab signing key (base64 raw Ed25519, the format of lab.key
+    # from make dev-keys). Its certificate comes from AIAB_LAB_ROOT_KEY when the server holds
+    # the lab root, otherwise from AIAB_LAB_CERTIFICATE (the JSON line in lab.cert). With a
+    # working key, the lab card on the Sign screen offers Sign to everyone who is not a lab
+    # member, which signs the shown version as the lab with this key. Prototype only.
     lab_signing_key: str | None = field(default=None, repr=False)
     lab_signing_certificate: str | None = None
+    # AIAB_LAB_ROOT_KEY: the lab root's private key (base64 raw Ed25519). Set, the server
+    # certifies the signing key each lab member's browser makes on their first Sign, the way
+    # AIAB_AUDITOR_ROOT_KEY does for auditors, and certifies AIAB_LAB_KEY itself. Prototype
+    # only: whoever controls the server can sign as the lab (THREAT_MODEL.md).
+    lab_root_key: str | None = field(default=None, repr=False)
+    # AIAB_LAB_SIGNER_AUTHORIZED_BY: who allowed the server to sign as the lab, shown as
+    # "Authorized by" on the lab card's Sign. The certificate names no issuer, so this is
+    # the only place the name comes from.
+    lab_signer_authorized_by: str | None = None
     # AIAB_AUDITOR_ROOT_KEY: the auditor root's private key (base64 raw Ed25519). Set, the
     # server certifies the signing key each logged-in auditor's browser makes on its first
     # Sign, so every auditor has a key of their own and nobody sets anything up. Prototype
@@ -129,6 +145,10 @@ class Settings:
     feedback_email_to: str | None = field(default=None, repr=False)
     feedback_email_from: str | None = None
     feedback_note_delay: float = 300.0
+    # The most a run may send, in MB of records (AIAB_MAX_SEND_MB). The export and submit
+    # steps hold every record of a run at once, about 4 MB of memory for each MB sent
+    # (measured: 245 MB at 50 MB, 354 MB at 100 MB), and so does the box. 0: no limit.
+    max_send_mb: float = 50.0
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_user: str | None = None
@@ -230,6 +250,8 @@ def load_settings() -> Settings:
         anthropic_api_key=env.get("ANTHROPIC_API_KEY", "").strip() or None,
         lab_signing_key=env.get("AIAB_LAB_KEY", "").strip() or None,
         lab_signing_certificate=env.get("AIAB_LAB_CERTIFICATE", "").strip() or None,
+        lab_root_key=env.get("AIAB_LAB_ROOT_KEY", "").strip() or None,
+        lab_signer_authorized_by=env.get("AIAB_LAB_SIGNER_AUTHORIZED_BY", "").strip() or None,
         auditor_root_key=env.get("AIAB_AUDITOR_ROOT_KEY", "").strip() or None,
         oidc_issuer=env.get("OIDC_ISSUER", "").strip().rstrip("/") or None,
         oidc_client_id=env.get("OIDC_CLIENT_ID", "").strip() or None,
@@ -243,6 +265,7 @@ def load_settings() -> Settings:
         feedback_email_to=env.get("AIAB_FEEDBACK_EMAIL_TO", "").strip() or None,
         feedback_email_from=env.get("AIAB_FEEDBACK_EMAIL_FROM", "").strip() or None,
         feedback_note_delay=float(env.get("AIAB_FEEDBACK_NOTE_DELAY", "300") or 300),
+        max_send_mb=float(env.get("AIAB_MAX_SEND_MB", "50") or 0),
         smtp_host=env.get("AIAB_SMTP_HOST", "").strip() or None,
         smtp_port=int(env.get("AIAB_SMTP_PORT", "587") or 587),
         smtp_user=env.get("AIAB_SMTP_USER", "").strip() or None,
@@ -273,9 +296,10 @@ def log_sources_from_env(
     AIAB_SLACK_EXPORT names, or, without one, opened from the committed bundle with
     AIAB_SLACK_EXPORT_KEY into AIAB_LOGS_DIR/slack at start (server.slackexport). GitHub
     Logs, the organisation's public repositories, works the same way with AIAB_GITHUB_EXPORT
-    and AIAB_GITHUB_EXPORT_KEY (server.githubexport). Plant Logs, the RSI plant's exports,
-    is read in place from the folder AIAB_PLANT_EXPORT names (server.plantlogs), never
-    from git.
+    and AIAB_GITHUB_EXPORT_KEY (server.githubexport). Plant Logs, the RSI plant's runs, is
+    fetched from the hub at AIAB_PLANT_HUB_URL with the reader's token AIAB_PLANT_HUB_KEY
+    into AIAB_LOGS_DIR/plant (server.planthub); without both, it is an export read in place
+    from the folder AIAB_PLANT_EXPORT names (server.plantlogs). Never from git.
 
     A proxy is read through its log server instead when both of that source's log server
     settings are set: AIAB_LOG_SERVER_URL and AIAB_LOG_SERVER_KEY for production's,
@@ -287,6 +311,9 @@ def log_sources_from_env(
     github = env.get("AIAB_GITHUB_EXPORT", "").strip()
     github_key = env.get("AIAB_GITHUB_EXPORT_KEY", "").strip() or None
     plant = env.get("AIAB_PLANT_EXPORT", "").strip()
+    hub = env.get("AIAB_PLANT_HUB_URL", "").strip().rstrip("/")
+    hub_key = env.get("AIAB_PLANT_HUB_KEY", "").strip() or None
+    from_hub = bool(hub and hub_key)
     every = (
         _log_server(env, "prod", "Prod Agent Logs", "AIAB_LOG_SERVER")
         or LogSource(
@@ -333,13 +360,13 @@ def log_sources_from_env(
         LogSource(
             id="plant",
             label="Plant Logs",
-            url="",
-            header="",
-            key=None,
-            key_env="AIAB_PLANT_EXPORT",
+            url=hub if from_hub else "",
+            header="authorization" if from_hub else "",
+            key=hub_key if from_hub else None,
+            key_env="AIAB_PLANT_HUB_KEY" if from_hub else "AIAB_PLANT_EXPORT",
             folder="plant",
             kind="plant",
-            root=Path(plant).resolve() if plant else None,
+            root=None if from_hub else (Path(plant).resolve() if plant else None),
         ),
     )
     if offered is None:

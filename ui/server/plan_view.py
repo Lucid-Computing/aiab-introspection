@@ -252,7 +252,7 @@ def load_plan_view(settings: Settings) -> PlanView:
     ) < len(PARTIES):
         for entry in signatures.values():
             entry["status"], entry["detail"] = "invalid", "the same signing key for both parties"
-    # "auto": the lab signature was made with the server's own lab key (Lab Sign). It
+    # "auto": the lab signature was made with the server's own lab key (Sign on the lab card). It
     # freezes the plan like any other signature; only the wording differs.
     server_lab = server_public_key(settings, "lab")
     lab = signatures["lab"]
@@ -261,6 +261,7 @@ def load_plan_view(settings: Settings) -> PlanView:
         and lab["status"] == "ok"
         and key_bytes(lab.get("signing_key") or "") == key_bytes(server_lab)
     )
+    lab["pressed_by"] = _lab_sign_presser(plan_dir, plan_digest) if lab["auto"] else None
     frozen = any(s["status"] == "ok" for s in signatures.values())
     stale = [r for r, s in signatures.items() if s["status"] == "invalid"]
     state, badge = agreement_state(signatures, frozen, issue)
@@ -538,21 +539,25 @@ def delete_signatures(settings: Settings, actor: dict[str, str] | None = None) -
     return removed
 
 
-SERVER_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for Lab Sign
+SERVER_SIGNER = {"party": "lab", "username": "server"}  # the change log's name for its Sign
 
-# Prototype shortcut: the server may hold the lab's certified signing key and sign a
-# version as the lab when anyone logged in presses Lab Sign, a button for the demo
-# (AIAB_LAB_KEY), and the auditor's root and certify each auditor's
-# browser key (AIAB_AUDITOR_ROOT_KEY). Whoever controls the server can then sign as both
+# Prototype shortcut: the server may hold each party's root and certify the key each
+# member's browser makes (AIAB_LAB_ROOT_KEY, AIAB_AUDITOR_ROOT_KEY), and a lab signing key
+# of its own (AIAB_LAB_KEY) that signs a version as the lab when someone who is not a lab
+# member presses Sign on the lab card. Whoever controls the server can then sign as both
 # parties. THREAT_MODEL.md, "Prototype shortcut", lists what changes for the real version.
 SERVER_KEY_ENV = {"lab": ("AIAB_LAB_KEY", "AIAB_LAB_CERTIFICATE")}
-ROOT_KEY_ENV = {"auditor": "AIAB_AUDITOR_ROOT_KEY"}
+ROOT_KEY_ENV = {"lab": "AIAB_LAB_ROOT_KEY", "auditor": "AIAB_AUDITOR_ROOT_KEY"}
 
 
 def _server_secrets(settings: Settings, party: str) -> tuple[str | None, str | None]:
     if party == "lab":
         return settings.lab_signing_key, settings.lab_signing_certificate
     return None, None
+
+
+def _root_secret(settings: Settings, party: str) -> str | None:
+    return {"lab": settings.lab_root_key, "auditor": settings.auditor_root_key}.get(party)
 
 
 def server_key(settings: Settings, party: str) -> Any | None:
@@ -569,8 +574,12 @@ def server_public_key(settings: Settings, party: str) -> str | None:
 
 
 def server_certificate(settings: Settings, party: str) -> dict[str, Any] | None:
-    """The certificate the party's root gave the server's signing key, or None when unset
-    or not JSON."""
+    """The certificate the party's root gave the server's signing key: made here when the
+    server holds that trusted root, otherwise read from the variable (None when unset or
+    not JSON)."""
+    public = server_public_key(settings, party)
+    if public is not None and server_certifies(settings, party):
+        return make_certificate(issuer_root(settings, party), party, public)
     _, text = _server_secrets(settings, party)
     if not text:
         return None
@@ -588,6 +597,8 @@ def server_problem(settings: Settings, party: str) -> str | None:
     public = server_public_key(settings, party)
     if public is None:
         return f"{key_env} is not a base64 Ed25519 private key"
+    if _root_secret(settings, party) and not server_certifies(settings, party):
+        return issuer_problem(settings, party)
     certificate = server_certificate(settings, party)
     if certificate is None:
         return f"{cert_env} is not set, or is not the JSON line sign_digest.py certify printed"
@@ -629,13 +640,13 @@ def _private_key(raw: str | None) -> Any | None:
 
 def issuer_root(settings: Settings, party: str) -> Any | None:
     """The party's root private key, when this server holds it to certify browser keys."""
-    return _private_key(settings.auditor_root_key if party == "auditor" else None)
+    return _private_key(_root_secret(settings, party))
 
 
 def issuer_problem(settings: Settings, party: str) -> str | None:
     """Why the server cannot certify keys for `party`: a malformed root, or not the root
     production trusts. None when it can, or when it holds no root for the party."""
-    raw = settings.auditor_root_key if party == "auditor" else None
+    raw = _root_secret(settings, party)
     if not raw:
         return None
     root = issuer_root(settings, party)
@@ -707,10 +718,21 @@ def issue_certificate(
     return "ok", certificate
 
 
+def _lab_sign_presser(plan_dir: Path, plan_digest: str) -> str | None:
+    """Who pressed Sign on the lab card for this version, from the change log lab_sign
+    wrote. None when the log has no such line (a signature made before it was recorded)."""
+    marker = f"signed version {plan_digest[7:19]} with the server's lab key; Sign pressed by "
+    for entry in load_history(plan_dir):
+        detail = str(entry.get("detail", ""))
+        if entry.get("where") == "signature: lab" and detail.startswith(marker):
+            return detail[len(marker) :].split(";", 1)[0] or None
+    return None
+
+
 def lab_sign(
     settings: Settings, actor: dict[str, str], shown_digest: str | None = None
 ) -> tuple[str, str]:
-    """Lab Sign (prototype, for the demo): sign the current version as the lab with the
+    """Sign on the lab card (prototype): sign the current version as the lab with the
     server's certified lab key, for whoever pressed the button, auditor included. Returns
     ("ok", digest) or ("error", why). Refuses when the server holds no working lab key, the
     box would reject the plan, the plan changed since `shown_digest` was shown, or a valid
@@ -730,12 +752,14 @@ def lab_sign(
         return "error", "the lab has already signed this version"
     _write_server_signature(settings, "lab", view.digest)
     who = actor.get("username") or "someone"
+    authorized = settings.lab_signer_authorized_by or "nobody named"
     record_change(
         settings,
         SERVER_SIGNER,
         "signature",
         "signature: lab",
-        f"signed version {view.digest[7:19]} with the server's lab key; Lab Sign pressed by {who}",
+        f"signed version {view.digest[7:19]} with the server's lab key; Sign pressed by {who};"
+        f" authorized by {authorized}",
     )
     return "ok", view.digest
 
