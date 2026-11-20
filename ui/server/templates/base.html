@@ -20,7 +20,7 @@
   {% if env_tag %}<span class="env-tag">{{ env_tag }}</span>{% endif %}
   {% if user %}
   <div class="nav-links">
-    {% for href, label in [("/agreements", "Agreements"), ("/runs", "Runs"), ("/logs", "Logs"), ("/how", "How it works")] %}
+    {% for href, label in [("/how", "How it works"), ("/logs", "Logs"), ("/agreements", "Agreements"), ("/runs", "Runs")] %}
     <a class="nav-link {% if active == href[1:] %}active{% endif %}" href="{{ href }}">{{ label }}</a>
     {% endfor %}
     <span class="chip" title="{{ user.party }}"><span class="party-icon" aria-label="{{ user.party }}">{{ party_icon(user.party) }}</span>{{ user.display_name }}</span>
