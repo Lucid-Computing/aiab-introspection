@@ -160,3 +160,68 @@ async def test_reattestation_is_tried_once(monkeypatch):
     with pytest.raises(AuditError, match="model_unavailable"):
         await model.classify("private", POLICY, settings)
     assert len(attempts) == 1
+
+
+class RateLimited(TransportDouble):
+    """Answers 429 the given number of times, then as TransportDouble does."""
+
+    def __init__(self, limited, message="Rate limit reached for tokens. Retry after 29 seconds."):
+        super().__init__()
+        self.limited, self.message = limited, message
+
+    async def request(self, method, path, body, token):
+        if self.limited:
+            self.limited -= 1
+            self.calls.append((path, decode(body)))
+            return 429, {"error": {"message": self.message, "code": "rate_limit_exceeded"}}
+        return await super().request(method, path, body, token)
+
+
+@pytest.fixture
+def waits(monkeypatch):
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(model_module.asyncio, "sleep", sleep)
+    return slept
+
+
+async def test_rate_limit_waits_as_told_and_sends_the_same_request_again(waits):
+    transport = RateLimited(2)
+    model, settings = adapter(transport)
+    assert await model.classify("private", POLICY, settings) == 0.9
+    assert waits == [30, 30]
+    assert len(transport.calls) == 3
+    assert transport.calls[0] == transport.calls[1] == transport.calls[2]
+    assert not transport.failed
+
+
+async def test_rate_limit_without_a_stated_wait_backs_off(waits):
+    model, settings = adapter(RateLimited(3, message="slow down"))
+    assert await model.classify("private", POLICY, settings) == 0.9
+    assert waits == [5, 10, 20]
+
+
+async def test_rate_limit_that_never_lifts_is_model_unavailable(waits):
+    transport = RateLimited(100)
+    model, settings = adapter(transport)
+    with pytest.raises(AuditError, match="model_unavailable"):
+        await model.classify("private", POLICY, settings)
+    assert len(transport.calls) == model_module.RATE_LIMIT_RETRIES + 1
+    assert max(waits) <= model_module.RATE_LIMIT_WAIT_SECONDS[1]
+
+
+@pytest.mark.parametrize(
+    "result,attempt,wait",
+    [
+        ({"error": {"message": "Retry after 1000 seconds."}}, 0, 120),
+        ({"error": {"message": "Retry after 0 seconds."}}, 0, 1),
+        ({"error": {"message": "retry after 2.5s"}}, 0, 3.5),
+        ({}, 6, 120),
+        ("not a dict", 0, 5),
+    ],
+)
+def test_retry_wait_is_bounded(result, attempt, wait):
+    assert model_module.retry_wait(result, attempt) == wait
