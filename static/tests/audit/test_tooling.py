@@ -59,3 +59,24 @@ def test_release_render_preserves_secret_names_and_requires_reproducibility():
     build["reproduced_digest"] = "sha256:" + "b" * 64
     with pytest.raises(ValueError):
         module.render(config, trust, build, "v0.1.3")
+
+
+def test_release_workflow_waits_for_a_run_github_does_not_show_yet(monkeypatch, tmp_path):
+    spec = importlib.util.spec_from_file_location(
+        "release", STATIC / "deploy/tinfoil/audit/release.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    views = iter([None, None, {"status": "completed", "conclusion": "success", "headSha": "abc"}])
+
+    def command(*args, cwd=None):
+        if args[1:3] == ("workflow", "run"):
+            return "https://github.com/o/r/actions/runs/42"
+        state = next(views)
+        if state is None:
+            raise RuntimeError("Command failed: gh")
+        return json.dumps(state)
+
+    monkeypatch.setattr(module, "command", command)
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    assert module.workflow("o/r", "measure-release.yml", "v1", tmp_path) == ("42", "abc")

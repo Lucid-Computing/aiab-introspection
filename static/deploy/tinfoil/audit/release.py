@@ -41,13 +41,28 @@ def workflow(repo, name, ref, output, *inputs):
             "Workflow dispatch did not return a run ID; inspect GitHub before retrying"
         )
     run_id = match[1]
-    deadline = time.monotonic() + 1800
+    start = time.monotonic()
+    deadline = start + 1800
     while time.monotonic() < deadline:
-        state = json.loads(
-            command(
-                "gh", "run", "view", run_id, "--repo", repo, "--json", "status,conclusion,headSha"
+        try:
+            state = json.loads(
+                command(
+                    "gh",
+                    "run",
+                    "view",
+                    run_id,
+                    "--repo",
+                    repo,
+                    "--json",
+                    "status,conclusion,headSha",
+                )
             )
-        )
+        except RuntimeError:
+            # GitHub can refuse to show a run for a while after the dispatch returned its ID.
+            if time.monotonic() - start > 120:
+                raise
+            time.sleep(10)
+            continue
         if state["status"] == "completed":
             if state["conclusion"] != "success":
                 raise RuntimeError("Workflow failed: " + run_id)
