@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
+
 from aiab.audit.protocol import AuditError, canonical, closed, decode, validate
 from aiab.audit.transport import RoutedConnection
 
@@ -9,6 +12,13 @@ from aiab.audit.transport import RoutedConnection
 # generation prompt) and around each message; generous for gpt-oss's harmony format.
 PROMPT_OVERHEAD_TOKENS = 256
 MESSAGE_OVERHEAD_TOKENS = 16
+
+# Tinfoil limits tokens per minute per key and answers 429 past it ("Rate limit reached for
+# tokens. Retry after 29 seconds."). A large run sends many near-full-context prompts in a
+# row, so the box waits as told and sends the same request again.
+RATE_LIMIT_RETRIES = 12
+RATE_LIMIT_WAIT_SECONDS = (1, 120)
+RETRY_AFTER = re.compile(r"retry after (\d+(?:\.\d+)?) ?s", re.IGNORECASE)
 
 SCORE_SCHEMA = closed({"score": {"type": "number", "minimum": 0, "maximum": 1}})
 
@@ -68,7 +78,17 @@ class PinnedModel:
         }
 
     async def request(self, body: bytes):
-        """One chat completion. The router's TLS key changes when Tinfoil releases a new
+        """One chat completion, sent again after the wait Tinfoil asks for when it answers
+        429 (its per-key token rate limit). Any other status is returned as it is."""
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            status, result = await self.send(body)
+            if status != 429 or attempt == RATE_LIMIT_RETRIES:
+                return status, result
+            await asyncio.sleep(retry_wait(result, attempt))
+        raise AssertionError("unreachable")
+
+    async def send(self, body: bytes):
+        """One attested POST. The router's TLS key changes when Tinfoil releases a new
         router: then attest the router afresh, under the same rule as at start-up, and send
         the request once more. Nothing is sent to an endpoint that has not been verified."""
         for attempt in range(2):
@@ -175,6 +195,18 @@ class PinnedModel:
 
     async def close(self):
         await self.connection.close()
+
+
+def retry_wait(result, attempt: int) -> float:
+    """Seconds to wait after a 429: what Tinfoil's message says, else doubling from 5 s;
+    held within RATE_LIMIT_WAIT_SECONDS either way."""
+    low, high = RATE_LIMIT_WAIT_SECONDS
+    try:
+        found = RETRY_AFTER.search(result["error"]["message"])
+    except (KeyError, TypeError):
+        found = None
+    wait = float(found.group(1)) + 1 if found else 5.0 * 2**attempt
+    return min(max(wait, low), high)
 
 
 def prompt_bound(content: list[dict]) -> int:
