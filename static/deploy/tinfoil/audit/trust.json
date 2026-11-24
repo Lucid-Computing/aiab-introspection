@@ -12,5 +12,5 @@
     "repo": "tinfoilsh/confidential-gpt-oss-safeguard-120b",
     "temperature": 0
   },
-  "runtime_digest": "sha256:26160cc0c0cbe0bd04523dc56ac08a9caff3f12e7831ea0ea3aee823d0d624df"
+  "runtime_digest": "sha256:ee555194c7d1896ca158fc38440ab671ac9511aa15b0c955e5fadb26e352b9b0"
 }
