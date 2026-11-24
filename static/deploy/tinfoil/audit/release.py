@@ -46,7 +46,14 @@ def workflow(repo, name, ref, output, *inputs):
         try:
             state = json.loads(
                 command(
-                    "gh", "run", "view", run_id, "--repo", repo, "--json", "status,conclusion,headSha"
+                    "gh",
+                    "run",
+                    "view",
+                    run_id,
+                    "--repo",
+                    repo,
+                    "--json",
+                    "status,conclusion,headSha",
                 )
             )
         except RuntimeError:
