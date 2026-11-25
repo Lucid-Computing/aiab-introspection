@@ -1,3 +1,5 @@
+import asyncio
+import dataclasses
 import subprocess
 import time
 
@@ -90,3 +92,37 @@ def test_set_aside_stashes_local_changes_so_the_copy_can_catch_up(tmp_path):
         "set aside by the agreement UI"
         in subprocess.run(["git", "stash", "list"], cwd=copy, capture_output=True, text=True).stdout
     )
+
+
+def test_key_pull_request_into_another_branch_is_not_this_servers(monkeypatch):
+    """Production must not read dev's merged key pull request as a key on its way."""
+
+    def pr(number, base, branch):
+        return {
+            "number": number,
+            "html_url": f"https://github.com/o/r/pull/{number}",
+            "state": "closed",
+            "merged_at": "2026-11-10T06:08:42Z",
+            "base": {"ref": base},
+            "head": {"ref": branch, "sha": f"sha{number}"},
+            "merge_commit_sha": f"merge{number}",
+        }
+
+    prs = [pr(57, "dev", "keys/auditor-new"), pr(40, "production", "keys/auditor-old")]
+
+    async def fake_get(client, path, params=None, raw=False):
+        return prs if path.endswith("/pulls") else {"workflow_runs": []}
+
+    monkeypatch.setattr(ds, "_get", fake_get)
+    matches = lambda ref: ref.startswith("keys/auditor-")  # noqa: E731
+    base = load_settings()
+
+    production = dataclasses.replace(base, repo="o/r", deploy_base="production")
+    found = asyncio.run(ds._pull_request(production, None, matches))
+    assert found["pr"]["number"] == 40
+
+    dev = dataclasses.replace(base, repo="o/r", deploy_base="dev")
+    assert asyncio.run(ds._pull_request(dev, None, matches))["pr"]["number"] == 57
+
+    elsewhere = dataclasses.replace(base, repo="o/r", deploy_base="master")
+    assert asyncio.run(ds._pull_request(elsewhere, None, matches)) is None
