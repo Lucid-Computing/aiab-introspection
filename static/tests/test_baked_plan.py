@@ -337,6 +337,42 @@ async def test_plan_code_that_never_finishes_is_stopped_and_signs_failure(setup,
     await runtime.close()
 
 
+async def test_model_failure_fails_the_run_but_not_the_box(setup):
+    """Tinfoil failing one run (rate limit past the retries, a 5xx, a dropped connection)
+    signs that run as model_unavailable; health stays ready and the next run is accepted."""
+    _, trust, _, _, _ = setup
+    calls = []
+
+    class Flaky(MockModel):
+        async def complete(self, content, schema, max_output_tokens):
+            calls.append(1)
+            if len(calls) == 1:
+                raise AuditError("model_unavailable", 503)
+            return await super().complete(content, schema, max_output_tokens)
+
+    runtime = Runtime(trust, Flaky())
+    tokens = {role: role + "-" + "x" * 40 for role in ("lab", "auditor", "logger")}
+    app = create_app(runtime, tokens)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"authorization": "Bearer " + tokens["lab"]},
+    ) as client:
+        first = (await client.post("/aiab/runs", json=submission(setup))).json()["run_id"]
+        await runtime.runs[first].task
+        report = (await client.get(f"/aiab/runs/{first}/report")).json()["report"]
+        assert report["status"] == "failed" and report["error"] == "model_unavailable"
+        health = await client.get("/aiab/health")
+        assert health.status_code == 200 and health.json()["status"] == "ready"
+        response = await client.post("/aiab/runs", json=submission(setup, submission_id="case-2"))
+        assert response.status_code == 202
+        second = response.json()["run_id"]
+        await runtime.runs[second].task
+        report = (await client.get(f"/aiab/runs/{second}/report")).json()["report"]
+        assert report["status"] == "completed"
+    await runtime.close()
+
+
 async def test_invalid_output_never_released(setup):
     _, trust, _, bundle, _ = setup
     # The broker checks the result against the egress schema independently of the worker.
