@@ -257,10 +257,11 @@ async def test_execution_failures_are_explicit_and_signed(setup, failure):
     )
     assert b"sentinel-private" not in run.envelope
     if failure == "unavailable":
-        assert not runtime.healthy
-        item["submission_id"] = "new"
-        with pytest.raises(AuditError, match="model_unavailable"):
-            runtime.submit(item, "lab")
+        assert report["report"]["error"] == "model_unavailable"
+    # A failed run fails alone: the box stays ready and accepts the next run.
+    assert runtime.healthy
+    item["submission_id"] = "new"
+    runtime.submit(item, "lab").task.cancel()
     await runtime.close()
 
 

@@ -167,8 +167,9 @@ class Runtime:
                 if isinstance(exc, AuditError) and exc.code in ERRORS
                 else "execution_failed"
             )
-            if error == "model_unavailable":
-                self.healthy = False
+            # A model failure fails this run only. The box stays ready: the next run
+            # re-attests the router if its key changed, and one failed run is no reason to
+            # refuse every later one until a restart.
             report.update(status="failed", error=error)
         validate(report, REPORT, "invalid_report")
         run.envelope = canonical(

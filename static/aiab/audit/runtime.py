@@ -110,8 +110,7 @@ class AuditRuntime:
                 if isinstance(exc, AuditError) and exc.code in ERRORS
                 else "execution_failed"
             )
-            if code == "model_unavailable":
-                self.healthy = False
+            # A model failure fails this run only; the box stays ready for the next one.
             report.update(status="failed", error=code)
         run.envelope = canonical(self.signer.envelope(report))
 
