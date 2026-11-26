@@ -759,6 +759,23 @@ def _plan_sessions(plan: Any) -> set[str]:
         return set()
 
 
+def _sort_sessions(sessions: list, by: str, order: str) -> list:
+    """The Logs table in the order its headers ask for, over the whole filtered list. Size
+    is what the Size column shows: a part's bytes on the plant's hub, else the record count;
+    a size not known goes last either way. Started is the first record's time. Ties keep
+    the default order (newest activity first), since the sort is stable."""
+    if by == "started":
+        return sorted(sessions, key=lambda s: s.records[0].time, reverse=order == "desc")
+
+    def size(s: Any) -> int | None:
+        return s.records[0].size if proxylogs.on_hub(s.records) else len(s.records)
+
+    known = [s for s in sessions if size(s) is not None]
+    return sorted(known, key=size, reverse=order == "desc") + [
+        s for s in sessions if size(s) is None
+    ]
+
+
 @app.get("/logs")
 async def logs_page(request: Request) -> Response:
     user = user_of(request)
@@ -783,6 +800,12 @@ async def logs_page(request: Request) -> Response:
     if q:
         needle = q.lower()
         matched = [s for s in matched if needle in s.title.lower()]
+    # A sort chosen by the table's headers; none, or an unknown one, keeps the default order.
+    sort = request.query_params.get("sort", "")
+    sort = sort if sort in ("size", "started") else ""
+    order = "asc" if sort and request.query_params.get("order") == "asc" else "desc"
+    if sort:
+        matched = _sort_sessions(matched, sort, order)
     pages = max(1, -(-len(matched) // LOGS_PAGE_SIZE))
     try:
         page = min(max(1, int(request.query_params.get("page", "1"))), pages)
@@ -814,6 +837,8 @@ async def logs_page(request: Request) -> Response:
         q=q,
         who=who,
         whos=whos,
+        sort=sort,
+        order=order,
         page=page,
         pages=pages,
         recent=LOGS_RECENT,
