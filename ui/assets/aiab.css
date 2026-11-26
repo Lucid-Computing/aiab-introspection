@@ -655,6 +655,7 @@ details.root-replace .sign-root { padding-top: var(--space-2); }
 .nav-links .chip, .nav-links .btn { display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; padding: 0 var(--space-3); font-size: var(--text-xs); line-height: 1; }
 .nav-links .chip { border: var(--border-ink); color: var(--ink-1); font-weight: 600; }
 .nav-links .chip .party-icon { vertical-align: middle; }
+.nav-links .chip .chip-party { font-weight: 400; color: var(--ink-3); }
 .home-art .block { fill: var(--ink-1); }
 
 /* ---- feedback: the button and menu, the form (base.html) and post-it notes (notes.js) ---- */
