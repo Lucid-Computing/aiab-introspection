@@ -573,6 +573,88 @@ def _shown(name: str, value: object) -> object:
     return value
 
 
+def answer_view(plan: dict, result: object, sent: dict | None) -> dict | None:
+    """The answer to the plan's question in one line, for the one plan shape where the report
+    counts it: Log Source -> one Filter in LLM mode -> Report. With the Filter judging whole
+    sessions, the report's ``session_count`` is the number of sessions answered yes; judging
+    each record, its ``record_count`` is the number of records answered yes. How many were
+    asked comes from what the UI sent and its own replay of the Log Source on metadata; when
+    the Log Source matches keywords only the box knows, and the line says so. None for any
+    other shape, or when the report lacks the count."""
+    if not isinstance(result, dict):
+        return None
+    nodes = [n for n in plan.get("nodes") or () if isinstance(n, dict)]
+    types = Counter(n.get("type") for n in nodes)
+    if types != Counter({"input_logs": 1, "filter_logs": 1, "records_report": 1}):
+        return None
+    by_type = {n["type"]: n for n in nodes}
+    source, filt, report = by_type["input_logs"], by_type["filter_logs"], by_type["records_report"]
+    try:
+        if (
+            plan_ir.split_ref(report["inputs"]["records"])[0] != filt["id"]
+            or plan_ir.split_ref(filt["inputs"]["records"])[0] != source["id"]
+        ):
+            return None
+        llm = filt["config"]["llm"]
+        question = str(llm["question"]).strip()
+    except (KeyError, TypeError, ValueError):
+        return None
+    if filt["config"].get("mode") != "llm" or not question:
+        return None
+    by_record = llm.get("judge") == "record"
+    count = result.get("record_count" if by_record else "session_count")
+    if type(count) is not int:
+        return None
+    unit = "record" if by_record else "session"
+    notes = []
+    asked = None
+    if sent and sent.get("filter") == "metadata":
+        sessions = sent.get("sessions") or ()
+        kept = [s for s in sessions if s.get("kept")]
+        asked = sum(s["kept"] for s in kept) if by_record else len(kept)
+        if len(kept) < len(sessions):
+            gone = len(sessions) - len(kept)
+            which = (
+                ("it" if gone == 1 else "any of them")
+                if gone == len(sessions)
+                else f"{gone} of them"
+            )
+            notes.append(
+                f"{len(sessions)} {'session' if len(sessions) == 1 else 'sessions'} sent; the Log "
+                f"Source took no records from {which}, so {'it was' if gone == 1 else 'they were'} "
+                "not asked."
+            )
+    elif sent:
+        n = len(sent.get("sessions") or ())
+        how = (
+            "the Log Source matches keywords, so how many reached the question is decided "
+            "in the box"
+            if sent.get("filter") == "keywords"
+            else "how many reached the question is not known"
+        )
+        notes.append(f"{n} {'session' if n == 1 else 'sessions'} sent; {how}.")
+    min_count = report.get("config", {}).get("min_count") or 1
+    if count == 0 and min_count > 1 and asked != 0:
+        high = min_count - 1 if asked is None else min(min_count - 1, asked)
+        amount = "0 or 1" if high == 1 else f"0 to {high}"
+        notes.insert(
+            0,
+            f"The report shows counts below {min_count} as 0, so the exact number is not released.",
+        )
+    else:
+        amount = str(count)
+    noun = unit if (count if asked is None else asked) == 1 else f"{unit}s"
+    head = f"{amount} {noun}" if asked is None else f"{amount} of {asked} {noun}"
+    if by_record:
+        notes.append("The question was asked of each record, not each session.")
+    if llm.get("threshold") is not None:
+        notes.append(
+            f"Answers scored below {llm['threshold']} are unsure; this plan counts them as "
+            + ("yes." if llm.get("unsure") == "keep" else "no.")
+        )
+    return {"head": head, "question": question, "notes": notes}
+
+
 def result_view(settings: Settings, state: dict) -> dict:
     """What the run page shows of the result: one row per released field with the plan's
     own description of it (read from the frozen plan copy in the run folder), and a few
@@ -629,8 +711,12 @@ def result_view(settings: Settings, state: dict) -> dict:
         )
     except (KeyError, ValueError, TypeError):
         pass
+    answer = None
+    if records_report and out.get("execution") == "completed":
+        answer = answer_view(plan, result, state.get("input"))
     return {
         "rows": rows,
+        "answer": answer,
         "disclosed": disclosed,
         "min_count": min_count,
         "records": (steps.get("export", {}).get("output") or {}).get("records"),
