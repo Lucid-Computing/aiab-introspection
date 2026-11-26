@@ -39,7 +39,11 @@ export function pythonIssues(code: string, inputs: string[]): string[] {
   return out;
 }
 
-export function lintPlan(plan: Plan): Issue[] {
+/**
+ * `agreement`: the plan is an agreement's, so it is checked for what signing needs beyond
+ * the box (the site holds back signing a Log Source that names no session; plan_view.py).
+ */
+export function lintPlan(plan: Plan, { agreement = false }: { agreement?: boolean } = {}): Issue[] {
   const issues: Issue[] = [];
   const at = (i: number, ...rest: (string | number)[]) => ["nodes", i, ...rest];
   const err = (nodeId: string, path: (string | number)[], message: string) =>
@@ -80,6 +84,16 @@ export function lintPlan(plan: Plan): Issue[] {
             at(i, "config", "filter", "kinds"),
             `${n.id}: no record kinds selected, so no records are admitted`,
           );
+        // A todo that does not block Save: a draft may be saved before its sessions are
+        // recorded. Signing waits for it (the server's check, same condition).
+        if (agreement && !n.config.filter.sessions?.length)
+          issues.push({
+            severity: "warning",
+            kind: "incomplete",
+            nodeId: n.id,
+            path: at(i, "config", "filter"),
+            message: `${n.id}: tick at least one session`,
+          });
         break;
       case "filter_logs": {
         if (!n.inputs.records) todo(n.id, at(i, "inputs"), `${n.id}: connect the records to filter`);

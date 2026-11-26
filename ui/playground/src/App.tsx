@@ -78,7 +78,7 @@ export default function App() {
     };
   }, []);
 
-  const lint = useMemo(() => lintPlan(plan), [plan]);
+  const lint = useMemo(() => lintPlan(plan, { agreement: Boolean(AGREEMENT) }), [plan]);
   const issues = useMemo(() => [...server.refused, ...lint], [server.refused, lint]);
   const bad = useMemo(() => badBindings(plan), [plan]);
   const located = useMemo(

@@ -89,6 +89,8 @@ class PlanView:
     issue: str | None
     issue_where: str | None
     issues: tuple[dict[str, Any], ...]  # the loader's reasons, each with node and message
+    # What this site holds back from signing though the box would accept it; None when nothing.
+    unfinished: str | None
     signatures: dict[str, dict[str, Any]]
     frozen: bool
     stale: tuple[str, ...]
@@ -105,6 +107,22 @@ class PlanView:
     @property
     def discloses(self) -> str | None:
         return discloses_records(self.plan)
+
+
+NO_SESSIONS = "the Log Source names no session: tick at least one"
+
+
+def unfinished(plan: Any) -> str | None:
+    """Why signing waits on a plan the box accepts: a Log Source that names no session. A run
+    from this site sends only the sessions the plan names (runs_start), so such a plan could
+    never run; it is held back here, before anyone signs it, not on the Runs page after."""
+    nodes = plan.get("nodes") if isinstance(plan, dict) else None
+    for n in nodes if isinstance(nodes, list) else ():
+        if isinstance(n, dict) and n.get("type") == "input_logs":
+            cfg = n.get("config") if isinstance(n.get("config"), dict) else {}
+            flt = cfg.get("filter") if isinstance(cfg.get("filter"), dict) else {}
+            return None if flt.get("sessions") else NO_SESSIONS
+    return None
 
 
 def discloses_records(plan: Any) -> str | None:
@@ -279,6 +297,7 @@ def load_plan_view(settings: Settings) -> PlanView:
         issue=issue,
         issue_where=where,
         issues=issues,
+        unfinished=unfinished(plan),
         signatures=signatures,
         frozen=frozen,
         stale=tuple(stale),
@@ -463,6 +482,15 @@ def write_signature(
             "no certificate: paste the JSON line your root made for this signing key"
             " (sign_digest.py certify)"
         )
+    # What holds back the Sign buttons holds back the signature itself.
+    try:
+        view = load_plan_view(settings)
+    except Exception as exc:  # noqa: BLE001 - a plan that does not load is not signed
+        return "invalid", f"the plan does not load ({type(exc).__name__})"
+    if view.issue:
+        return "invalid", f"the box would reject this plan ({view.issue}); fix it before signing"
+    if view.unfinished:
+        return "invalid", f"the plan is not finished: {view.unfinished}"
     plan_digest = file_digest(bundle_files(settings.plan_dir))
     trust = load_trust(settings)
     try:
@@ -745,6 +773,8 @@ def lab_sign(
         return "error", f"the plan does not load ({type(exc).__name__})"
     if view.issue:
         return "error", f"the box would reject this plan ({view.issue})"
+    if view.unfinished:
+        return "error", f"the plan is not finished: {view.unfinished}"
     if shown_digest is not None and shown_digest != view.digest:
         return "error", "the plan changed since this page was loaded; check it and sign again"
     # A signature under a rotated root no longer verifies, so it is not "ok" and is re-made.
@@ -882,6 +912,7 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "public_keys": view.public_keys,
                     "error": None,
                     "issue": view.issue,
+                    "unfinished": view.unfinished,
                 }
             )
         except Exception as exc:  # noqa: BLE001 - one broken folder must not hide the others
@@ -897,6 +928,7 @@ def list_agreements(settings: Settings) -> list[dict[str, Any]]:
                     "public_keys": {},
                     "error": str(exc),
                     "issue": None,
+                    "unfinished": None,
                 }
             )
     return rows
