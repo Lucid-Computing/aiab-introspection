@@ -23,9 +23,24 @@ export interface State {
   toast: { text: string; kind: "info" | "error"; seq: number } | null;
   /** Bumped when positions change for reasons other than dragging, so the canvas refits. */
   fitSeq: number;
+  /** Undo history of plan edits, oldest first, for this page visit only. */
+  past: Snapshot[];
+  /** Redo steps, the next one first. Any new edit clears them. */
+  future: Snapshot[];
+  /** Group of the edit on top of `past`; a following edit of the same group joins it. */
+  lastGroup: string | null;
 }
 
-export type Action =
+/** One history step. Positions ride along so an undone delete puts the block back where it was. */
+export interface Snapshot {
+  plan: Plan;
+  layout: Layout;
+}
+
+/** Undo steps kept. */
+export const HISTORY_LIMIT = 100;
+
+export type Action = (
   | { type: "setPlan"; plan: Plan; layout?: Layout; select?: string | null }
   /** An edit computed from the current plan; use when several may arrive in one event. */
   | { type: "update"; f: (plan: Plan) => Plan }
@@ -36,9 +51,70 @@ export type Action =
   | { type: "relayout"; layout: Layout }
   | { type: "select"; id: string | null }
   | { type: "toggleCode" }
-  | { type: "toast"; text: string; kind?: "info" | "error" };
+  | { type: "toast"; text: string; kind?: "info" | "error" }
+  | { type: "undo" }
+  | { type: "redo" }
+) & {
+  /** Edits with the same group make one undo step: one typing session in a field, or the
+   *  several changes one key press or drop sends. Set by the dispatch wrapper in App. */
+  group?: string;
+};
 
+const snap = (s: State): Snapshot => ({ plan: s.plan, layout: s.layout });
+
+/** Puts back a history step's plan. Blocks still on the diagram keep where they are now. */
+function restore(s: State, to: Snapshot): State {
+  return {
+    ...s,
+    plan: to.plan,
+    layout: completeLayout(to.plan, { ...to.layout, ...s.layout }),
+    code: planToJson(to.plan),
+    codeIssues: [],
+    selected: s.selected && to.plan.nodes.some((n) => n.id === s.selected) ? s.selected : null,
+    lastGroup: null,
+  };
+}
+
+/**
+ * The editor's reducer with undo history. Any action that changes the plan records a step;
+ * moving blocks does not, because positions are not part of the saved plan. Loading a plan
+ * starts a new history.
+ */
 export function reducer(s: State, a: Action): State {
+  if (a.type === "undo" || a.type === "redo") {
+    // Skip steps that would change nothing, e.g. a field the user already undid in place.
+    const now = planToJson(s.plan);
+    let past = s.past;
+    let future = s.future;
+    if (a.type === "undo") {
+      while (past.length && planToJson(past[past.length - 1].plan) === now) past = past.slice(0, -1);
+      const to = past[past.length - 1];
+      if (!to) return past === s.past ? s : { ...s, past, lastGroup: null };
+      return { ...restore(s, to), past: past.slice(0, -1), future: [snap(s), ...future] };
+    }
+    while (future.length && planToJson(future[0].plan) === now) future = future.slice(1);
+    const to = future[0];
+    if (!to) return future === s.future ? s : { ...s, future };
+    return { ...restore(s, to), past: [...past, snap(s)], future: future.slice(1) };
+  }
+  const n = edit(s, a);
+  if (a.type === "loadPlan") return { ...n, past: [], future: [], lastGroup: null };
+  if (n.plan === s.plan || planToJson(n.plan) === planToJson(s.plan)) return n;
+  if (a.group && a.group === s.lastGroup && s.past.length) {
+    // The same typing session or event: it joins the step on top, which goes if it is undone.
+    const top = s.past[s.past.length - 1];
+    if (planToJson(top.plan) === planToJson(n.plan)) return { ...n, past: s.past.slice(0, -1), future: [], lastGroup: null };
+    return { ...n, future: [] };
+  }
+  return {
+    ...n,
+    past: [...s.past, snap(s)].slice(-HISTORY_LIMIT),
+    future: [],
+    lastGroup: a.group ?? null,
+  };
+}
+
+function edit(s: State, a: Action): State {
   switch (a.type) {
     case "setPlan": {
       const layout = completeLayout(a.plan, a.layout ?? s.layout);
@@ -53,7 +129,7 @@ export function reducer(s: State, a: Action): State {
       };
     }
     case "update":
-      return reducer(s, { type: "setPlan", plan: a.f(s.plan) });
+      return edit(s, { type: "setPlan", plan: a.f(s.plan) });
     case "loadPlan":
       return {
         ...s,
@@ -92,6 +168,9 @@ export function reducer(s: State, a: Action): State {
       return { ...s, codeOpen: !s.codeOpen, fitSeq: s.fitSeq + 1 };
     case "toast":
       return { ...s, toast: { text: a.text, kind: a.kind ?? "info", seq: (s.toast?.seq ?? 0) + 1 } };
+    case "undo":
+    case "redo":
+      return s; // handled by reducer
   }
 }
 
@@ -108,6 +187,9 @@ export function initialState(): State {
     sample: "deployed",
     toast: null,
     fitSeq: 0,
+    past: [],
+    future: [],
+    lastGroup: null,
   };
   fresh.layout = completeLayout(fresh.plan, {});
   fresh.code = planToJson(fresh.plan);

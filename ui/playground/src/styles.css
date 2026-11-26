@@ -33,6 +33,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); out
 .bar-toggle { display: inline-flex; align-items: center; padding: 4px 6px; color: var(--ink-2); border: 1px solid transparent; }
 .bar-toggle:hover { color: var(--ink-1); }
 .bar-toggle.on { color: var(--ink-1); border-color: var(--ink-1); }
+/* Undo and redo. */
+.bar-icon { display: inline-flex; align-items: center; padding: 4px; color: var(--ink-2); }
+.bar-icon:hover:not(:disabled) { color: var(--ink-1); }
+.bar-icon:disabled { color: var(--ink-3); opacity: 0.5; cursor: default; }
 .bar-status { font-family: var(--font-mono); font-size: var(--text-xs); padding: 4px 6px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
 .bar-status::before { content: ""; width: 8px; height: 8px; background: var(--ink-3); }
 .bar-status.ok::before { background: var(--amber); }
