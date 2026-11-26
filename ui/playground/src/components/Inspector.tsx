@@ -472,10 +472,18 @@ function SessionPicker({
           {rows.length > 8 && <input value={q} placeholder="Search sessions" onChange={(e) => setQ(e.target.value)} />}
           <div className="sess-pick">
             {rows.length > 0 && (
-              <label className="sess-all">
-                <input type="checkbox" checked={allTicked(value, ids)} onChange={() => take(toggleMany(value, ids, size, limit))} />
-                <span>Select all</span>
-              </label>
+              <div className="sess-all">
+                <label>
+                  <input type="checkbox" checked={allTicked(value, ids)} onChange={() => take(toggleMany(value, ids, size, limit))} />
+                  <span>Select all</span>
+                </label>
+                {/* Unticks every session, in every log source: Select all cannot when some did not fit. */}
+                {value.length > 0 && (
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => take({ value: [], left: 0 })}>
+                    Clear ({value.length})
+                  </button>
+                )}
+              </div>
             )}
             {pages > 1 && (
               <label className="sess-page">
@@ -486,13 +494,14 @@ function SessionPicker({
             {onPage.map((r) => {
               const full = !chosen.has(r.id) && !fits(value, r.id, size, limit);
               return (
-                <label key={r.id} className={full ? "sess-full" : undefined} title={full ? `over the ${most} a run can send` : undefined}>
+                <label key={r.id} className={full ? "sess-full" : undefined}>
                   <input type="checkbox" checked={chosen.has(r.id)} disabled={full} onChange={() => take(toggleOne(value, r.id, size, limit))} />
                   <span>
                     {r.title}
                     <span className="muted">
                       {r.records != null && ` · ${r.records} records`} · {sizeText(r.bytes ?? 0)}
                     </span>
+                    {full && <span className="f-hint sess-why">over the {most} a run can send</span>}
                   </span>
                 </label>
               );
