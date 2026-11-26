@@ -296,10 +296,12 @@ def test_past_runs_are_filtered_and_paged(client, tmp_path, monkeypatch):
 
 
 def test_sign_is_one_step_from_the_plan_and_the_list_and_the_sign_screen_is_the_fallback(
-    client, tmp_path
+    client, tmp_path, monkeypatch
 ):
     """Sign on the plan and agreements pages signs in the browser when its key is trusted;
     only a browser that is not set up lands on the Sign screen, told what is missing."""
+    # The fixture names no session, which holds back signing; this test is about the buttons.
+    monkeypatch.setattr(ui.pv, "unfinished", lambda plan: None)
     (tmp_path / "agreements/bio/signatures/lab.sig").unlink()  # the fixture is already signed
     plan = client.get("/a/bio/plan").text
     assert '<script src="/assets/sign.js" defer></script>' in plan

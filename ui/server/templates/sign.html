@@ -10,7 +10,8 @@
 <p style="margin: var(--space-3) 0 0"><form method="post" action="/copy/pull" class="inline"><button class="btn btn--ghost btn--sm">Catch up now</button></form>{% if copy.dirty %} <form method="post" action="/copy/reset" class="inline" data-confirm="This moves the copy's local changes into a git stash (nothing is deleted; git stash list shows them) and then catches up with GitHub. Continue?"><button class="btn btn--ghost btn--sm">Set local changes aside and catch up</button></form>{% endif %}</p></div>{% endif %}
 {% for party, problem in server_problems.items() if problem %}<p class="form-message error">The server cannot sign as the {{ party }}: {{ problem }}.</p>{% endfor %}
 {% if view %}
-{% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>{% endif %}
+{% if view.issue %}<p class="form-message error">The box would reject this plan: <span class="mono">{{ view.issue }}</span> ({{ view.issue_where }}). Fix it before signing.</p>
+{% elif view.unfinished %}<p class="form-message error">Not ready to sign: {{ view.unfinished }}. Edit the plan first.</p>{% endif %}
 <p class="plan-digest">{{ view.digest }}</p>
 {% if view.discloses %}<p class="plan-discloses">{{ view.discloses }}</p>{% endif %}
 
@@ -35,7 +36,7 @@
         <button class="btn btn--ghost">Re-sign</button>
       </form>
       {% elif party in issuer_parties %}
-      <p>{% if view.issue %}<button class="btn btn--primary" disabled>Sign</button>{% else %}<a class="btn btn--primary quick-sign" href="{{ base }}/sign" data-party="{{ party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/sign" data-certify="/sign/certificate">Sign</a>{% endif %}</p>
+      <p>{% if view.issue or view.unfinished %}<button class="btn btn--primary" disabled>Sign</button>{% else %}<a class="btn btn--primary quick-sign" href="{{ base }}/sign" data-party="{{ party }}" data-digest="{{ view.digest }}" data-trusted="{{ view.public_keys[party] or '' }}" data-upload="{{ base }}/sign/upload" data-next="{{ base }}/sign" data-certify="/sign/certificate">Sign</a>{% endif %}</p>
       {% else %}
       {# The browser's Sign posts its signature and certificate through this form (sign.js). #}
       <form id="upload-form-{{ party }}" method="post" action="{{ base }}/sign/upload" hidden>
@@ -72,7 +73,7 @@
       {% if server_sign %}
       <form method="post" action="{{ base }}/sign/lab" class="server-sign">
         <input type="hidden" name="digest" value="{{ view.digest }}">
-        <button class="btn btn--primary"{% if view.issue %} disabled{% endif %}>Sign</button>
+        <button class="btn btn--primary"{% if view.issue or view.unfinished %} disabled{% endif %}>Sign</button>
         {% if settings.lab_signer_authorized_by %}<span class="server-sign-by"><span class="text-muted">Authorized by:</span> {{ settings.lab_signer_authorized_by }}</span>{% endif %}
       </form>
       {% endif %}

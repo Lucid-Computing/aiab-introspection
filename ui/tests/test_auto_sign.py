@@ -80,6 +80,11 @@ def settings(tmp_path, keys, monkeypatch):
 def create(settings, name="auto"):
     errors, aid = pv.new_agreement(settings, {"plan_id": name, "problem": "Leaks?"}, AUDITOR)
     assert not errors
+    # A new agreement names no session, and signing waits until it does: name one.
+    path = settings.agreements_dir / aid / "plan.json"
+    plan = json.loads(path.read_text())
+    plan["nodes"][0]["config"]["filter"]["sessions"] = ["s1"]
+    path.write_bytes(canonical(plan) + b"\n")
     return pv.for_agreement(settings, aid)
 
 
