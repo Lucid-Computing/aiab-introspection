@@ -557,6 +557,19 @@ code.hash { font-family: var(--font-mono); font-size: var(--text-sm); color: var
 
 /* Runs page: one bar says what the agreement's filter takes from the chosen log, with Start. */
 .runs-box { margin: 0; font-size: var(--text-sm); color: var(--ink-2); }
+/* Runs page: what a run sends, above Start. A long session list scrolls inside its box. */
+.runs-send { border: var(--border-hairline); padding: var(--space-3) var(--space-4); }
+.runs-send > * + * { margin-top: var(--space-3); }
+.runs-send .kv th { width: 120px; }
+.runs-send-list { max-height: 260px; overflow-y: auto; border: var(--border-hairline); }
+.runs-send-list .table { margin: 0; }
+.runs-send-list .table td, .runs-send-list .table th { padding-top: var(--space-1); padding-bottom: var(--space-1); font-size: var(--text-sm); }
+.runs-send-list .table td + td, .runs-send-list .table th + th { width: 7rem; white-space: nowrap; }
+.runs-left-out { font-size: var(--text-sm); color: var(--ink-2); }
+.runs-left-out ul { margin: var(--space-2) 0 0; padding-left: var(--space-6); max-height: 10rem; overflow-y: auto; }
+.runs-start { display: flex; align-items: center; gap: var(--space-3); }
+.runs-starting { font-size: var(--text-sm); color: var(--ink-2); }
+.runs-starting[hidden] { display: none; }
 
 /* New agreement: the copy choice keeps its dropdown readable on a narrow screen. */
 .choice--copy { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }

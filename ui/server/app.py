@@ -1172,6 +1172,41 @@ def _most_sent() -> int | None:
     return int(settings.max_send_mb * (1 << 20)) or None
 
 
+def _signers(target: Settings) -> list[dict]:
+    """Who signed the version a run sends, per party, as the agreement's change log tells
+    it: a name only when the party's newest signature entry is for this version (and, for
+    an uploaded signature, names its key). The log is outside the digest, so a name here is
+    a record, not proof; the signature check is what makes the agreement runnable."""
+    try:
+        view = pv.load_plan_view(target)
+    except Exception:  # noqa: BLE001 - a plan that does not load names no signer
+        return []
+    out = []
+    for party in PARTIES:
+        sig = view.signatures[party]
+        entry = next((h for h in view.history if h.get("where") == f"signature: {party}"), {})
+        detail = str(entry.get("detail", ""))
+        name, authorized = None, None
+        if sig["status"] == "ok" and detail.startswith(f"signed version {view.digest[7:19]}"):
+            if sig.get("auto"):
+                found = re.search(r"Sign pressed by (.+?); authorized by (.+)$", detail)
+                if found:
+                    name = found[1]
+                    authorized = None if found[2] == "nobody named" else found[2]
+            elif (sig.get("signing_key") or "")[:12] in detail:
+                name = entry.get("user")
+        out.append(
+            {
+                "party": party,
+                "ok": sig["status"] == "ok",
+                "auto": bool(sig.get("auto")),
+                "name": name,
+                "authorized": authorized,
+            }
+        )
+    return out
+
+
 @app.get("/runs")
 async def runs_index(request: Request) -> Response:
     user = user_of(request)
@@ -1230,6 +1265,15 @@ async def runs_index(request: Request) -> Response:
         # Sessions whose records a run fetches from a plant's hub: counted only then.
         "on_hub": sum(1 for i in fits if proxylogs.on_hub(i["session"].records)),
     }
+    for i in fits:
+        i["on_hub"] = proxylogs.on_hub(i["session"].records)
+    # The agreement's own sessions that this run does not send, each with why. Sessions it
+    # does not name are not listed: they were never part of it.
+    left_out = [i for i in outside if i["session"].id in named] + [
+        {**i, "notes": ["no records to send"]} for i in empty if i["session"].id in named
+    ]
+    seen = {i["session"].id for i in fits + outside + empty}
+    most = _most_sent()
     return render(
         request,
         "runs.html",
@@ -1245,6 +1289,12 @@ async def runs_index(request: Request) -> Response:
         empty=empty,
         all_count=len(all_sessions),
         totals=totals,
+        left_out=left_out,
+        not_found=len(named - seen),
+        signers=_signers(target) if target else [],
+        agreement=next((c for c in choices if c["id"] == chosen), None),
+        limit_mb=settings.max_send_mb or None,
+        too_large=proxylogs.too_large(most) if most and totals["kb"] * 1024 > most else None,
         none_named=folder is not None and not named,
         scope=runs.plan_scope(folder) if folder else None,
         past=_past_runs(qp, chosen, source.id),

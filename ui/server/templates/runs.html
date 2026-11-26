@@ -19,11 +19,52 @@
     {% else %}<span class="selected-label bad">Release pins not found: {{ pre.missing | join(", ") }}</span>{% endif %}
   </p>
 
-  <form method="post" action="/runs/start" id="run-form"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"><input type="hidden" name="source" value="sessions">{% for item in fits %}<input type="hidden" name="session" value="{{ item.session.id }}">{% endfor %}</form>
+  <form method="post" action="/runs/start" id="run-form" data-busy="Starting the run…"><input type="hidden" name="agreement" value="{{ chosen }}"><input type="hidden" name="logs" value="{{ log_source.id }}"><input type="hidden" name="source" value="sessions">{% for item in fits %}<input type="hidden" name="session" value="{{ item.session.id }}">{% endfor %}</form>
 
   {% if show_bar %}
-  {% if none_named %}<p><span class="selected-label bad">The agreement's Log Source names no session.</span> A run sends the sessions ticked there.</p>{% endif %}
-  <p>{% if pre.ok and fits %}<button class="btn btn--primary" form="run-form">Start the run</button>{% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% elif none_named %}the agreement's Log Source names no session{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}</p>
+  <section class="runs-send" aria-label="What this run sends">
+    <table class="kv">
+      <tr><th>Agreement</th><td>{{ agreement.title or agreement.plan_id }} <span class="mono text-muted" title="{{ agreement.digest }}">{{ agreement.digest[7:19] }}</span></td></tr>
+      {% if signers %}<tr><th>Signed</th><td>{% for s in signers %}{{ s.party | capitalize }}: {% if not s.ok %}<span class="selected-label bad">not signed</span>{% elif s.name %}{{ s.name }}{% if s.auto %} <span class="text-muted">(server key{% if s.authorized %}, authorized by {{ s.authorized }}{% endif %})</span>{% endif %}{% else %}signed{% if s.auto %} <span class="text-muted">(server key)</span>{% endif %}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>{% endif %}
+      <tr><th>Sends</th><td>{% if none_named %}<span class="selected-label bad">The agreement's Log Source names no session.</span>{% else %}{{ fits | length }} session{{ "s" if fits | length != 1 }} · {% if totals.on_hub %}{{ totals.kb }} KB on the hub{% else %}{{ totals.records }} records · {{ totals.kb }} KB{% endif %}{% if limit_mb %} <span class="text-muted">of {{ "%g" | format(limit_mb) }} MB</span>{% endif %} · from {{ (source_labels or [log_source.label]) | join(", ") }}{% if too_large %}<br><span class="selected-label bad">{{ too_large }}</span>{% endif %}{% endif %}</td></tr>
+    </table>
+    {% if fits %}
+    <div class="runs-send-list">
+    <table class="table">
+      <thead><tr><th>Session</th><th>Records</th><th>Size</th></tr></thead>
+      <tbody>
+      {% for item in fits %}
+      <tr><td>{{ item.session.title }}</td><td>{% if item.on_hub %}<span class="text-muted">on the hub</span>{% else %}{{ item.records }}{% endif %}</td><td>{{ item.kb }} KB</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+    {% if left_out or not_found %}
+    <details class="runs-left-out">
+      <summary>Left out: {{ left_out | length + not_found }} of the agreement's sessions</summary>
+      <ul>
+      {% for item in left_out %}<li>{{ item.session.title }} <span class="text-muted">· {{ item.notes | join("; ") }}</span></li>{% endfor %}
+      {% if not_found %}<li>{{ not_found }} session{{ "s" if not_found != 1 }} <span class="text-muted">· not in the logs you can see</span></li>{% endif %}
+      </ul>
+    </details>
+    {% endif %}
+  </section>
+  <p class="runs-start">{% if pre.ok and fits and not too_large %}<button class="btn btn--primary" form="run-form" id="run-start">Start the run</button><span class="runs-starting" hidden><span class="spinner spinner--sm" aria-hidden="true"></span> Starting…</span>{% else %}<button class="btn btn--primary" disabled title="{% if not pre.ok %}{{ pre.missing | join('; ') }}{% elif none_named %}the agreement's Log Source names no session{% elif too_large %}too much to send{% else %}nothing to send{% endif %}">Start the run</button>{% endif %}</p>
+  <script>
+    // Start sends once: the button is disabled and says it is starting until the run page
+    // opens. A page shown again from the back button gets the button back.
+    (function () {
+      var form = document.getElementById("run-form"), button = document.getElementById("run-start");
+      if (!form || !button) return;
+      var note = button.nextElementSibling;
+      form.addEventListener("submit", function (event) {
+        if (button.disabled) { event.preventDefault(); return; }
+        button.disabled = true; note.hidden = false;
+      });
+      window.addEventListener("pageshow", function () { button.disabled = false; note.hidden = true; });
+    })();
+  </script>
   {% endif %}
 
 
