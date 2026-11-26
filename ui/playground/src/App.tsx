@@ -1,5 +1,5 @@
 import { ReactFlowProvider } from "@xyflow/react";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AGREEMENT, loadAgreement, READONLY, saveAgreement, type ServerIssue } from "./agreement";
 import Canvas from "./components/Canvas";
 import CodePane from "./components/CodePane";
@@ -9,7 +9,7 @@ import { badBindings, lintPlan } from "./plan/lint";
 import { SAMPLE_SOURCES, samplePlan } from "./plan/samples";
 import type { Issue } from "./plan/types";
 import { exportJson, locateIssues, planToJson, jsonToPlan } from "./plan/json";
-import { initialState, persist, reducer } from "./state/store";
+import { type Action, initialState, persist, reducer } from "./state/store";
 
 /** What the server holds for the agreement being edited (agreement mode only). */
 interface Server {
@@ -30,8 +30,40 @@ const fromServer = (issues: ServerIssue[]): Issue[] =>
 /** Inside the plan page's frame: that page holds the Save button and the leave guard (plan.js). */
 const EMBEDDED = typeof window !== "undefined" && window.parent !== window;
 
+/** A field where the browser's own undo applies: text inputs, text areas and code editors. */
+function isTextField(el: Element | null): boolean {
+  if (!el) return false;
+  if (el.closest("[contenteditable]:not([contenteditable=false])")) return true;
+  if (el instanceof HTMLTextAreaElement) return true;
+  return (
+    el instanceof HTMLInputElement &&
+    !["checkbox", "radio", "button", "submit", "reset", "file", "range", "color"].includes(el.type)
+  );
+}
+
+// Undo grouping: every focus change starts a new typing session, and the edits one event
+// sends (React Flow deletes a block's connections and then the block) share a tick.
+let focusSeq = 0;
+let tick = 0;
+let tickOpen = false;
+function editGroup(): string {
+  if (isTextField(document.activeElement)) return `field${focusSeq}`;
+  if (!tickOpen) {
+    tick += 1;
+    tickOpen = true;
+    queueMicrotask(() => (tickOpen = false));
+  }
+  return `tick${tick}`;
+}
+
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, undefined, initialState);
+  const [state, rawDispatch] = useReducer(reducer, undefined, initialState);
+  const dispatch = useCallback((a: Action) => rawDispatch({ ...a, group: editGroup() }), []);
+  useEffect(() => {
+    const onFocus = () => (focusSeq += 1);
+    document.addEventListener("focusin", onFocus);
+    return () => document.removeEventListener("focusin", onFocus);
+  }, []);
   // The plan panel (title, description, all issues) opens from the status button.
   const [planOpen, setPlanOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -145,6 +177,26 @@ export default function App() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, server.editable]);
+
+  // Ctrl/Cmd+Z undoes a plan edit, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes it. In a text field or
+  // code editor the keys stay with the field's own undo.
+  const canUndo = state.past.length > 0;
+  const canRedo = state.future.length > 0;
+  const showHistory = !READONLY && !(AGREEMENT && !server.loading && !server.editable);
+  useEffect(() => {
+    if (!showHistory) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || isTextField(e.target as Element)) return;
+      const key = e.key.toLowerCase();
+      const undo = key === "z" && !e.shiftKey;
+      const redo = (key === "z" && e.shiftKey) || (key === "y" && e.ctrlKey && !e.shiftKey);
+      if (!undo && !redo) return;
+      e.preventDefault();
+      rawDispatch({ type: undo ? "undo" : "redo" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showHistory]);
 
   const modified = (key: string) => planToJson(plan) !== planToJson(samplePlan(key));
   const loadSample = (key: string) => {
@@ -261,6 +313,32 @@ export default function App() {
             </button>
           )}
           <div className="bar-spacer" />
+          {showHistory && (
+            <>
+              <button
+                className="bar-icon"
+                title="Undo"
+                aria-label="Undo"
+                disabled={!canUndo}
+                onClick={() => rawDispatch({ type: "undo" })}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M5.5 3 2 6.5 5.5 10M2.5 6.5h7a4 4 0 0 1 0 8H6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
+              </button>
+              <button
+                className="bar-icon"
+                title="Redo"
+                aria-label="Redo"
+                disabled={!canRedo}
+                onClick={() => rawDispatch({ type: "redo" })}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M10.5 3 14 6.5 10.5 10M13.5 6.5h-7a4 4 0 0 0 0 8H10" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
+              </button>
+            </>
+          )}
           <button className="bar-link" onClick={() => fileInput.current?.click()}>
             Import
           </button>
