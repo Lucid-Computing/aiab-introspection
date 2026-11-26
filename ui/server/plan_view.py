@@ -110,19 +110,29 @@ class PlanView:
 
 
 NO_SESSIONS = "the Log Source names no session: tick at least one"
+NO_QUESTION = "the Filter's question is still the template's: write the yes/no question"
+# The question a new agreement starts with (template/plan.json); the builder's lint.ts too.
+PLACEHOLDER_QUESTION = "TODO: the yes/no question this audit answers"
 
 
 def unfinished(plan: Any) -> str | None:
-    """Why signing waits on a plan the box accepts: a Log Source that names no session. A run
-    from this site sends only the sessions the plan names (runs_start), so such a plan could
-    never run; it is held back here, before anyone signs it, not on the Runs page after."""
+    """Why signing waits on a plan the box accepts, or None. A Log Source that names no
+    session: a run from this site sends only the sessions the plan names (runs_start), so
+    such a plan could never run. A Filter still asking the template's placeholder question.
+    Both are held back here, before anyone signs, not found on the Runs page after."""
     nodes = plan.get("nodes") if isinstance(plan, dict) else None
+    why = []
     for n in nodes if isinstance(nodes, list) else ():
-        if isinstance(n, dict) and n.get("type") == "input_logs":
-            cfg = n.get("config") if isinstance(n.get("config"), dict) else {}
+        cfg = n.get("config") if isinstance(n, dict) and isinstance(n.get("config"), dict) else {}
+        if n.get("type") == "input_logs":
             flt = cfg.get("filter") if isinstance(cfg.get("filter"), dict) else {}
-            return None if flt.get("sessions") else NO_SESSIONS
-    return None
+            if not flt.get("sessions"):
+                why.append(NO_SESSIONS)
+        elif n.get("type") == "filter_logs" and cfg.get("mode") == "llm":
+            llm = cfg.get("llm") if isinstance(cfg.get("llm"), dict) else {}
+            if str(llm.get("question") or "").strip() == PLACEHOLDER_QUESTION:
+                why.append(NO_QUESTION)
+    return "; ".join(dict.fromkeys(why)) or None
 
 
 def discloses_records(plan: Any) -> str | None:

@@ -11,6 +11,9 @@ import { upstream } from "./validate";
 /** The log sources a run can read: the ids of the agreement UI's sources (server/config.py). */
 export const RUN_SOURCES = ["prod", "dev", "slack", "github", "plant"];
 
+/** The question a new agreement starts with (ui/server/template/plan.json): not yet written. */
+export const PLACEHOLDER_QUESTION = "TODO: the yes/no question this audit answers";
+
 export const PYTHON_MODULES = ["re", "math", "collections", "itertools", "statistics", "json"];
 const FORBIDDEN = /(?<![\w.])(eval|exec|compile|open|globals|locals|vars|getattr|setattr|delattr|breakpoint|input|__import__)\s*\(/;
 
@@ -104,7 +107,7 @@ export function lintPlan(plan: Plan, { agreement = false }: { agreement?: boolea
             const why = ruleIssue(rule);
             if (why) (ruleUnfinished(why) ? todo : err)(n.id, at(i, "config", "rules", k), `${n.id}: rule ${k + 1}: ${why}`);
           });
-        } else if (!c.llm.question.trim())
+        } else if (!c.llm.question.trim() || c.llm.question.trim() === PLACEHOLDER_QUESTION)
           todo(n.id, at(i, "config", "llm", "question"), `${n.id}: write the yes/no question`);
         break;
       }
