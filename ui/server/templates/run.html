@@ -10,6 +10,10 @@
 {% if run.status != "running" %}
 <div class="result">
   <p class="result-title">{{ run.outcome.title }}</p>
+  {% if result.answer %}{% set a = result.answer %}
+  <p class="result-answer"><strong>{{ a.head }}</strong>: yes to “{{ a.question }}”</p>
+  {% for note in a.notes %}<p class="result-answer-note text-muted">{{ note }}</p>{% endfor %}
+  {% endif %}
   {% if result.rows or result.disclosed %}
   {% if result.rows %}
   <table class="table result-table">
